@@ -171,7 +171,7 @@ $userData = $db->table('users')
 **Example:**
 ```php
 // Loads all posts for each user
-$db->table('users')->with('posts', 'posts', 'user_id', 'id')->paginate();
+db()->table('users')->with('posts', 'posts', 'user_id', 'id')->paginate();
 ```
 
 ---
@@ -189,7 +189,7 @@ $db->table('users')->with('posts', 'posts', 'user_id', 'id')->paginate();
 **Example:**
 ```php
 // Loads the profile for each user
-$db->table('users')->withOne('profile', 'profiles', 'user_id', 'id')->get();
+db()->table('users')->withOne('profile', 'profiles', 'user_id', 'id')->get();
 ```
 
 ### Insert, Update, Delete, Truncate
