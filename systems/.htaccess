@@ -1,0 +1,6 @@
+# Deny all access to this directory and subdirectories
+Order deny,allow
+Deny from all
+
+# Alternative modern syntax (Apache 2.4+)
+# Require all denied
