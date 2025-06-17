@@ -129,6 +129,81 @@ foreach ($users as $user) {
     // Each user is loaded on-demand
     echo $user['name'] . "\n";
 }
+
+// Basic where
+$users = db()->table('users')->where('status', 1)->fetch();
+
+// WHERE with '=' (default : No need to specify =)
+$users = db()->table('users')->where('status', '=', 1)->paginate();
+
+// WHERE with '<>'
+$users = db()->table('users')->where('role', '<>', 'admin')->get();
+
+// WHERE with '!='
+$users = db()->table('users')->where('status', '!=', 0)->get();
+
+// WHERE with '>'
+$users = db()->table('users')->where('score', '>', 80)->get();
+
+// WHERE with '<'
+$users = db()->table('users')->where('age', '<', 30)->get();
+
+// WHERE with '>='
+$users = db()->table('users')->where('created_at', '>=', '2024-01-01')->get();
+
+// WHERE with '<='
+$users = db()->table('users')->where('created_at', '<=', '2024-12-31')->get();
+
+// WHERE with 'LIKE'
+$users = db()->table('users')->where('name', 'LIKE', '%john%')->fetch();
+
+// WHERE with 'NOT LIKE'
+$users = db()->table('users')->where('name', 'NOT LIKE', '%john%')->get();
+
+// WHERE with ARRAY (use default '='), it will chaining multiple where()
+$users = db()->table('users')->where(['name' => 'john', 'status' => 1])->get();
+
+// WHERE with closure/callback
+$users = db()->table('users')->where(function ($query) {
+        $query->where('status', '1')->orWhere('gender', 'm');
+    })->toSql();
+
+// Multiple where
+$users = db()->table('users')->where('status', 1)->where('role', 'admin')->get();
+
+// orWhere
+$users = db()->table('users')->where('status', 1)->orWhere('role', 'admin')->get();
+
+// whereIn & orWhereIn
+$users = db()->table('users')->whereIn('id', [1, 2, 3])->orWhereIn('role', ['admin', 'editor'])->get();
+
+// whereNotIn & orWhereNotIn
+$users = db()->table('users')->whereNotIn('status', [0, 2])->orWhereNotIn('role', ['banned', 'guest'])->get();
+
+// whereBetween & orWhereBetween
+$users = db()->table('users')->whereBetween('created_at', ['2024-01-01', '2024-12-31'])->orWhereBetween('score', [50, 100])->get();
+
+// whereNotBetween & orWhereNotBetween
+$users = db()->table('users')->whereNotBetween('age', [18, 25])->orWhereNotBetween('salary', [1000, 2000])->get();
+
+// whereNull & orWhereNull
+$users = db()->table('users')->whereNull('deleted_at')->orWhereNull('last_login')->get();
+
+// whereNotNull & orWhereNotNull
+$users = db()->table('users')->whereNotNull('email_verified_at')->orWhereNotNull('profile_picture')->get();
+
+// whereDate & orWhereDate
+$users = db()->table('users')->whereDate('created_at', '2024-06-18')->orWhereDate('updated_at', '<=', '2024-06-01')->get();
+
+// whereDay & orWhereDay
+$users = db()->table('users')->whereDay('created_at', 18)->orWhereDay('updated_at', 1)->get();
+
+// whereMonth & orWhereMonth
+$users = db()->table('users')->whereMonth('created_at', 6)->orWhereMonth('updated_at', 5)->get();
+
+// whereYear & orWhereYear
+$users = db()->table('users')->whereYear('created_at', 2024)->orWhereYear('updated_at', 2023)->get();
+
 ```
 
 ### Advanced Queries with Relationships (Using eager loading)
@@ -589,6 +664,14 @@ SimplePHP includes various helper functions organized by category:
 | `orWhereNull()`         | Adds an OR WHERE IS NULL condition.                                                                         |
 | `whereNotNull()`        | Adds a WHERE IS NOT NULL condition.                                                                         |
 | `orWhereNotNull()`      | Adds an OR WHERE IS NOT NULL condition.                                                                     |
+| `whereDate()`           | Adds a WHERE clause for a date comparison.                                                                  |
+| `orWhereDate()`         | Adds an OR WHERE clause for a date comparison.                                                              |
+| `whereDay()`            | Adds a WHERE clause for a specific day.                                                                     |
+| `orWhereDay()`          | Adds an OR WHERE clause for a specific day.                                                                 |
+| `whereYear()`           | Adds a WHERE clause for a specific year.                                                                    |
+| `orWhereYear()`         | Adds an OR WHERE clause for a specific year.                                                                |
+| `whereMonth()`          | Adds a WHERE clause for a specific month.                                                                   |
+| `orWhereMonth()`        | Adds an OR WHERE clause for a specific month.                                                               |
 | `join()`                | Adds a JOIN clause to the query.                                                                            |
 | `leftJoin()`            | Adds a LEFT JOIN clause.                                                                                    |
 | `rightJoin()`           | Adds a RIGHT JOIN clause.                                                                                   |
