@@ -72,7 +72,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDate(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDate(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -95,7 +95,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereDate(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereDate(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -118,7 +118,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDay(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDay(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -141,7 +141,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereDay(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereDay(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -164,7 +164,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereMonth(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereMonth(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -187,7 +187,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereMonth(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereMonth(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -210,7 +210,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereYear(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereYear(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -234,7 +234,7 @@ class MariaDBDriver extends BaseDatabase
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereYear(). Please use simpleQuery() function.');
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereYear(). Please use query() function.');
 
             if ($value === null) {
                 $value = $operator;
@@ -245,6 +245,52 @@ class MariaDBDriver extends BaseDatabase
             $this->validateOperator($operator);
 
             $this->_buildWhereClause("YEAR($column)", (int)$value, $operator, 'OR');
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    public function whereTime($column, $operator = null, $value = null)
+    {
+        try {
+            $this->validateColumn($column);
+
+            // Disallow raw SQL for safety
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereTime(). Please use query() function.');
+
+            if ($value === null) {
+                $value = $operator;
+                $operator = '=';
+            }
+
+            $formattedTime = $this->validateTime($value); // Custom method to validate 'HH:MM[:SS]'
+            $this->validateOperator($operator);
+
+            $this->_buildWhereClause("DATE_FORMAT($column, '%H:%i:%s')", $formattedTime, $operator, 'AND');
+            return $this;
+        } catch (\InvalidArgumentException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+        }
+    }
+
+    public function orWhereTime($column, $operator = null, $value = null)
+    {
+        try {
+            $this->validateColumn($column);
+
+            // Disallow raw SQL
+            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereTime(). Please use query() function.');
+
+            if ($value === null) {
+                $value = $operator;
+                $operator = '=';
+            }
+
+            $formattedTime = $this->validateTime($value);
+            $this->validateOperator($operator);
+
+            $this->_buildWhereClause("DATE_FORMAT($column, '%H:%i:%s')", $formattedTime, $operator, 'OR');
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
@@ -302,9 +348,12 @@ class MariaDBDriver extends BaseDatabase
         return $this;
     }
 
-    public function count()
+    public function count($table = null)
     {
         try {
+            if (!empty($table)) {
+                $this->table = $table;
+            }
 
             // Start profiler for performance measurement
             $this->_startProfiler(__FUNCTION__);

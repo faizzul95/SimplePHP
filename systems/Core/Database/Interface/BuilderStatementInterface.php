@@ -263,6 +263,26 @@ interface BuilderStatementInterface
     public function orWhereYear(string $column, ?string $operator, ?string $value);
 
     /**
+     * Adds a whereTime clause to the query.
+     *
+     * @param string $column The column name.
+     * @param string|null $operator The comparison operator.
+     * @param mixed|null $value The time to compare (e.g. '14:30:00').
+     * @return $this
+     */
+    public function whereTime(string $column, ?string $operator, ?string $value);
+
+    /**
+     * Adds an OR whereTime clause to the query.
+     *
+     * @param string $column The column name.
+     * @param string|null $operator The comparison operator.
+     * @param mixed|null $value The time to compare (e.g. '14:30:00').
+     * @return $this
+     */
+    public function orWhereTime(string $column, ?string $operator, ?string $value);
+
+    /**
      * Adds a where json contains clause to search within a JSON column.
      *
      * @param string $columnName The name of the JSON column.

@@ -786,7 +786,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     abstract public function whereMonth($column, $operator, $value);
     abstract public function orWhereMonth($column, $operator, $value);
     abstract public function whereYear($column, $operator, $value);
-    abstract public function orWhereYear($column, $operator, $value);
+    abstract public function whereTime($column, $operator, $value);
+    abstract public function orWhereTime($column, $operator, $value);
     abstract public function whereJsonContains($columnName, $jsonPath, $value);
 
     public function join($table, $foreignKey, $localKey, $joinType = 'LEFT')
@@ -1368,9 +1369,13 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->_returnResult($result);
     }
 
-    public function get()
+    public function get($table = null)
     {
         $result = null;
+
+        if (!empty($table)) {
+            $this->table = $table;
+        }
 
         if (!$this->_isRawQuery) {
             // Build the final SELECT query string
@@ -1446,9 +1451,13 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->_returnResult($result);
     }
 
-    public function fetch()
+    public function fetch($table = null)
     {
         $result = null;
+
+        if (!empty($table)) {
+            $this->table = $table;
+        }
 
         if (!$this->_isRawQuery) {
             // Set limit to 1 to ensure only 1 data return
@@ -1529,7 +1538,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     // Override function logic based on driver
-    abstract public function count();
+    abstract public function count($table = null);
 
     public function chunk($size, callable $callback)
     {
@@ -1547,7 +1556,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             'joins' => $this->joins,
             'binds' => $this->_binds,
             'relations' => $this->relations,
-            'secureInput' => $this->_secureInput,
             'secureOutput' => $this->_secureOutput,
             'returnType' => $this->returnType,
             'isRawQuery' => $this->_isRawQuery,
@@ -1565,7 +1573,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->joins = $originalState['joins'];
             $this->_binds = $originalState['binds'];
             $this->relations = $originalState['relations'];
-            $this->_secureInput = $originalState['secureInput'];
             $this->_secureOutput = $originalState['secureOutput'];
             $this->returnType = $originalState['returnType'];
             $this->_isRawQuery = $originalState['isRawQuery'];
@@ -1617,7 +1624,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             'joins' => $this->joins,
             'binds' => $this->_binds,
             'relations' => $this->relations,
-            'secureInput' => $this->_secureInput,
             'secureOutput' => $this->_secureOutput,
             'returnType' => $this->returnType,
             'isRawQuery' => $this->_isRawQuery,
@@ -1635,7 +1641,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->joins = $originalState['joins'];
             $this->_binds = $originalState['binds'];
             $this->relations = $originalState['relations'];
-            $this->_secureInput = $originalState['secureInput'];
             $this->_secureOutput = $originalState['secureOutput'];
             $this->returnType = $originalState['returnType'];
             $this->_isRawQuery = $originalState['isRawQuery'];
@@ -3064,6 +3069,29 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         $this->selectRaw($this->column . ", ({$subquery}) as `$alias`");
         return $this;
+    }
+
+    /**
+     * Analyzes the currently selected table.
+     *
+     * @return bool True on success, false on failure.
+     */
+    public function analyze()
+    {
+        try {
+            if (empty($this->table)) {
+                throw new \InvalidArgumentException('No table selected. Please set $this->table before calling analyze().');
+            }
+
+            $stmt = $this->pdo[$this->connectionName]->prepare("ANALYZE TABLE {$this->table}");
+            $stmt->execute();
+
+            $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            return isset($result[0]['Msg_text']) && strtolower($result[0]['Msg_text']) === 'ok';
+        } catch (\PDOException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+            return false;
+        }
     }
 
     /**

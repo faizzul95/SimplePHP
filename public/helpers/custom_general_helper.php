@@ -289,31 +289,43 @@ if (!function_exists('decode_base64')) {
  * @return string The complete, sanitized base URL
  * @throws InvalidArgumentException If BASE_URL constant is not defined
  */
-if (!function_exists('base_url')) {
-	function base_url($path = null)
-	{
-		// Ensure BASE_URL constant is defined
-		if (!defined('BASE_URL')) {
-			throw new InvalidArgumentException('BASE_URL constant must be defined');
-		}
-
-		// Return base URL if no parameter provided
-		if ($path === null || $path === '') {
-			return rtrim(BASE_URL, '/') . '/';
-		}
-
-		// Sanitize the parameter to prevent XSS
-		$param = filter_var($path, FILTER_SANITIZE_URL);
-
-		// Remove any potentially dangerous characters
-		$param = preg_replace('/[<>"\']/', '', $param);
-
-		// Ensure proper path formatting
-		$param = ltrim($param, '/');
-
-		// Combine base URL with parameter
-		return rtrim(BASE_URL, '/') . '/' . $param;
+function base_url($path = null)
+{
+	// Ensure BASE_URL constant is defined
+	if (!defined('BASE_URL')) {
+		throw new InvalidArgumentException('BASE_URL constant must be defined');
 	}
+
+	// Return base URL if no parameter provided
+	if ($path === null || $path === '') {
+		return rtrim(BASE_URL, '/') . '/';
+	}
+
+	// Ensure $path is a string
+	$param = (string)$path;
+
+	// Remove null bytes and control characters
+	$param = preg_replace('/[\x00-\x1F\x7F]/u', '', $param);
+
+	// Prevent directory traversal
+	if (strpos($param, '..') !== false) {
+		throw new InvalidArgumentException('Path cannot contain directory traversal sequences');
+	}
+
+	// Sanitize the parameter to prevent XSS
+	$param = filter_var($param, FILTER_SANITIZE_URL);
+
+	// Remove any potentially dangerous characters
+	$param = preg_replace('/[<>"\'`]/', '', $param);
+
+	// Remove leading slashes to avoid double slashes
+	$param = ltrim($param, '/');
+
+	// Combine base URL with parameter
+	$url = rtrim(BASE_URL, '/') . '/' . $param;
+
+	// Optionally encode for HTML output
+	return htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
 }
 
 /**
@@ -350,9 +362,6 @@ if (!function_exists('asset')) {
 		if (strpos($param, '..') !== false) {
 			throw new InvalidArgumentException('Asset path cannot contain directory traversal sequences');
 		}
-
-		// Remove any potentially dangerous characters
-		$param = preg_replace('/[<>"\']/', '', $param);
 
 		// Ensure proper path formatting (remove leading slash)
 		$param = ltrim($param, '/');
@@ -396,7 +405,7 @@ if (!function_exists('url')) {
 		$param = htmlspecialchars($param, ENT_NOQUOTES, 'UTF-8');
 
 		// Return the complete URL with sanitized parameters.
-		return base_url() . filter_var($param, FILTER_SANITIZE_URL);
+		return base_url($param);
 	}
 }
 

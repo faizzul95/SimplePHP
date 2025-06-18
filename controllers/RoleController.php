@@ -62,7 +62,8 @@ function show($request)
         jsonResponse(['code' => 400, 'message' => 'ID is required']);
     }
 
-    $role = db()->table('master_roles')->where('id', $id)->fetch();
+    $role = db()->table('master_roles')->where('id', $id)->safeOutput()->fetch();
+    // $role = db()->where('id', $id)->safeOutput()->fetch('master_roles'); // without using table()
 
     if (!$role) {
         jsonResponse(['code' => 404, 'message' => 'Role not found']);

@@ -65,23 +65,26 @@ interface QueryInterface
     /**
      * Executes the query and returns the results.
      *
+     * @param string|null $table The name of the table.
      * @return mixed The result of the query execution, depending on the database driver.
      */
-    public function get();
+    public function get(?string $table);
 
     /**
      * Fetches a single row from the result set.
      *
+     * @param string|null $table The name of the table.
      * @return mixed The first row of the result set.
      */
-    public function fetch();
+    public function fetch(?string $table);
 
     /**
      * Counts the number of rows in the result set.
      *
+     * @param string|null $table The name of the table.
      * @return int The number of rows in the result set.
      */
-    public function count();
+    public function count(?string $table);
 
     /**
      * Processes the query in chunks and applies a callback function to each chunk.

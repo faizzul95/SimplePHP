@@ -84,6 +84,11 @@ SimplePHP provides an elegant query builder for database operations:
 // Select all users
 $users = db()->table('users')->get();
 
+// Faster way without using ->table()
+$usersAll = db()->get('users');
+$usersSingle = db()->fetch('users');
+$usersCount = db()->count('users');
+
 // Select specific columns with conditions
 $users = db()->table('users')
     ->select('id, name, email')
@@ -205,6 +210,10 @@ $users = db()->table('users')->whereMonth('created_at', 6)->orWhereMonth('update
 $users = db()->table('users')->whereYear('created_at', 2024)->orWhereYear('updated_at', 2023)->get();
 
 ```
+
+## Security Notes
+
+- Always use ->safeOutput when working with the query builder before calling ->get, ->fetch, ->paginate, or ->paginate_ajax to prevent XSS injection from being displayed on the frontend.
 
 ### Advanced Queries with Relationships (Using eager loading)
 
@@ -670,8 +679,8 @@ SimplePHP includes various helper functions organized by category:
 | `orWhereDay()`          | Adds an OR WHERE clause for a specific day.                                                                 |
 | `whereYear()`           | Adds a WHERE clause for a specific year.                                                                    |
 | `orWhereYear()`         | Adds an OR WHERE clause for a specific year.                                                                |
-| `whereMonth()`          | Adds a WHERE clause for a specific month.                                                                   |
-| `orWhereMonth()`        | Adds an OR WHERE clause for a specific month.                                                               |
+| `whereTime()`           | Adds a WHERE clause for a specific time.                                                                    |
+| `orWhereTime()`         | Adds an OR WHERE clause for a specific time.                                                                |
 | `join()`                | Adds a JOIN clause to the query.                                                                            |
 | `leftJoin()`            | Adds a LEFT JOIN clause.                                                                                    |
 | `rightJoin()`           | Adds a RIGHT JOIN clause.                                                                                   |

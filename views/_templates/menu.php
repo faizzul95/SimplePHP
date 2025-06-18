@@ -70,7 +70,7 @@
                                 $currentSubActive = (isset($currentSubPage) && $currentSubPage == $subpage['currentSubPage']) ? 'active' : '';
 
                                 echo '<li class="menu-item ' . $currentSubActive . '">
-                                        <a href="' . $subpage['url'] . '" class="menu-link">
+                                        <a href="' . url($subpage['url']) . '" class="menu-link">
                                             <div class="text-truncate" data-i18n="' . $subpage['desc'] . '">' . $subpage['desc'] . '</div>
                                         </a>
                                     </li>';
@@ -81,7 +81,7 @@
                 } else {
                     // Regular menu item without subpages
                     echo '<li class="menu-item ' . $currentActive . '">
-                                <a href="' . $menu['url'] . '" class="menu-link">
+                                <a href="' . url($menu['url']) . '" class="menu-link">
                                     <i class="menu-icon ' . $menu['icon'] . '"></i>
                                     <div data-i18n="' . $menu['desc'] . '">' . $menu['desc'] . '</div>
                                 </a>

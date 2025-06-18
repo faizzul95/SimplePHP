@@ -93,6 +93,7 @@ function show($request)
             //         ->where('entity_file_type', 'USER_PROFILE');
             // });
         })
+        ->safeOutput()
         ->fetch();
 
     if (!$users) {

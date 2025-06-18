@@ -246,4 +246,24 @@ class DatabaseHelper
             throw new \InvalidArgumentException('Invalid year. Must be a four-digit number.');
         }
     }
+
+    /**
+     * Validates a time string (HH:MM or HH:MM:SS).
+     *
+     * @param string $time
+     * @return string
+     * @throws \InvalidArgumentException
+     */
+    protected function validateTime($time)
+    {
+        if (preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $time)) {
+            // Normalize to HH:MM:SS
+            if (strlen($time) === 5) {
+                $time .= ':00';
+            }
+            return $time;
+        }
+
+        throw new \InvalidArgumentException("Invalid time format: $time. Expected HH:MM or HH:MM:SS.");
+    }
 }
