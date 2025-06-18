@@ -102,9 +102,9 @@ if (!function_exists('formatCurrency')) {
 			return 'Error: The "intl" extension is not installed or enabled, which is required for number formatting.';
 		}
 
-        $value = (float)($value ?: 0.0);
-        $localeMap = getCurrencyMapping();
-        $code = strtoupper($code);
+		$value = (float)($value ?: 0.0);
+		$localeMap = getCurrencyMapping();
+		$code = strtoupper($code);
 
 		if (!isset($localeMap[$code])) {
 			return "Error: Invalid country code.";
@@ -126,12 +126,12 @@ if (!function_exists('formatCurrency')) {
 		}
 
 		$formatVal = $formatter->formatCurrency($value, $currencyData['code']);
-        if ($formatVal === false) {
-            $formatVal = $formatter->formatCurrency($value, $code);
-            if ($formatVal === false) {
-               die(__FUNCTION__ . ' : Failed to convert currency.');
-            }
-        }
+		if ($formatVal === false) {
+			$formatVal = $formatter->formatCurrency($value, $code);
+			if ($formatVal === false) {
+				die(__FUNCTION__ . ' : Failed to convert currency.');
+			}
+		}
 
 		// Format the currency value using the NumberFormatter
 		return $formatVal;
@@ -141,7 +141,7 @@ if (!function_exists('formatCurrency')) {
 // ENCODE & DECODE HELPERS SECTION
 
 if (!function_exists('encodeID')) {
-function encodeID($id, $salt = 'w3bpr0j3ct!')
+	function encodeID($id, $salt = 'w3bpr0j3ct!')
 	{
 		// Input validation
 		if (!is_numeric($id) || $id < 0) {
@@ -161,13 +161,13 @@ function encodeID($id, $salt = 'w3bpr0j3ct!')
 			'8' => 'K4i',
 			'9' => 'Jj'
 		];
-		
+
 		// Single transformation pass
 		$encoded = strtr($id, $map);
-		
+
 		// Simple checksum
 		$checksum = substr(md5($encoded . $salt), 0, 5);
-		
+
 		$permitted_chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 		$uniqueURL = substr(str_shuffle($permitted_chars), 0, 5);
 
@@ -190,7 +190,7 @@ if (!function_exists('decodeID')) {
 			}
 
 			// Extract parts with proper validation
-			if (strlen($decoded) < 9) { 
+			if (strlen($decoded) < 9) {
 				return false;
 			}
 
@@ -226,7 +226,6 @@ if (!function_exists('decodeID')) {
 			}
 
 			return $result;
-
 		} catch (Exception $e) {
 			return false;
 		}
@@ -279,28 +278,90 @@ if (!function_exists('decode_base64')) {
 
 // ASSETS/URL/REDIRECT HELPERS SECTION
 
+/**
+ * Generate a safe base URL for the application.
+ * 
+ * This function creates URLs relative to the application's base URL.
+ * It sanitizes input parameters to prevent XSS attacks and ensures
+ * proper URL formatting.
+ *
+ * @param string|null $param Optional path to append to base URL
+ * @return string The complete, sanitized base URL
+ * @throws InvalidArgumentException If BASE_URL constant is not defined
+ */
 if (!function_exists('base_url')) {
-	function base_url($param = null)
+	function base_url($path = null)
 	{
-		return BASE_URL . $param;
+		// Ensure BASE_URL constant is defined
+		if (!defined('BASE_URL')) {
+			throw new InvalidArgumentException('BASE_URL constant must be defined');
+		}
+
+		// Return base URL if no parameter provided
+		if ($path === null || $path === '') {
+			return rtrim(BASE_URL, '/') . '/';
+		}
+
+		// Sanitize the parameter to prevent XSS
+		$param = filter_var($path, FILTER_SANITIZE_URL);
+
+		// Remove any potentially dangerous characters
+		$param = preg_replace('/[<>"\']/', '', $param);
+
+		// Ensure proper path formatting
+		$param = ltrim($param, '/');
+
+		// Combine base URL with parameter
+		return rtrim(BASE_URL, '/') . '/' . $param;
 	}
 }
 
 /**
- * Generate an asset URL.
+ * Generate a safe asset URL for static resources.
  *
- * @param string $param The asset path.
- * @param bool $public Whether the asset is in the public directory.
- * @return string The complete asset URL.
+ * This function creates URLs for static assets like CSS, JavaScript, images,
+ * and other resources. It provides security by sanitizing input and proper
+ * path handling to prevent directory traversal attacks.
+ *
+ * @param string $param The asset path (e.g., 'css/style.css', 'js/app.js')
+ * @param bool $public Whether the asset is in the public directory (default: true)
+ * @return string The complete, sanitized asset URL
+ * @throws InvalidArgumentException If the asset path is empty or contains invalid characters
+ * 
+ * @example
+ * // Generate URL for a CSS file in public directory
+ * echo asset('css/bootstrap.min.css'); // Output: http://example.com/public/css/bootstrap.min.css
+ * 
+ * // Generate URL for a file outside public directory
+ * echo asset('uploads/document.pdf', false); // Output: http://example.com/uploads/document.pdf
  */
 if (!function_exists('asset')) {
 	function asset($param, $public = true)
 	{
-		// Determine the public directory based on the $public parameter.
-		$isPublic = $public ? 'public/' : '';
+		// Validate input parameter
+		if (empty($param) || !is_string($param)) {
+			throw new InvalidArgumentException('Asset path cannot be empty and must be a string');
+		}
 
-		// Return the complete asset URL.
-		return base_url($isPublic . $param);
+		// Sanitize the asset path
+		$param = filter_var($param, FILTER_SANITIZE_URL);
+
+		// Prevent directory traversal attacks
+		if (strpos($param, '..') !== false) {
+			throw new InvalidArgumentException('Asset path cannot contain directory traversal sequences');
+		}
+
+		// Remove any potentially dangerous characters
+		$param = preg_replace('/[<>"\']/', '', $param);
+
+		// Ensure proper path formatting (remove leading slash)
+		$param = ltrim($param, '/');
+
+		// Determine the public directory based on the $public parameter
+		$directory = $public ? 'public/' : '';
+
+		// Return the complete asset URL using the safe base_url function
+		return base_url($directory . $param);
 	}
 }
 
@@ -329,13 +390,13 @@ if (!function_exists('url')) {
 	function url($param)
 	{
 		// Ensure $param is a string and not null
-        $param = $param !== null ? (string)$param : '';
+		$param = $param !== null ? (string)$param : '';
 
-        // HTML-encode the URL parameter.
-        $param = htmlspecialchars($param, ENT_NOQUOTES, 'UTF-8');
+		// HTML-encode the URL parameter.
+		$param = htmlspecialchars($param, ENT_NOQUOTES, 'UTF-8');
 
-        // Return the complete URL with sanitized parameters.
-        return base_url() . filter_var($param, FILTER_SANITIZE_URL);
+		// Return the complete URL with sanitized parameters.
+		return base_url() . filter_var($param, FILTER_SANITIZE_URL);
 	}
 }
 

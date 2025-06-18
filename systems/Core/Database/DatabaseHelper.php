@@ -56,8 +56,7 @@ class DatabaseHelper
             case 'array':
                 return array_map([$this, 'sanitize'], $value);
             default:
-                // Handle unexpected data types (consider throwing an exception)
-                throw new \InvalidArgumentException("Unsupported data type for sanitization: " . gettype($value));
+                return $value;
         }
     }
 

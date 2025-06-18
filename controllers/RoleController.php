@@ -23,10 +23,6 @@ function listRolesDatatable($request)
         $db->where('role_status', $status);
     }
 
-    if (!empty($searchValue)) {
-        $db->where('role_name', 'LIKE', '%' . $searchValue . '%');
-    }
-
     // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
     $result = $db->setPaginateFilterColumn(['role_name', 'role_rank'])
         ->safeOutput()
