@@ -213,7 +213,7 @@ $users = db()->table('users')->whereYear('created_at', 2024)->orWhereYear('updat
 
 ## Security Notes
 
-- Always use ->safeOutput when working with the query builder before calling ->get, ->fetch, ->paginate, or ->paginate_ajax to prevent XSS injection from being displayed on the frontend.
+- Always use `->safeOutput` when working with the query builder before calling `->get`, `->fetch`, `->paginate`, or `->paginate_ajax` to prevent XSS injection from being displayed on the frontend.
 
 ### Advanced Queries with Relationships (Using eager loading)
 
