@@ -3,21 +3,22 @@
     <div class="row">
         <div class="col-12">
             <label class="form-label"> Name <span class="text-danger">*</span> </label>
-            <input type="text" id="role_name" name="role_name" class="form-control" onkeyup="this.value = this.value.toUpperCase();" autocomplete="off">
+            <input type="text" id="role_name" name="role_name" class="form-control" onkeyup="this.value = this.value.toUpperCase();" autocomplete="off" require>
         </div>
     </div>
 
     <div class="row mt-3">
         <div class="col-12">
             <label class="form-label"> Rank <span class="text-danger">*</span> </label>
-            <input type="text" id="role_rank" name="role_rank" class="form-control" autocomplete="off">
+            <input type="text" id="role_rank" name="role_rank" class="form-control" autocomplete="off" require>
         </div>
     </div>
 
     <div class="row mt-3">
         <div class="col-12">
             <label class="form-label"> Status <span class="text-danger">*</span> </label>
-            <select id="role_status" name="role_status" class="form-control">
+            <select id="role_status" name="role_status" class="form-control" require>
+                <option value=""> - Select - </option>
                 <option value="0"> Inactive </option>
                 <option value="1"> Active </option>
             </select>
@@ -43,7 +44,7 @@
     $("#rolesForm").submit(function(event) {
         event.preventDefault();
 
-        if (validateDataCart()) {
+        if (validateDataRole()) {
 
             const form = $(this);
             const url = form.attr('action');
@@ -82,11 +83,11 @@
         }
     });
 
-    function validateDataCart() {
+    function validateDataRole() {
 
         const rules = {
-            'role_name': 'required|min:3|max:255',
-            'role_rank': 'required|integer|max_length:8',
+            'role_name': 'required|min_length:3|max_length:64',
+            'role_rank': 'required|integer|min:1',
             'id': 'integer',
         };
 

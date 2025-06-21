@@ -59,10 +59,11 @@ class XMLHttpRequestMiddleware
         if (!empty($security['throttle_request']) && $security['throttle_request'] === true) {
             $this->isRateLimiting();
         }
-
+        
         // XSS protection if enabled
         if (!empty($security['xss_request']) && $security['xss_request'] === true) {
-            if ($this->isXssAttack()) {
+            $whiteListField = request()->input('_whitelist_field');
+            if ($this->isXssAttack($whiteListField)) {
                 jsonResponse([
                     'code' => 422,
                     'message' => 'Protection against <b><i> Cross-site scripting (XSS) </i></b> activated!'

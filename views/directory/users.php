@@ -23,9 +23,11 @@ include_once __DIR__ . '/../_templates/header.php';
                             <button type="button" class="btn btn-warning btn-sm float-end" onclick="getDataList()" title="Refresh">
                                 <i class='bx bx-refresh'></i>
                             </button>
-                            <!-- <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addUser()" title="Refresh">
+
+                            <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addUser()" title="Refresh">
                                 <i class='bx bx-plus'></i> Add New User
-                            </button> -->
+                            </button>
+
                             <select id="filter_user_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All Status </option>
                                 <option value="1"> Active </option>
@@ -39,6 +41,10 @@ include_once __DIR__ . '/../_templates/header.php';
                                 <option value="1"> Male </option>
                                 <option value="2"> Female </option>
                             </select>
+
+                            <select id="filter_profile" class="form-control form-control-sm me-2 float-end" style="width: 180px;" onchange="getDataList()">
+                                <option value=""> All Profiles </option>
+                            </select>
                         </div>
                     </div>
 
@@ -50,8 +56,9 @@ include_once __DIR__ . '/../_templates/header.php';
                                 <table id="dataList" class="table table-responsive table-hover table-striped table-bordered collapsed nowrap" width="100%">
                                     <thead class="table-dark">
                                         <tr>
+                                            <th style="color:white"> Avatar </th>
                                             <th style="color:white"> Name </th>
-                                            <th style="color:white"> Email </th>
+                                            <th style="color:white"> Contact Information </th>
                                             <th style="color:white"> Gender </th>
                                             <th style="color:white"> Status </th>
                                             <th style="color:white"> Action </th>
@@ -72,34 +79,63 @@ include_once __DIR__ . '/../_templates/header.php';
     <script type="text/javascript">
         $(document).ready(async function() {
             await getDataList();
+            await getProfileList('filter_profile');
         });
+
+        async function getProfileList(id, includeAll = true) {
+            const res = await callApi('post', "controllers/RoleController.php", {
+                'action': 'listSelectOptionRole'
+            });
+
+            const data = res.data.data;
+
+            if (isSuccess(res)) {
+                $("#" + id).empty();
+
+                if (includeAll) {
+                    $("#" + id).append('<option value=""> All Profiles </option>');
+                } else {
+                    $("#" + id).append('<option value=""> - Select - </option>');
+                }
+
+                data.forEach(function(item) {
+                    $("#" + id).append('<option value="' + item.id + '">' + item.role_name + '</option>');
+                });
+            }
+        }
 
         // GET DATATABLE (SERVER-SIDE)
         async function getDataList() {
             generateDatatableServer('dataList', 'controllers/UserController.php', 'nodataDiv', {
                     'action': 'listUserDatatable',
                     'user_status_filter': $("#filter_user_status").val(),
-                    'user_gender_filter': $("#filter_gender_status").val()
+                    'user_gender_filter': $("#filter_gender_status").val(),
+                    'user_profile_filter': $("#filter_profile").val()
                 },
                 [{
-                        "data": "name",
-                        "width": "40%",
+                        "data": "avatar",
+                        "width": "5%",
                         "targets": 0
                     },
                     {
-                        "data": "email",
-                        "width": "25%",
+                        "data": "name",
+                        "width": "40%",
                         "targets": 1
                     },
                     {
-                        "data": "gender",
-                        "width": "15%",
+                        "data": "contact",
+                        "width": "30%",
                         "targets": 2
                     },
                     {
-                        "data": "status",
-                        "width": "10%",
+                        "data": "gender",
+                        "width": "8%",
                         "targets": 3
+                    },
+                    {
+                        "data": "status",
+                        "width": "7%",
+                        "targets": 4
                     },
                     {
                         // Action
@@ -115,10 +151,10 @@ include_once __DIR__ . '/../_templates/header.php';
                 ], 'bodyDiv');
         }
 
-        // function addUser() {
-        //     loadFormContent('views/directory/_userForm.php', 'userForm', '500px', 'controllers/UserController.php', 'Add User', {}, 'offcanvas');
-        //     // $("#generaloffcanvas-right").css("z-index", "20000");
-        // }
+        function addUser() {
+            loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Add User', {}, 'offcanvas');
+            // $("#generaloffcanvas-right").css("z-index", "20000");
+        }
 
         async function editRecord(id) {
             const res = await callApi('post', "controllers/UserController.php", {
@@ -129,7 +165,7 @@ include_once __DIR__ . '/../_templates/header.php';
             const data = res.data.data;
 
             if (isSuccess(res)) {
-                loadFormContent('views/directory/_userForm.php', 'userForm', '500px', 'controllers/UserController.php', 'Update User', data, 'offcanvas');
+                loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Update User', data, 'offcanvas');
                 // $("#generaloffcanvas-right").css("z-index", "20000");
             }
         }
@@ -162,10 +198,6 @@ include_once __DIR__ . '/../_templates/header.php';
                     }
                 }
             })
-        }
-
-        async function updateProfile(id) {
-            alert('Function not ready to update profile for ' + id);
         }
     </script>
 <?php } else {

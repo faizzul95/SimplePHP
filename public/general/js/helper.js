@@ -154,26 +154,50 @@ const printDiv = (idToPrint, printBtnID = 'printBtn', printBtnText = "<i class='
 }
 
 const disableBtn = (id, display = true, text = null) => {
-	$("#" + id).attr("disabled", display);
+	const button = $("#" + id);
+	button.prop("disabled", display);
+
+	if (text !== null) {
+		button.html(text);
+	}
 }
 
 const isNumberKey = (evt) => {
-	var charCode = (evt.which) ? evt.which : evt.keyCode
-	if (charCode > 31 && (charCode < 48 || charCode > 57))
-		return false;
-	return true;
-}
-
-const SizeToText = (size) => {
-	var sizeContext = ["B", "KB", "MB", "GB", "TB"],
-		atCont = 0;
-
-	while (size / 1024 > 1) {
-		size /= 1024;
-		++atCont;
+	try {
+		const charCode = (evt.which) ? evt.which : evt.keyCode;
+		return charCode > 31 && charCode < 48 || charCode > 57;
+	} catch (error) {
+		throw new Error(`An error occurred in isNumberKey(): ${error.message}`);
 	}
+};
 
-	return Math.round(size * 100) / 100 + ' ' + sizeContext[atCont];
+const sizeToText = (size, decimal = 2) => {
+	try {
+		if (typeof size !== 'number') {
+			throw new Error('An error occurred in sizeToText(): Invalid input - size must be a number');
+		}
+
+		if (typeof decimal !== 'number') {
+			throw new Error('Decimal must be a number.');
+		}
+
+		if (decimal < 0) {
+			throw new Error('Decimal cannot be negative.');
+		}
+
+		const sizeContext = ["B", "KB", "MB", "GB", "TB"];
+		let atCont = 0;
+
+		while (size >= 1024 && atCont < sizeContext.length - 1) {
+			size /= 1024;
+			atCont++;
+		}
+
+		return `${(size).toFixed(decimal)} ${sizeContext[atCont]}`;
+
+	} catch (error) {
+		throw new Error(`An error occurred in sizeToText(): ${error.message}`);
+	}
 }
 
 const loading = (id = null, display = false) => {
@@ -518,6 +542,58 @@ const hasData = (data = null, arrKey = null, returnData = false, defaultValue = 
 	};
 
 	return traverse(keys, data);
+};
+
+/**
+ * Function: empty
+ * Description: Replicates PHP's empty() function - checks if a variable is empty or not set.
+ * @param {*} variable - The variable to be checked.
+ * @returns {boolean} - Returns true if the variable is empty or not set, false otherwise.
+ * @example
+ * const result = empty(myVar);
+ * if (result) {
+ *     // myVar is empty or not set
+ * } else {
+ *     // myVar has data
+ * }
+ */
+const empty = (variable) => {
+    // Handle undefined and null
+    if (variable === undefined || variable === null) {
+        return true;
+    }
+    
+    // Handle strings
+    if (typeof variable === 'string' && variable === '') {
+        return true;
+    }
+    
+    // Handle numbers (0 and NaN are considered empty)
+    if (typeof variable === 'number' && (variable === 0 || isNaN(variable))) {
+        return true;
+    }
+    
+    // Handle string '0'
+    if (variable === '0') {
+        return true;
+    }
+    
+    // Handle boolean false
+    if (variable === false) {
+        return true;
+    }
+    
+    // Handle arrays (empty arrays are considered empty)
+    if (Array.isArray(variable) && variable.length === 0) {
+        return true;
+    }
+    
+    // Handle objects (empty objects are considered empty in PHP context)
+    if (typeof variable === 'object' && variable !== null && !Array.isArray(variable) && Object.keys(variable).length === 0) {
+        return true;
+    }
+    
+    return false;
 };
 
 // ARRAY HELPER
@@ -1632,6 +1708,117 @@ const callApi = async (method = 'POST', url, dataObj = null, option = {}) => {
 				noti(500, 'Something went wrong');
 			}
 			return res;
+		}
+	}
+}
+
+const uploadApi = async (url, formID = null, idProgressBar = null, reloadFunction = null, permissions = null) => {
+	try {
+		url = urls(url);
+		var frm = $('#' + formID);
+		const dataArr = new FormData(frm[0]);
+
+		var timeStarted = new Date().getTime();
+
+		let axiosConfig = {
+			headers: {
+				'X-Requested-With': 'XMLHttpRequest',
+				'content-type': 'multipart/form-data',
+				'X-Permission': permissions,
+			},
+			onUploadProgress: function (progressEvent) {
+				if (idProgressBar != null) {
+					const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+
+					$('#' + idProgressBar).html(`
+						<div class="col-12 mt-2 progress">
+						<div id="componentProgressBarCanthink" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+						</div>
+						<div class="col-12 mt-2 mb-4">
+						<div id="componentProgressBarStatusCanthink"></div>
+						</div>
+					`);
+
+					$('#componentProgressBarCanthink').width(percentCompleted + '%');
+
+					const disSize = sizeToText(progressEvent.total);
+					const progress = progressEvent.loaded / progressEvent.total;
+					const timeSpent = new Date().getTime() - timeStarted;
+					const secondsRemaining = Math.round(((timeSpent / progress) - timeSpent) / 1000);
+
+					let time;
+					if (secondsRemaining >= 3600) {
+						time = `${Math.floor(secondsRemaining / 3600)} hour ${Math.floor((secondsRemaining % 3600) / 60)} minute`;
+					} else if (secondsRemaining >= 60) {
+						time = `${Math.floor(secondsRemaining / 60)} minute ${secondsRemaining % 60} second`;
+					} else {
+						time = `${secondsRemaining} second(s)`;
+					}
+
+					$('#componentProgressBarStatusCanthink').html(`${sizeToText(progressEvent.loaded)} of ${disSize} | ${percentCompleted}% uploading <br> estimated time remaining: ${time}`);
+
+					if (percentCompleted == 100) {
+						$("#componentProgressBarCanthink").addClass("bg-success").removeClass("bg-info");
+						setTimeout(function () {
+							$('#componentProgressBarCanthink').width('0%');
+							$('#componentProgressBarStatusCanthink').empty();
+							$('#' + idProgressBar).empty();
+						}, 500);
+					} else if (percentCompleted > 0 && percentCompleted <= 40) {
+						$("#componentProgressBarCanthink").addClass("bg-danger");
+					} else if (percentCompleted > 40 && percentCompleted <= 60) {
+						$("#componentProgressBarCanthink").addClass("bg-warning").removeClass("bg-danger");
+					} else if (percentCompleted > 60 && percentCompleted <= 99) {
+						$("#componentProgressBarCanthink").addClass("bg-info").removeClass("bg-warning");
+					}
+				}
+			}
+		};
+
+		return axios.post(url, dataArr, axiosConfig)
+			.then(function (res) {
+
+				if (reloadFunction != null) {
+					reloadFunction();
+				}
+
+				return res;
+			})
+			.catch(function (error) {
+				if (error.response) {
+					// Request made and server responded
+					let textMessage = isset(error.response.data.message) ? error.response.data.message : error.response.statusText;
+
+					if (isError(error.response.status)) {
+						noti(error.response.status, textMessage);
+					} else if (isUnauthorized(error.response.status)) {
+						noti(error.response.status, "Unauthorized: Access is denied");
+					} else {
+						log(error, 'ERROR CallApi 1');
+					}
+				} else if (error.request) {
+					// The request was made but no response was received
+					noti(400, 'Something went wrong');
+				} else {
+					// Something happened in setting up the request that triggered an Error
+					log(error.message, 'ERROR Upload Api');
+					noti(400, 'Something went wrong');
+				}
+
+				// throw err;
+			});
+
+	} catch (e) {
+
+		const res = e.response;
+		log(e, 'ERROR Upload Api');
+		log(res.status, 'ERROR Upload Api status');
+		log(res.message, 'ERROR Upload Api message');
+
+		if (isUnauthorized(res.status)) {
+			noti(res.status, "Unauthorized: Access is denied");
+		} else {
+			noti(res.status, 'Something went wrong');
 		}
 	}
 }

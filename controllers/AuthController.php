@@ -100,11 +100,11 @@ function loginSessionStart($userData, $loginType = 1)
                                     $db->select('id,abilities_name,abilities_slug');
                                 });
                         });
-                })
-                ->withOne('avatar', 'entity_files', 'entity_id', 'id', function ($db) {
-                    $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression')
-                        ->where('entity_file_type', 'USER_PROFILE');
                 });
+        })
+        ->withOne('avatar', 'entity_files', 'entity_id', 'id', function ($db) {
+            $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
+                ->where('entity_file_type', 'USER_PROFILE');
         })
         ->fetch();
 
@@ -128,6 +128,7 @@ function loginSessionStart($userData, $loginType = 1)
     ]);
 
     $perm = $userData['profile']['roles']['permission'] ?? null;
+    $avatar = isset($userData['avatar']['files_path']) ? getFilesCompression($userData['avatar']) : 'public/upload/default.jpg';
 
     // Set/start session data
     startSession([
@@ -139,7 +140,7 @@ function loginSessionStart($userData, $loginType = 1)
         'roleRank' => $userData['profile']['roles']['role_rank'] ?? 0,
         'roleName' => $userData['profile']['roles']['role_name'] ?? null,
         'permissions' => getPermissionSlug($perm),
-        'userAvatar' => $userData['profile']['avatar']['files_path'] ?? 'general/images/user.png',
+        'userAvatar' => $avatar,
         'isLoggedIn' => true,
     ]);
 

@@ -16,13 +16,13 @@ function folder($foldername = 'directory', $folderid = NULL, $type = 'image')
 
 	// check if folder current not exist, 
 	// create one with permission (server) to upload
-	if (!is_dir($folder)) {
+	if (!is_dir(ROOT_DIR . $folder)) {
 
 		$old = umask(0);
-		mkdir($folder, 0755, true);
+		mkdir(ROOT_DIR . $folder, 0755, true);
 		umask($old);
 
-		chmod($folder, 0755);
+		chmod(ROOT_DIR . $folder, 0755);
 	}
 
 	return $folder;
@@ -216,7 +216,7 @@ function moveFile($filesName, $currentPath, $folder, $data = NULL, $type = 'rena
 	$path = $folder . '/' . $saveName;
 	$fileSize = filesize($currentPath);
 
-	if ($type($currentPath, $path)) {
+	if ($type($currentPath, ROOT_DIR . $path)) {
 
 		$entity_type = $entity_file_type = $entity_id = $user_id = 0;
 
@@ -224,16 +224,16 @@ function moveFile($filesName, $currentPath, $folder, $data = NULL, $type = 'rena
 		if ($compress) {
 			$canCompress = ['jpg', 'png', 'jpeg', 'gif'];
 			if (in_array(pathinfo($saveName, PATHINFO_EXTENSION), $canCompress)) {
-				$compressfolder = $folder . '/' . $newName . "_compress." . $ext;
-				$thumbnailfolder = $folder . '/' . $newName . "_thumbnail." . $ext;
+				$compressfolder = ROOT_DIR . $folder . '/' . $newName . "_compress." . $ext;
+				$thumbnailfolder = ROOT_DIR . $folder . '/' . $newName . "_thumbnail." . $ext;
 
 				if ($file_compression === 2) {
 					$file_compression = 2;
-					$compressImage = compress($path, $compressfolder, '60');
+					$compressImage = compress(ROOT_DIR . $path, $compressfolder, '60');
 				} elseif ($file_compression === 3) {
 					$file_compression = 3;
-					$compressImage = compress($path, $compressfolder, '60');
-					$thumbnailImage = compress($path, $thumbnailfolder, '15');
+					$compressImage = compress(ROOT_DIR . $path, $compressfolder, '60');
+					$thumbnailImage = compress(ROOT_DIR . $path, $thumbnailfolder, '15');
 				}
 
 				// adjustment for _compress
@@ -281,10 +281,94 @@ function moveFile($filesName, $currentPath, $folder, $data = NULL, $type = 'rena
 	return [];
 }
 
+function unlinkOldFiles($data = null)
+{
+    if (empty($data) || !isset($data['files_name']) || !isset($data['files_folder'])) {
+        return false;
+    }
+
+    $filesName = $data['files_name'];
+    $folder = $data['files_folder'];
+    $file_compression = $data['files_compression'];
+    $files_path = $data['files_path'];
+    $ext = pathinfo($filesName, PATHINFO_EXTENSION);
+
+    // Remove extension from file name if present
+    $filesNameNoExt = pathinfo($filesName, PATHINFO_FILENAME);
+
+    $canCompress = ['jpg', 'png', 'jpeg', 'gif'];
+    if (in_array(pathinfo($filesName, PATHINFO_EXTENSION), $canCompress)) {
+        $compressfolder = ROOT_DIR . $folder . '/' . $filesNameNoExt . "_compress." . $ext;
+        $thumbnailfolder = ROOT_DIR . $folder . '/' . $filesNameNoExt . "_thumbnail." . $ext;
+
+        // 1 = full size only, 2 = full size & compressed, 3 = full size, compressed & thumbnail	
+        if ($file_compression === 2) {
+            if (file_exists($compressfolder)) {
+                unlink($compressfolder);
+            };
+        } elseif ($file_compression === 3) {
+            if (file_exists($compressfolder)) {
+                unlink($compressfolder);
+            }
+
+            if (file_exists($thumbnailfolder)) {
+                unlink($thumbnailfolder);
+            }
+        }
+    }
+
+    // Delete the original file
+    if (file_exists(ROOT_DIR . $files_path)) {
+        unlink(ROOT_DIR . $files_path);
+    }
+}
+
+function getFilesCompression($data, $compression = null)
+{
+    if (empty($data) || !isset($data['files_name']) || !isset($data['files_folder'])) {
+        return false;
+    }
+
+    $filesName = $data['files_name'];
+    $folder = $data['files_folder'];
+    $file_compression = empty($compression) ? $data['files_compression'] : $compression;
+    $files_path = $data['files_path'];
+    $ext = pathinfo($filesName, PATHINFO_EXTENSION);
+
+    // Remove extension from file name if present
+    $filesNameNoExt = pathinfo($filesName, PATHINFO_FILENAME);
+
+    $canCompress = ['jpg', 'png', 'jpeg', 'gif'];
+    if (in_array(pathinfo($filesName, PATHINFO_EXTENSION), $canCompress)) {
+        $compressfolder = $folder . '/' . $filesNameNoExt . "_compress." . $ext;
+        $thumbnailfolder = $folder . '/' . $filesNameNoExt . "_thumbnail." . $ext;
+
+        // 1 = full size only, 2 = full size & compressed, 3 = full size, compressed & thumbnail	
+        if ($file_compression === 2) {
+            if (file_exists(ROOT_DIR . $compressfolder)) {
+                 return $compressfolder;
+            }
+        } elseif ($file_compression === 3) {
+            if (file_exists(ROOT_DIR . $thumbnailfolder)) {
+                 return $thumbnailfolder;
+            }
+        }
+    }
+
+    // return the original file
+    return $files_path;
+}
+
 // Quality: quality is optional, and ranges from 0 (worst quality, smaller file) to 100 (best quality, biggest file),
 function compress($source, $destination, $quality = '100')
 {
+    if(!file_exists($source) && !is_readable($source)) {
+        throw new Exception("Source file does not exist or is not readable: " . $source);
+    }
+
 	$info = getimagesize($source);
+    $image = null;
+
 	if ($info['mime'] == 'image/jpeg')
 		$image = imagecreatefromjpeg($source);
 	elseif ($info['mime'] == 'image/gif')
@@ -292,14 +376,20 @@ function compress($source, $destination, $quality = '100')
 	elseif ($info['mime'] == 'image/png')
 		$image = imagecreatefrompng($source);
 
-	imagejpeg($image, $destination, $quality);
-
+    if ($image) {
+        imagejpeg($image, $destination, $quality);
+    }
+	
 	return $destination;
 }
 
 // Compress on the go
 function compressImageonthego($source, $quality)
 {
+    if(!file_exists($source) && !is_readable($source)) {
+        throw new Exception("Source file does not exist or is not readable: " . $source);
+    }
+
 	$info = getimagesize($source);
 	$extension = explode(".", $source);
 

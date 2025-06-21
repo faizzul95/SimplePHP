@@ -58,6 +58,22 @@
             }
         }
     }
+
+    async function updateCropperPhoto(modalTitle = null, id = null, entityId = null, entityFileType = null, entityType = null, currentImage = null, reloadFunction = null, folderGroup = 'unknown', folderType = 'unknown') {
+        const data = {
+            'id': id,
+            'entity_id': entityId,
+            'entity_type': entityType,
+            'entity_file_type': entityFileType,
+            'url': 'controllers/UploadController.php',
+            'imagePath': currentImage,
+            'reloadFunction': reloadFunction,
+            'folder_group': folderGroup,
+            'folder_type': folderType
+        };
+
+        loadFileContent('views/_templates/_uploadImageCropperModal.php', 'generalContent', '450px', modalTitle, data, 'offcanvas');
+    }
 </script>
 
 <?= include '_modalGeneral.php' ?>

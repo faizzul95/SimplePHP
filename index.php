@@ -1,7 +1,7 @@
     <!-- important -->
     <?php
     require_once 'init.php';
-    isLogin(true);
+    isLogin(true, 'isLoggedIn', REDIRECT_LOGIN);
     ?>
     
 

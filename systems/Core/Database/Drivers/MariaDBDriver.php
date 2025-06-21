@@ -351,6 +351,7 @@ class MariaDBDriver extends BaseDatabase
     public function count($table = null)
     {
         try {
+
             if (!empty($table)) {
                 $this->table = $table;
             }
@@ -363,12 +364,18 @@ class MariaDBDriver extends BaseDatabase
                 $this->_buildSelectQuery();
             }
 
-            $lastFromPos = strrpos($this->_query, 'FROM');
-            $sqlTotal = 'SELECT COUNT(*) as count ' . preg_replace(
-                '/\s+(ORDER\s+BY|LIMIT|OFFSET)\s+.*?(?=\s+(GROUP\s+BY|HAVING|UNION|;)|$)/i',
-                '',
-                substr($this->_query, $lastFromPos)
-            );
+            if (preg_match('/^(.*?)\bFROM\b(?![^(]*\))/i', $this->_query, $matches, PREG_OFFSET_CAPTURE)) {
+                $mainFromPos = $matches[1][1] + strlen($matches[1][0]);
+                $fromClause = substr($this->_query, $mainFromPos);
+                
+                $cleanFromClause = preg_replace(
+                    '/\s+(?:ORDER\s+BY\s+[^;]*?(?=\s*(?:LIMIT|OFFSET|;|$))|LIMIT\s+\d+(?:\s+OFFSET\s+\d+)?|OFFSET\s+\d+)(?=\s*(?:;|$))/i',
+                    '',
+                    $fromClause
+                );
+                
+                $sqlTotal = 'SELECT COUNT(*) as count ' . trim($cleanFromClause);
+            }
 
             // Execute the total count query
             $stmtTotal = $this->pdo[$this->connectionName]->prepare($sqlTotal);
@@ -483,7 +490,7 @@ class MariaDBDriver extends BaseDatabase
                 throw new \InvalidArgumentException('Unable to retrieve table columns');
             }
 
-            $uniqueByArray = (array) $uniqueBy;
+            $uniqueByArray = is_array($uniqueBy) ? $uniqueBy : explode(',', $uniqueBy);
             foreach ($uniqueByArray as $column) {
                 if (!in_array($column, $validColumns, true)) {
                     throw new \InvalidArgumentException("Invalid uniqueBy column: $column");

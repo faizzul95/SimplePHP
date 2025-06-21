@@ -819,7 +819,7 @@ class Request
 
     // SECURITY REQUEST
 
-    public function detectXss()
+    public function detectXss($ignoreList = null)
     {
         // Get all input data similar to unsafe() method
         $inputData = array_merge(
@@ -827,9 +827,19 @@ class Request
             $_POST,
             $this->getInputStreamData()
         );
+
+        $whitelistField = [];
+        if (!empty($ignoreList)) {
+            $whitelistField = is_array($ignoreList) ? $ignoreList : explode(',', $ignoreList);
+        }
         
         // Check each input value for XSS patterns
         foreach ($inputData as $key => $value) {
+
+            if (!empty($whitelistField) && in_array($key, $whitelistField)) {
+                continue; // Skip whitelisted fields
+            }
+
             if ($this->containsXss($value)) {
                 return true;
             }
@@ -841,7 +851,7 @@ class Request
             
             // Handle nested arrays recursively
             if (is_array($value)) {
-                if ($this->detectXssInArray($value)) {
+                if ($this->detectXssInArray($value, $whitelistField)) {
                     return true;
                 }
             }
@@ -850,15 +860,19 @@ class Request
         return false;
     }
 
-    private function detectXssInArray($array)
+    private function detectXssInArray($array, $ignoreList = null)
     {
         foreach ($array as $key => $value) {
+            if (!empty($ignoreList) && in_array($key, $ignoreList)) {
+                continue; // Skip whitelisted fields
+            }
+
             if ($this->containsXss($key) || $this->containsXss($value)) {
                 return true;
             }
             
             if (is_array($value)) {
-                if ($this->detectXssInArray($value)) {
+                if ($this->detectXssInArray($value, $ignoreList)) {
                     return true;
                 }
             }

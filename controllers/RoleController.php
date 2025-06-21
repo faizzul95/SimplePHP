@@ -38,7 +38,6 @@ function listRolesDatatable($request)
             'count' => number_format($row['profile_count']),
             'status' => $row['role_status'] ? '<span class="badge bg-label-success"> Active </span>' : '<span class="badge bg-label-warning"> Inactive </span>',
             'action' => "<center>
-                                <button class='btn btn-outline-dark btn-sm' onclick='updateAbilities(\"{$id}\")' title='Abilities'> <span class='tf-icons bx bx-key'></span> </button> 
                                 <button class='btn btn-primary btn-sm' onclick='editRecord(\"{$id}\")'> <span class='tf-icons bx bx-edit'></span> </button> 
                                 <button class='btn btn-danger btn-sm' {$delAction}> <span class='tf-icons bx bx-trash'></span> </button>
                             </center>"
@@ -119,4 +118,16 @@ function destroy($request)
     }
 
     jsonResponse(['code' => 200, 'message' => 'Role deleted']);
+}
+
+/*
+|--------------------------------------------------------------------------
+| LIST SELECT OPTION
+|--------------------------------------------------------------------------
+*/
+
+function listSelectOptionRole($request)
+{
+    $role = db()->table('master_roles')->safeOutput()->get();
+    jsonResponse(['code' => 200, 'data' => $role]);
 }
