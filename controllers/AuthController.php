@@ -146,7 +146,7 @@ function loginSessionStart($userData, $loginType = 1)
     return [
         'code' => 200,
         'message' => 'Login',
-        'redirectUrl' => url($redirectAuth),
+        'redirectUrl' => $redirectAuth,
     ];
 }
 
@@ -156,6 +156,6 @@ function logout()
     jsonResponse([
         'code' => 200,
         'message' => 'Logout',
-        'redirectUrl' => url(REDIRECT_LOGIN),
+        'redirectUrl' => REDIRECT_LOGIN,
     ]);
 }

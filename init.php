@@ -58,12 +58,25 @@ define('APP_ENV', ENVIRONMENT);
 
 $_ENV['APP_ENV'] = APP_ENV;
 
-// USE TO ADD NEW MENU AT SIDEBAR
+/*
+|--------------------------------------------------------------------------
+| HELPER FUNCTIONS
+|--------------------------------------------------------------------------
+*/
+
+loadHelperFiles();
+
+/*
+|--------------------------------------------------------------------------
+| MENU SIDEBAR (Admin)
+|--------------------------------------------------------------------------
+*/
+
 $menuList = [
     [
         'currentPage' => 'dashboard', // use in each file (without whitespace or any character)
         'desc' => 'Dashboard',
-        'url' => 'views/dashboard/admin.php',
+        'url' => url('views/dashboard/admin.php'),
         'icon' => 'tf-icons bx bx-home-smile',
         'permission' => null,
         'subpage' => [],
@@ -71,7 +84,7 @@ $menuList = [
     [
         'currentPage' => 'directory', // use in each file (without whitespace or any character)
         'desc' => 'Directory',
-        'url' => 'views/directory/users.php',
+        'url' => url('views/directory/users.php'),
         'icon' => 'tf-icons bx bx-user',
         'permission' => null,
         'subpage' => [],
@@ -86,7 +99,7 @@ $menuList = [
             [
                 'currentSubPage' => 'roles', // use in each file (without whitespace or any character)
                 'desc' => 'Roles',
-                'url' => 'views/rbac/roles.php',
+                'url' => url('views/rbac/roles.php'),
                 'permission' => null,
             ],
             [
