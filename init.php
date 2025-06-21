@@ -3,6 +3,7 @@
 ob_start();
 
 require_once __DIR__ . '/env.php';
+require_once __DIR__ . '/systems/hooks.php';
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
 define('REDIRECT_LOGIN', 'views/auth/login.php');
@@ -49,19 +50,6 @@ if (session_status() === PHP_SESSION_NONE) {
     session_regenerate_id(true); // Regenerate session to prevent fixation
 }
 
-function getProjectBaseUrl()
-{
-    $protocol = isset($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off' ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'];
-
-    // Get the first directory from the script path
-    $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
-    $pathSegments = explode('/', trim($scriptDir, '/'));
-    $projectFolder = !empty($pathSegments[0]) ? '/' . $pathSegments[0] : '';
-
-    return $protocol . '://' . $host . $projectFolder . '/';
-}
-
 define('ROOT_DIR', realpath(__DIR__) . DIRECTORY_SEPARATOR);
 define('BASE_URL', getProjectBaseUrl());
 define('APP_NAME', "SimplePHP");
@@ -69,47 +57,6 @@ define('APP_DIR', basename(BASE_URL));
 define('APP_ENV', ENVIRONMENT);
 
 $_ENV['APP_ENV'] = APP_ENV;
-
-// Keep existing autoload for systems classes if needed
-spl_autoload_register(function ($class) {
-    $baseDir = __DIR__ . '/systems/'; // root of class files
-    $classPath = str_replace('\\', DIRECTORY_SEPARATOR, $class);
-    $file = $baseDir . $classPath . '.php';
-
-    try {
-        if (file_exists($file) && is_readable($file)) {
-            require_once $file;
-        } else {
-            throw new Exception("File not found or not readable: $file");
-        }
-    } catch (Exception $e) {
-        die("Error: Unable to resolve file path for $file. " . $e->getMessage());
-    }
-});
-
-// Load all helper files from the helpers folder
-function loadHelperFiles()
-{
-    $helpersDir = __DIR__ . '/public/helpers/'; // root of helper files
-
-    // Get all PHP files in the General folder
-    $helperFiles = glob($helpersDir . '*.php');
-
-    foreach ($helperFiles as $file) {
-        try {
-            if (file_exists($file) && is_readable($file)) {
-                include_once $file;
-            } else {
-                throw new Exception("File not found or not readable: $file");
-            }
-        } catch (Exception $e) {
-            die("Error: Unable to resolve file path for $file. " . $e->getMessage());
-        }
-    }
-}
-
-// Call the function to load all helper files
-loadHelperFiles();
 
 // USE TO ADD NEW MENU AT SIDEBAR
 $menuList = [

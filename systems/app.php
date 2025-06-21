@@ -1,30 +1,22 @@
 <?php
 
 use Core\Database\Database;
-use Components\Logger;
-use Components\Debug;
 
-global $config, $dbObject, $debug, $logger;
+global $config, $dbObject, $logger;
 
-if (!empty($config['timezone']))
+$logger = logger();
+
+if (!empty($config['timezone'])) {
     date_default_timezone_set($config['timezone']);
-
-// Initialize Debug and Logger instances
-$debug = new Debug();
-$logger = new Logger(__DIR__ . '/../' . $config['error_log_path']);
+}
 
 /*
 |--------------------------------------------------------------------------
-| REQUEST 
+| HELPER FUNCTIONS
 |--------------------------------------------------------------------------
 */
 
-if (!function_exists('request')) {
-    function request()
-    {
-        return new \Components\Request();
-    }
-}
+loadHelperFiles();
 
 /*
 |--------------------------------------------------------------------------
@@ -90,19 +82,4 @@ if (!function_exists('db')) {
 |--------------------------------------------------------------------------
 */
 
-if (!function_exists('run_middlewares')) {
-    function run_middlewares(array $middlewares, $args = null)
-    {
-        foreach ($middlewares as $middleware) {
-            $class = "Middleware\\$middleware";
-            if (class_exists($class)) {
-                $instance = new $class();
-                if (method_exists($instance, 'run')) {
-                    $instance->run($args);
-                }
-            }
-        }
-    }
-}
-
-run_middlewares($config['middleware']);
+loadMiddlewaresFiles($config['middleware']);
