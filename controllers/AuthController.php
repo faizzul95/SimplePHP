@@ -106,6 +106,7 @@ function loginSessionStart($userData, $loginType = 1)
             $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
                 ->where('entity_file_type', 'USER_PROFILE');
         })
+        ->safeOutput()
         ->fetch();
 
     if (empty($userData['profile'])) {
@@ -159,4 +160,78 @@ function logout()
         'message' => 'Logout',
         'redirectUrl' => REDIRECT_LOGIN,
     ]);
+}
+
+function resetPassword($request)
+{
+    $id = decodeID(request()->input('id'));
+
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    $result = db()->table('users')->where('id', $id)->whereNotNull('email')->safeOutput()->fetch();
+
+    if (empty($result)) {
+        jsonResponse(['code' => 400, 'message' => 'User not found']);
+    }
+
+    $emailTemplate = db()->table('master_email_templates')->where('email_type', 'RESET_PASSWORD')->where('email_status', 1)->fetch();
+    if (empty($emailTemplate)) {
+        jsonResponse(['code' => 400, 'message' => 'No email template found']);
+    }
+
+    $email = $result['email'];
+    $name = $result['name'];
+
+    // Validate email format
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        jsonResponse(['code' => 400, 'message' => 'Invalid email address']);
+    }
+
+    try {
+        // Generate new password with 8 length
+        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+        $newPassword = '';
+
+        for ($i = 0; $i < 10; $i++) {
+            $newPassword .= $chars[rand(0, strlen($chars) - 1)];
+        }
+
+        // Hash the password and save to db
+        $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
+
+        // Create nice email body
+        $appName = defined('APP_NAME') ? APP_NAME : 'Our Application';
+
+        // Update password in database
+        $result = db()->table('users')->where('id', $id)->update(['password' => $hashedPassword, 'updated_at' => timestamp()]);
+
+        $sentStatus = false;
+        if (isSuccess($result['code'])) {
+
+            $recipientData = [
+                'recipient_email' => $email,
+                'recipient_name' => $name,
+            ];
+
+            $emailBody = replaceTextWithData($emailTemplate['email_body'], [
+                'new_password' => $newPassword,
+                'user_fullname' => $name,
+                'current_year' => date('Y'),
+                'app_name' => $appName,
+            ]);
+
+            $send = sendEmail($recipientData, $emailTemplate['email_subject'], $emailBody);
+            $sentStatus = (bool) $send['success'];
+        }
+
+        if ($sentStatus) {
+            jsonResponse(['code' => 200, 'message' => 'Email has been sent to customer']);
+        } else {
+            jsonResponse(['code' => 400, 'message' => 'Failed to send email']);
+        }
+    } catch (Exception $e) {
+        jsonResponse(['code' => 400, 'message' => 'Failed to reset password: ' . $e->getMessage()]);
+    }
 }

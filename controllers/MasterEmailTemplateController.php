@@ -1,0 +1,132 @@
+<?php
+
+// IMPORTANT: This file is part of the application
+require_once '../init.php';
+
+/*
+|--------------------------------------------------------------------------
+| LIST (SERVER-SIDE DATATABLE)  
+|--------------------------------------------------------------------------
+*/
+
+function listEmailTemplateDatatable($request)
+{
+    $status = request()->input('email_status');
+
+    $db = db();
+    $db->table('master_email_templates')->select('id, email_type, email_subject, email_status, email_cc, email_bcc');
+
+    if ($status == 0 || !empty($status)) {
+        $db->where('email_status', $status);
+    }
+
+    // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
+    $result = $db->setPaginateFilterColumn(['email_type', 'email_subject'])
+        ->safeOutput()
+        ->paginate_ajax(request()->all());
+
+    // Alter/formatting the data return
+    $result['data'] = array_map(function ($row) {
+        $id = encodeID($row['id']);
+
+        return [
+            'type' => $row['email_type'],
+            'subject' => $row['email_subject'],
+            'cc' => empty($row['email_cc']) ? 'NO' : 'YES',
+            'bcc' => empty($row['email_bcc']) ? 'NO' : 'YES',
+            'status' => $row['email_status'] ? '<span class="badge bg-label-success"> Active </span>' : '<span class="badge bg-label-warning"> Inactive </span>',
+            'action' => "<center>
+                                <button class='btn btn-primary btn-sm' onclick='editRecord(\"{$id}\")'> <span class='tf-icons bx bx-edit'></span> </button> 
+                                <button class='btn btn-danger btn-sm' onclick='deleteRecord(\"{$id}\")'> <span class='tf-icons bx bx-trash'></span> </button>
+                            </center>"
+        ];
+    }, $result['data']);
+
+    jsonResponse($result);
+}
+
+/*
+|--------------------------------------------------------------------------
+| SHOW OPERATION 
+|--------------------------------------------------------------------------
+*/
+
+function show($request)
+{
+    $id = decodeID(request()->input('id'));
+
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    // Can't use ->safeOutput() since need to update the email_body
+    $emailTemplate = db()->table('master_email_templates')->where('id', $id)->fetch();
+
+    if (!$emailTemplate) {
+        jsonResponse(['code' => 404, 'message' => 'Email template not found']);
+    }
+
+    jsonResponse(['code' => 200, 'data' => $emailTemplate]);
+}
+
+/*
+|--------------------------------------------------------------------------
+| INSERT/UPDATE OPERATION 
+|--------------------------------------------------------------------------
+*/
+
+function save($request)
+{
+    if (empty($request['email_subject'])) {
+        jsonResponse(['code' => 400, 'message' => 'Email subject is required']);
+    }
+
+    if (empty($request['email_type'])) {
+        jsonResponse(['code' => 400, 'message' => 'Email type is required']);
+    }
+
+    if (empty($request['email_body'])) {
+        jsonResponse(['code' => 400, 'message' => 'Description is required']);
+    }
+
+    // use upsert to reduce code & optimize for large records
+    $result = db()->table('master_email_templates')->upsert([
+        'email_type' => request()->input('email_type'),
+        'email_subject' => request()->input('email_subject'),
+        'email_body' => $request['email_body'],
+        'email_footer' => request()->input('email_footer'),
+        'email_cc' => request()->input('email_cc'),
+        'email_bcc' => request()->input('email_bcc'),
+        'email_status' => request()->input('email_status'),
+        'id' => request()->input('id'),
+    ]);
+
+    if (isError($result['code'])) {
+        jsonResponse(['code' => 422, 'message' => 'Failed to save email template']);
+    }
+
+    jsonResponse(['code' => 200, 'message' => 'Email template saved']);
+}
+
+/*
+|--------------------------------------------------------------------------
+| DELETE OPERATION 
+|--------------------------------------------------------------------------
+*/
+
+function destroy($request)
+{
+    $id = decodeID(request()->input('id'));
+
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    $result = db()->table('master_email_templates')->where('id', $id)->delete();
+
+    if (isError($result['code'])) {
+        jsonResponse(['code' => 422, 'message' => 'Failed to delete email template']);
+    }
+
+    jsonResponse(['code' => 200, 'message' => 'Email template deleted']);
+}

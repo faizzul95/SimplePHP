@@ -1103,16 +1103,15 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 break;
         }
 
-        if (!empty($value) || $value === 0) {
+        if ($value !== null && $value !== '') {
             if (is_array($value)) {
                 $this->_binds = array_merge($this->_binds, $value);
             } else {
                 // Check data type and add quotes if necessary
-                if (is_numeric($value) && (int)$value === $value) {
+                if (is_int($value) || (is_numeric($value) && (int)$value == $value)) {
                     $this->_binds[] = $value; // Integer, no quotes
                 } else {
-                    // $this->_binds[] = "'$value'"; // Add quotes for other data types
-                    $this->_binds[] = $value; // Bypass
+                    $this->_binds[] = $value; // Bypass, or add quotes if needed
                 }
             }
         }

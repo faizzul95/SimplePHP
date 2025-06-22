@@ -1,8 +1,8 @@
 <?php
 $loginRequired = true;
-$titlePage = "List Roles";
+$titlePage = "List Email Template";
 $currentPage = 'rbac';
-$currentSubPage = 'roles';
+$currentSubPage = 'email';
 $permission = ''; // All users can access this page if not set
 include_once __DIR__ . '/../_templates/header.php';
 ?>
@@ -23,10 +23,10 @@ include_once __DIR__ . '/../_templates/header.php';
                             <button type="button" class="btn btn-warning btn-sm float-end" onclick="getDataList()" title="Refresh">
                                 <i class='bx bx-refresh'></i>
                             </button>
-                            <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addRoles()" title="Refresh">
-                                <i class='bx bx-plus'></i> Add New Role
+                            <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="emailTemplateForm()" title="Refresh">
+                                <i class='bx bx-plus'></i> Add New Email Template
                             </button>
-                            <select id="filter_role_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
+                            <select id="filter_email_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All </option>
                                 <option value="1"> Active </option>
                                 <option value="0"> Inactive </option>
@@ -42,9 +42,10 @@ include_once __DIR__ . '/../_templates/header.php';
                                 <table id="dataList" class="table table-responsive table-hover table-striped table-bordered collapsed nowrap" width="100%">
                                     <thead class="table-dark">
                                         <tr>
-                                            <th style="color:white"> Name </th>
-                                            <th style="color:white"> Rank </th>
-                                            <th style="color:white"> Count </th>
+                                            <th style="color:white"> Email Type </th>
+                                            <th style="color:white"> Subject </th>
+                                            <th style="color:white"> CC </th>
+                                            <th style="color:white"> BCC </th>
                                             <th style="color:white"> Status </th>
                                             <th style="color:white"> Action </th>
                                         </tr>
@@ -68,29 +69,34 @@ include_once __DIR__ . '/../_templates/header.php';
 
         // GET DATATABLE (SERVER-SIDE)
         async function getDataList() {
-            generateDatatableServer('dataList', 'controllers/RoleController.php', 'nodataDiv', {
-                    'action': 'listRolesDatatable',
-                    'role_status': $("#filter_role_status").val()
+            generateDatatableServer('dataList', 'controllers/MasterEmailTemplateController.php', 'nodataDiv', {
+                    'action': 'listEmailTemplateDatatable',
+                    'email_status': $("#filter_email_status").val()
                 },
                 [{
-                        "data": "name",
-                        "width": "60%",
+                        "data": "type",
+                        "width": "20%",
                         "targets": 0
                     },
                     {
-                        "data": "rank",
-                        "width": "10%",
+                        "data": "subject",
+                        "width": "50%",
                         "targets": 1
                     },
                     {
-                        "data": "count",
-                        "width": "10%",
+                        "data": "cc",
+                        "width": "5%",
                         "targets": 2
+                    },
+                    {
+                        "data": "bcc",
+                        "width": "5%",
+                        "targets": 3
                     },
                     {
                         "data": "status",
                         "width": "5%",
-                        "targets": 3
+                        "targets": 4
                     },
                     {
                         // Action
@@ -106,22 +112,20 @@ include_once __DIR__ . '/../_templates/header.php';
                 ], 'bodyDiv');
         }
 
-        function addRoles() {
-            loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Add Roles', {}, 'offcanvas');
-            // $("#generaloffcanvas-right").css("z-index", "20000");
+        function emailTemplateForm(type = 'create', data = null) {
+            const modalTitle = (type == 'create') ? 'REGISTER EMAIL TEMPLATE' : 'UPDATE EMAIL TEMPLATE';
+            loadFileContent('views/rbac/_emailTemplateForm.php', 'generalContent', 'fullscreen', modalTitle, data);
         }
 
         async function editRecord(id) {
-            const res = await callApi('post', "controllers/RoleController.php", {
+            const res = await callApi('post', "controllers/MasterEmailTemplateController.php", {
                 'action': 'show',
                 'id': id
             });
 
-            const data = res.data.data;
-
             if (isSuccess(res)) {
-                loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Update Roles', data, 'offcanvas');
-                // $("#generaloffcanvas-right").css("z-index", "20000");
+                const data = res.data.data;
+                emailTemplateForm('update', data);
             }
         }
 
@@ -140,7 +144,7 @@ include_once __DIR__ . '/../_templates/header.php';
                 },
             }).then(async (result) => {
                 if (result.isConfirmed) {
-                    const res = await callApi('post', "controllers/RoleController.php", {
+                    const res = await callApi('post', "controllers/MasterEmailTemplateController.php", {
                         'action': 'destroy',
                         'id': id
                     });
@@ -153,10 +157,6 @@ include_once __DIR__ . '/../_templates/header.php';
                     }
                 }
             })
-        }
-
-        async function updateAbilities(id) {
-            alert('Function not ready to update abilities for ' + id);
         }
     </script>
 <?php } else {

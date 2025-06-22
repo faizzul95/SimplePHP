@@ -72,7 +72,7 @@ $config['db'] = [
         ],
         'production' => [
             'driver' => 'mysql',
-            'host' => '',
+            'host' => 'localhost',
             'username' => 'root',
             'password' => '',
             'database' => '',
@@ -118,13 +118,13 @@ $config['db'] = [
 |--------------------------------------------------------------------------
 */
 $config['mail'] = [
-    'driver' => 'smtp', // smtp 
-    'host' => 'smtp.gmail.com',
-    'port' => 587,
-    'username' => '',
-    'password' => '',
-    'encryption' => 'TLS',
+    'driver'     => 'smtp',
+    'host'       => 'smtp.gmail.com',
+    'port'       => 587,
+    'username'   => '',
+    'password'   => '',  // need to set here https://myaccount.google.com/apppasswords
+    'encryption' => 'tls',
     'from_email' => '',
-    'from_name' => '',
-    'debug' => TRUE, // TRUE/FALSE, use for smtp driver only
+    'from_name'  => APP_NAME,
+    'debug'      => false,
 ];

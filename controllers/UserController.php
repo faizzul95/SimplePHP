@@ -60,6 +60,8 @@ function listUserDatatable($request)
                                 <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>
                             </a>' : '';
 
+        $resetPassAction = "<a class='btn btn-sm btn-outline-info' href='javascript:void(0);' onclick=\"resetPassword('{$id}')\" title='Reset password to default'> <span class='tf-icons bx bx-key'></span> </a>";
+
         return [
             'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">
                             <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '">
@@ -70,6 +72,7 @@ function listUserDatatable($request)
             'gender' => $row['user_gender'] == 1 ? 'Male' : 'Female',
             'status' => $status[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>',
             'action' => "<center>
+                                {$resetPassAction}
                                 <button class='btn btn-primary btn-sm' onclick='editRecord(\"{$id}\")' title='Edit' > <span class='tf-icons bx bx-edit'></span> </button> 
                                 <button class='btn btn-danger btn-sm' onclick='deleteRecord(\"{$id}\")' title='Delete'> <span class='tf-icons bx bx-trash'></span> </button>
                             </center>"

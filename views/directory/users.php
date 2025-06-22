@@ -199,6 +199,36 @@ include_once __DIR__ . '/../_templates/header.php';
                 }
             })
         }
+
+        async function resetPassword(id) {
+            Swal.fire({
+                title: 'Are you sure?',
+                html: 'This will reset the user\'s password. The user will need to change their password upon next login.<br><br><strong>Do you want to continue?</strong>',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#3085d6',
+                cancelButtonColor: '#d33',
+                confirmButtonText: 'Yes, Reset NOW!',
+                reverseButtons: true,
+                customClass: {
+                    container: 'swal2-customCss'
+                },
+            }).then(async (result) => {
+                if (result.isConfirmed) {
+                    const res = await callApi('post', "controllers/AuthController.php", {
+                        'action': 'resetPassword',
+                        'id': id
+                    });
+
+                    if (isSuccess(res)) {
+                        const response = res.data;
+                        noti(response.code, response.message);
+
+                        getDataList(); // reload
+                    }
+                }
+            })
+        }
     </script>
 <?php } else {
     show_403();
