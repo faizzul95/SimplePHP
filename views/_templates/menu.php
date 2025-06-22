@@ -39,7 +39,7 @@
                  </svg>
 
              </span>
-             <span class="app-brand-text demo menu-text fw-bolder ms-2">Sneat</span>
+             <span class="app-brand-text demo menu-text fw-bolder ms-2">VacayRia</span>
          </a>
 
          <a href="javascript:void(0);" class="layout-menu-toggle menu-link text-large ms-auto">
@@ -54,6 +54,10 @@
             foreach ($menuList as $menu) {
                 $currentActive = $currentPage == $menu['currentPage'] ? 'active' : '';
 
+                if(permission($menu['permission'] ?? null) === false) {
+                    continue; // Skip this menu item if permission is not granted
+                }
+
                 // Check if this menu has subpages
                 if (!empty($menu['subpage'])) {
                     // Menu item with subpages
@@ -67,6 +71,11 @@
 
                             // Loop through subpages
                             foreach ($menu['subpage'] as $subpage) {
+
+                                if(permission($subpage['permission'] ?? null) === false) {
+                                    continue; // Skip this menu item if permission is not granted
+                                }
+                
                                 $currentSubActive = (isset($currentSubPage) && $currentSubPage == $subpage['currentSubPage']) ? 'active' : '';
 
                                 echo '<li class="menu-item ' . $currentSubActive . '">

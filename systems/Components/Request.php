@@ -488,7 +488,20 @@ class Request
         if (($pos = strpos($uri, '?')) !== false) {
             $uri = substr($uri, 0, $pos);
         }
+
         return ltrim($uri, '/');
+    }
+
+    /**
+     * Get a all part of the request URL by index
+     * 
+     * @return array The URL part or null if not found
+     */
+    public function AllSegments()
+    {
+        $uri = $this->uri();
+        $parts = explode('/', trim($uri, '/'));
+        return $parts;
     }
 
     /**

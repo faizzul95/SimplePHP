@@ -9,15 +9,37 @@
 if (!function_exists('getProjectBaseUrl')) {
     function getProjectBaseUrl()
     {
-        $protocol = isset($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off' ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'];
+        $isHttps = (
+            (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off') ||
+            (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') ||
+            (!empty($_SERVER['HTTP_X_FORWARDED_SSL']) && strtolower($_SERVER['HTTP_X_FORWARDED_SSL']) === 'on') ||
+            (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
+        );
 
-        // Get the first directory from the script path
-        $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
-        $pathSegments = explode('/', trim($scriptDir, '/'));
-        $projectFolder = !empty($pathSegments[0]) ? '/' . $pathSegments[0] : '';
+        $protocol = $isHttps ? 'https' : 'http';
 
-        return $protocol . '://' . $host . $projectFolder . '/';
+        // Check if we're on localhost
+        $host = $_SERVER['HTTP_HOST'] ?? '';
+        $isLocalhost = (
+            strpos($host, 'localhost') !== false ||
+            strpos($host, '127.0.0.1') !== false ||
+            strpos($host, '::1') !== false ||
+            preg_match('/^192\.168\./', $host) ||
+            preg_match('/^10\./', $host) ||
+            preg_match('/^172\.(1[6-9]|2[0-9]|3[0-1])\./', $host)
+        );
+
+        if ($isLocalhost) {
+            // For localhost, include the project folder
+            $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
+            $pathSegments = explode('/', trim($scriptDir, '/'));
+            $projectFolder = !empty($pathSegments[0]) ? '/' . $pathSegments[0] : '';
+
+            return $protocol . '://' . $host . $projectFolder . '/';
+        } else {
+            // For production, just return domain
+            return $protocol . '://' . $host . '/';
+        }
     }
 }
 

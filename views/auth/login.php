@@ -27,7 +27,7 @@
         content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
 
     <!-- important -->
-    <?php include '../../init.php'; ?>
+    <?php require_once '../../init.php'; ?>
 
     <title><?= APP_NAME ?> | Login </title>
 

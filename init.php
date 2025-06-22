@@ -86,15 +86,15 @@ $menuList = [
         'desc' => 'Directory',
         'url' => url('views/directory/users.php'),
         'icon' => 'tf-icons bx bx-user',
-        'permission' => null,
+        'permission' => 'user-view',
         'subpage' => [],
     ],
     [
-        'currentPage' => 'config', // use in each file (without whitespace or any character)
+        'currentPage' => 'rbac', // use in each file (without whitespace or any character)
         'desc' => 'Roles Management',
         'url' => 'javascript:void(0);',
         'icon' => 'tf-icons bx bx-shield-quarter',
-        'permission' => null,
+        'permission' => 'management-view',
         'subpage' => [
             [
                 'currentSubPage' => 'roles', // use in each file (without whitespace or any character)

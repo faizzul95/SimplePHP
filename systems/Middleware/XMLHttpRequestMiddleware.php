@@ -20,11 +20,22 @@ class XMLHttpRequestMiddleware
 
         if (isAjax()) {
             $action = request()->input('action');
-            $controllers = request()->segment(1);
+
+            // Initialize controllers and fileName to null
+            $controllers = null;
+            $fileName = null;
+
+            // Find the index of 'controllers' and get the next segment as file name
+            $allParts = request()->AllSegments();
+            $controllersIndex = array_search('controllers', $allParts);
+
+            if ($controllersIndex !== false && isset($allParts[$controllersIndex + 1])) {
+                $controllers = $allParts[$controllersIndex];
+                $fileName = $allParts[$controllersIndex + 1];
+            } 
 
             if ($action !== 'modal' && $controllers === 'controllers' && in_array(request()->method(), ['POST', 'GET'])) {
                 $this->security();
-                $fileName = request()->segment(2);
                 $this->next($controllers, $action, $fileName);
             }
         }
@@ -59,7 +70,7 @@ class XMLHttpRequestMiddleware
         if (!empty($security['throttle_request']) && $security['throttle_request'] === true) {
             $this->isRateLimiting();
         }
-        
+
         // XSS protection if enabled
         if (!empty($security['xss_request']) && $security['xss_request'] === true) {
             $whiteListField = request()->input('_whitelist_field');

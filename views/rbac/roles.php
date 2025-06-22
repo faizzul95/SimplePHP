@@ -1,7 +1,7 @@
 <?php
 $loginRequired = true;
 $titlePage = "List Roles";
-$currentPage = 'config';
+$currentPage = 'rbac';
 $currentSubPage = 'roles';
 $permission = ''; // All users can access this page if not set
 include_once __DIR__ . '/../_templates/header.php';
