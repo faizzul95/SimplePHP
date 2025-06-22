@@ -47,7 +47,10 @@ switch (ENVIRONMENT)
 // Start session only if it hasn't been started already
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
-    session_regenerate_id(true); // Regenerate session to prevent fixation
+    if (!isset($_SESSION['last_regeneration']) || (time() - $_SESSION['last_regeneration']) > 300) {
+        session_regenerate_id(true);
+        $_SESSION['last_regeneration'] = time();
+    }
 }
 
 define('ROOT_DIR', realpath(__DIR__) . DIRECTORY_SEPARATOR);
