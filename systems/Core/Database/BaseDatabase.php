@@ -1103,7 +1103,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 break;
         }
 
-        if (!empty($value) || $value == 0) {
+        if (!empty($value) || $value === 0) {
             if (is_array($value)) {
                 $this->_binds = array_merge($this->_binds, $value);
             } else {

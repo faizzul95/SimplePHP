@@ -92,7 +92,6 @@ include_once __DIR__ . '/../_templates/header.php';
 
             if (isSuccess(res)) {
                 const data = res.data.data;
-                console.log(data);
                 $('#userActive').text(data.userActive);
                 $('#userInactive').text(data.userInactive);
                 $('#userSuspended').text(data.userSuspended);

@@ -56,9 +56,10 @@ function listUserDatatable($request)
         $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
 
         $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$id}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
-        $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 20px; right: -10px;" title="Change profile">
-                                <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 50%; transform: translateY(-50%);"></i>
+        $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 18px; right: -10px;" title="Change profile">
+                                <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>
                             </a>' : '';
+
         return [
             'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">
                             <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '">
@@ -137,15 +138,30 @@ function save($request)
         jsonResponse(['code' => 400, 'message' => 'Email is required']);
     }
 
-    if (empty($request['id'])) {
-        $dataNewUser = ['username' => request()->input('username'), 'password' => password_hash(request()->input('password'), PASSWORD_DEFAULT)];
-        $data = array_merge(request()->all(), $dataNewUser);
-    } else {
-        $data = request()->all();
+    $data = request()->all();
+
+    if (isset($data['id'])) {
+        unset($data['id']); // Remove ID from data if exists, 
     }
 
-    // use upsert to reduce code & optimize for large records
-    $result = db()->table('users')->upsert($data);
+    if (empty($request['id'])) {
+
+        $username = request()->input('username');
+        if (empty($username)) {
+            $username = request()->input('email');;
+        }
+
+        $password = request()->input('password');
+        if (empty($password)) {
+            $password = request()->input('user_contact_no');
+        }
+
+        $data = array_merge($data, ['username' => $username, 'password' => password_hash($password, PASSWORD_DEFAULT), 'created_at' => timestamp()]);
+        $result = db()->table('users')->insert($data);
+    } else {
+        $id = request()->input('id');
+        $result = db()->table('users')->where('id', $id)->update(array_merge($data, ['updated_at' => timestamp()]));
+    }
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to save user']);
@@ -154,14 +170,14 @@ function save($request)
     // If the user ID is not set, it means we are creating a new user
     if (empty($request['id'])) {
         db()->table('user_profile')->insert([
-            'user_id' => $request['id'],
+            'user_id' => $result['id'],
             'role_id' => $request['role_id'],
             'profile_status' => 1,
             'is_main' => 1,
             'created_at' => timestamp(),
-        ], 'user_id');
+        ]);
     } else {
-        db()->table('user_profile')->where('user_id', $request['id'])->update([
+        db()->table('user_profile')->where('user_id', $id)->update([
             'role_id' => $request['role_id'],
             'profile_status' => 1,
             'is_main' => 1,

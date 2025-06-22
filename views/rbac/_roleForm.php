@@ -3,21 +3,21 @@
     <div class="row">
         <div class="col-12">
             <label class="form-label"> Name <span class="text-danger">*</span> </label>
-            <input type="text" id="role_name" name="role_name" class="form-control" onkeyup="this.value = this.value.toUpperCase();" autocomplete="off" require>
+            <input type="text" id="role_name" name="role_name" class="form-control" onkeyup="this.value = this.value.toUpperCase();" autocomplete="off" required>
         </div>
     </div>
 
     <div class="row mt-3">
         <div class="col-12">
             <label class="form-label"> Rank <span class="text-danger">*</span> </label>
-            <input type="text" id="role_rank" name="role_rank" class="form-control" autocomplete="off" require>
+            <input type="text" id="role_rank" name="role_rank" class="form-control" autocomplete="off" required>
         </div>
     </div>
 
     <div class="row mt-3">
         <div class="col-12">
             <label class="form-label"> Status <span class="text-danger">*</span> </label>
-            <select id="role_status" name="role_status" class="form-control" require>
+            <select id="role_status" name="role_status" class="form-control" required>
                 <option value=""> - Select - </option>
                 <option value="0"> Inactive </option>
                 <option value="1"> Active </option>

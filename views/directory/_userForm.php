@@ -140,8 +140,8 @@
             'user_preferred_name': 'required|min:3|max:255',
             'email': 'required|email|max_length:255',
             'user_contact_no': 'required|integer|min_length:10|max_length:15',
-            'role_id': 'required|integer|min:0',
-            'user_status': 'required|integer|min:1',
+            'role_id': 'required|integer|min:1',
+            'user_status': 'required|integer|min:0',
             'id': 'integer',
         };
 

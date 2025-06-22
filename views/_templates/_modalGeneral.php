@@ -106,3 +106,22 @@
 		<div class="p-2" id="offCanvasContent-right">Please add content</div>
 	</div>
 </div>
+
+<!-- Modal Preview PDF -->
+<div class="modal fade" id="previewPdfModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
+	<div class="modal-dialog modal-dialog-scrollable modal-lg">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title" id="previewPdfModalLabel">Preview</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+			</div>
+			<div class="modal-body">
+				<div id="showNotFoundPDF" class="col-xl-12 col-lg-12 col-md-12 col-sm-12 col-12"></div>
+				<div id="showPDF" style="display: none;"></div>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-danger" data-bs-dismiss="modal">Close</button>
+			</div>
+		</div>
+	</div>
+</div>
