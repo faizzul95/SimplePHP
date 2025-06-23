@@ -141,11 +141,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/summernote/0.9.1/summernote-bs5.min.js" crossorigin="anonymous"></script>
 
 <script>
-    // Initialize Summernote when document is ready
-    $(document).ready(function() {
-        initializeSummernote();
-    });
-
     function initializeSummernote() {
         $('#editor').summernote({
             callbacks: {
@@ -169,7 +164,7 @@
                 ['color', ['color']],
                 ['para', ['ul', 'ol', 'paragraph']],
                 ['table', ['table']],
-                ['insert', ['link', 'picture', 'video']],
+                // ['insert', ['link', 'picture', 'video']],
                 ['view', ['fullscreen', 'codeview', 'help']]
             ],
             styleTags: [
@@ -186,10 +181,13 @@
     }
 
     function getPassData(baseUrl, data) {
-        // Initialize Summernote if not already initialized
-        if (!$('#editor').hasClass('note-editable')) {
-            initializeSummernote();
-        }
+
+        setTimeout(function() {
+            // Initialize Summernote if not already initialized
+            if (!$('#editor').hasClass('note-editable')) {
+                initializeSummernote();
+            }
+        }, 100);
 
         if (!empty(data)) {
             // Populate form fields

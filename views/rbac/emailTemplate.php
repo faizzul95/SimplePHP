@@ -104,7 +104,6 @@ include_once __DIR__ . '/../_templates/header.php';
                         "render": function(data, type, row) {
                             return data;
                         },
-                        "width": "15%",
                         "targets": -1,
                         "searchable": false,
                         "orderable": false

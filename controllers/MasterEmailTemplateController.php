@@ -60,7 +60,7 @@ function show($request)
     }
 
     // Can't use ->safeOutput() since need to update the email_body
-    $emailTemplate = db()->table('master_email_templates')->where('id', $id)->fetch();
+    $emailTemplate = db()->table('master_email_templates')->where('id', $id)->safeOutputWithException(['email_body'])->fetch();
 
     if (!$emailTemplate) {
         jsonResponse(['code' => 404, 'message' => 'Email template not found']);
@@ -89,17 +89,24 @@ function save($request)
         jsonResponse(['code' => 400, 'message' => 'Description is required']);
     }
 
-    // use upsert to reduce code & optimize for large records
-    $result = db()->table('master_email_templates')->upsert([
+    $dataToSave = [
         'email_type' => request()->input('email_type'),
         'email_subject' => request()->input('email_subject'),
-        'email_body' => $request['email_body'],
+        'email_body' => $request['email_body'], //  use $request to escape from sanitize since this will save as html code
         'email_footer' => request()->input('email_footer'),
         'email_cc' => request()->input('email_cc'),
         'email_bcc' => request()->input('email_bcc'),
-        'email_status' => request()->input('email_status'),
-        'id' => request()->input('id'),
-    ]);
+        'email_status' => request()->input('email_status')
+    ];
+
+    if (empty($request['id'])) {
+        $result = db()->table('master_email_templates')
+            ->insert(array_merge($dataToSave, ['created_at' => timestamp()]));
+    } else {
+        $result = db()->table('master_email_templates')
+            ->where('id', request()->input('id'))
+            ->update(array_merge($dataToSave, ['updated_at' => timestamp()]));
+    }
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to save email template']);

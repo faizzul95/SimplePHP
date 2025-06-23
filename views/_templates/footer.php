@@ -59,7 +59,18 @@
         }
     }
 
-    async function updateCropperPhoto(modalTitle = null, id = null, entityId = null, entityFileType = null, entityType = null, currentImage = null, reloadFunction = null, folderGroup = 'unknown', folderType = 'unknown') {
+    async function updateCropperPhoto(
+        modalTitle = null,
+        id = null,
+        entityId = null,
+        entityFileType = null,
+        entityType = null,
+        currentImage = null,
+        reloadFunction = null,
+        folderGroup = 'unknown',
+        folderType = 'unknown',
+        cropperConfig = {} 
+    ) {
         const data = {
             'id': id,
             'entity_id': entityId,
@@ -69,10 +80,11 @@
             'imagePath': currentImage,
             'reloadFunction': reloadFunction,
             'folder_group': folderGroup,
-            'folder_type': folderType
+            'folder_type': folderType,
+            'cropperConfig': cropperConfig 
         };
 
-        loadFileContent('views/_templates/_uploadImageCropperModal.php', 'generalContent', '450px', modalTitle, data, 'offcanvas');
+        loadFileContent('views/_templates/_uploadImageCropperModal.php', 'generalContent', '480px', modalTitle, data, 'offcanvas');
     }
 </script>
 

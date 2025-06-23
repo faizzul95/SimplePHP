@@ -143,7 +143,6 @@ include_once __DIR__ . '/../_templates/header.php';
                         "render": function(data, type, row) {
                             return data;
                         },
-                        "width": "15%",
                         "targets": -1,
                         "searchable": false,
                         "orderable": false
@@ -153,7 +152,6 @@ include_once __DIR__ . '/../_templates/header.php';
 
         function addUser() {
             loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Add User', {}, 'offcanvas');
-            // $("#generaloffcanvas-right").css("z-index", "20000");
         }
 
         async function editRecord(id) {
@@ -166,7 +164,6 @@ include_once __DIR__ . '/../_templates/header.php';
 
             if (isSuccess(res)) {
                 loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Update User', data, 'offcanvas');
-                // $("#generaloffcanvas-right").css("z-index", "20000");
             }
         }
 

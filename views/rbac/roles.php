@@ -98,7 +98,6 @@ include_once __DIR__ . '/../_templates/header.php';
                         "render": function(data, type, row) {
                             return data;
                         },
-                        "width": "15%",
                         "targets": -1,
                         "searchable": false,
                         "orderable": false
@@ -108,7 +107,6 @@ include_once __DIR__ . '/../_templates/header.php';
 
         function addRoles() {
             loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Add Roles', {}, 'offcanvas');
-            // $("#generaloffcanvas-right").css("z-index", "20000");
         }
 
         async function editRecord(id) {
@@ -121,7 +119,6 @@ include_once __DIR__ . '/../_templates/header.php';
 
             if (isSuccess(res)) {
                 loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Update Roles', data, 'offcanvas');
-                // $("#generaloffcanvas-right").css("z-index", "20000");
             }
         }
 

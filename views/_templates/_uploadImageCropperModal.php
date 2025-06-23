@@ -1,5 +1,5 @@
 <div class="row">
-	<form id="changeProfilePicture" method="POST" action="controllers/UploadController.php">
+	<form id="changePictureUpload" method="POST" action="controllers/UploadController.php">
 		<div class="col-12">
 			<input id="image" type="file" name="change_image" class="form-control mb-4" accept="image/x-png,image/jpeg,image/jpg">
 
@@ -48,6 +48,10 @@
 				<input type="hidden" name="folder_group" id="folder_group" placeholder="folder_group" readonly>
 				<input type="hidden" name="folder_type" id="folder_type" placeholder="folder_type" readonly>
 				<input type="hidden" name="_whitelist_field" value="image" readonly>
+				<button type="button" id="deleteBtn" class="btn btn-outline-danger d-none">
+					<i class="bx bx-trash me-1"></i>
+					Delete
+				</button>
 				<button type="submit" id="uploadBtn" class="btn btn-info">
 					<i class="bx bx-upload me-1"></i>
 					Upload
@@ -80,15 +84,24 @@
 		$('#undoBtn').hide();
 		$('#redoBtn').hide();
 
-		$('#changeProfilePicture').attr('action', data.url);
+		$('#changePictureUpload').attr('action', data.url);
 
 		// reloadFunction = data.reloadFunction;
+		$('#deleteBtn').addClass('d-none');
 
-		if (hasData(data.imagePath)) {
+		if (!empty(data.id)) {
+			$('#deleteBtn').removeClass('d-none');
+			document.getElementById('deleteBtn').onclick = function() {
+				removeFilesUpload(data.id);
+			};
+		}
+
+		var cropperConfig = data.cropperConfig || {};
+		if (!empty(data.imagePath)) {
 			var imageUrl = asset(data.imagePath, false);
 
 			setTimeout(function() {
-				initializeCropper();
+				initializeCropper(cropperConfig);
 				$.getImage(imageUrl, croppie);
 				$("#uploadBtn").attr('disabled', false);
 				$('#undoBtn').show();
@@ -109,19 +122,26 @@
 		}
 	}
 
-	function initializeCropper() {
+	function initializeCropper(config = {}) {
 		destroyCropper();
 		var el = document.getElementById('resizer');
 
+		// Set defaults and override with config
+		var viewportWidth = config.viewportWidth || 250;
+		var viewportHeight = config.viewportHeight || 250;
+		var boundaryWidth = config.boundaryWidth || 350;
+		var boundaryHeight = config.boundaryHeight || 350;
+		var type = config.type || 'square';
+
 		croppie = new Croppie(el, {
 			viewport: {
-				width: 250,
-				height: 250,
-				type: 'square'
+				width: viewportWidth,
+				height: viewportHeight,
+				type: type
 			},
 			boundary: {
-				width: 350,
-				height: 350
+				width: boundaryWidth,
+				height: boundaryHeight
 			},
 
 			// // resize controls
@@ -219,7 +239,7 @@
 			}, 100);
 		});
 
-		$("#changeProfilePicture").submit(function(event) {
+		$("#changePictureUpload").submit(function(event) {
 
 			event.preventDefault();
 
@@ -247,12 +267,12 @@
 
 							const submitBtnText = $('#uploadBtn').html();
 							loadingBtn('uploadBtn', true); // block button from submit
-							const res = await uploadApi(url, 'changeProfilePicture', 'uploadAvatarProgressBar', reloadFunction);
+							const res = await uploadApi(url, 'changePictureUpload', 'uploadPhotoProgressBar', reloadFunction);
 
 							if (isSuccess(res)) {
 								const result = res.data;
 								closeOffcanvas('#generaloffcanvas-right');
-								noti(res.status, 'Profile uploaded');
+								noti(res.status, 'Image uploaded');
 							} else {
 								noti(res.status);
 							}
@@ -290,5 +310,35 @@
 		};
 
 		return validationJs(rules, message);
+	}
+
+	function removeFilesUpload(id) {
+		Swal.fire({
+			title: 'Are you sure?',
+			html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
+			icon: 'warning',
+			showCancelButton: true,
+			confirmButtonColor: '#3085d6',
+			cancelButtonColor: '#d33',
+			confirmButtonText: 'Yes, Remove it!',
+			reverseButtons: true,
+			customClass: {
+				container: 'swal2-customCss'
+			},
+		}).then(async (result) => {
+			if (result.isConfirmed) {
+				const res = await callApi('post', "controllers/UploadController.php", {
+					'action': 'removeUploadFiles',
+					'id': id
+				});
+
+				if (isSuccess(res)) {
+					const response = res.data;
+					noti(response.code, response.message);
+					closeOffcanvas('#generaloffcanvas-right');
+					getDataList(); // reload
+				}
+			}
+		})
 	}
 </script>

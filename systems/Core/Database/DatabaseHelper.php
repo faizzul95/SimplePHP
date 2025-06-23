@@ -35,9 +35,10 @@ class DatabaseHelper
      * Sanitize input data to prevent XSS and SQL injection attacks based on the secure flag.
      *
      * @param mixed $value The input data to sanitize.
+     * @param array $ignoreList List of keys/columns to ignore during sanitization.
      * @return mixed|null The sanitized input data or null if $value is null or empty.
      */
-    protected function sanitize($value = null)
+    protected function sanitize($value = null, $ignoreList = [])
     {
         // Check if $value is not null or empty
         if (!isset($value) || is_null($value)) {
@@ -54,7 +55,16 @@ class DatabaseHelper
             case 'boolean':
                 return (bool) $value;
             case 'array':
-                return array_map([$this, 'sanitize'], $value);
+                $result = [];
+                foreach ($value as $key => $val) {
+                    // If the key is in ignoreList, skip sanitization for this key
+                    if (in_array($key, $ignoreList, true)) {
+                        $result[$key] = $val;
+                    } else {
+                        $result[$key] = $this->sanitize($val, $ignoreList);
+                    }
+                }
+                return $result;
             default:
                 return $value;
         }

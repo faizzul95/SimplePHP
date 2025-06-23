@@ -87,8 +87,14 @@ function save($request)
         jsonResponse(['code' => 400, 'message' => 'Role rank is required']);
     }
 
-    // use upsert to reduce code & optimize for large records
-    $result = db()->table('master_roles')->upsert(request()->all());
+    if (empty($request['id'])) {
+        $result = db()->table('master_roles')
+            ->insert(array_merge(request()->all(), ['created_at' => timestamp()]));
+    } else {
+        $result = db()->table('master_roles')
+            ->where('id', request()->input('id'))
+            ->update(array_merge(request()->all(), ['updated_at' => timestamp()]));
+    }
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to save role']);

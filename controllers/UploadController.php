@@ -161,3 +161,36 @@ function uploadImageCropper($request)
 
     jsonResponse($response);
 }
+
+/*
+|--------------------------------------------------------------------------
+| DELETE UPLOAD FILES
+|--------------------------------------------------------------------------
+*/
+
+function removeUploadFiles($request)
+{
+    $id = decodeID(request()->input('id'));
+
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    $files = db()->table('entity_files')->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
+        ->where('id', $id)
+        ->fetch();
+
+    if (empty($files)) {
+        jsonResponse(['code' => 400, 'message' => 'No files data found']);
+    }
+
+    $result = db()->table('entity_files')->where('id', $id)->delete();
+
+    if (isError($result['code'])) {
+        jsonResponse(['code' => 422, 'message' => 'Failed to delete files']);
+    }
+
+    unlinkOldFiles($files);
+
+    jsonResponse(['code' => 200, 'message' => 'Files deleted']);
+}

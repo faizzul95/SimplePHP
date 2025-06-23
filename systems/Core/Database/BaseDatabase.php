@@ -126,6 +126,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $_secureOutput = false;
 
     /**
+     * @var array The list of column that will be ignore to sanitize
+     */
+    protected $_secureOutputExeception = [];
+
+    /**
      * @var array An array to store the bound parameters.
      */
     protected $_binds = [];
@@ -250,7 +255,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->listDatabaseDriverSupport[$dbPlatform];
     }
 
-    public function getDriver() {
+    public function getDriver()
+    {
         return $this->pdo[$this->connectionName]->getAttribute(\PDO::ATTR_DRIVER_NAME);
     }
 
@@ -458,7 +464,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 return $this;
             }
 
-             // If it's an array, we'll assume it's a key-value pair of conditions
+            // If it's an array, we'll assume it's a key-value pair of conditions
             if (is_array($columnName)) {
                 foreach ($columnName as $key => $val) {
                     $this->orWhere($key, $val);
@@ -1193,7 +1199,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     # Implement QueryInterface logic
 
-    public function selectQuery($statement, $binds = null, $fetchType = 'get') {
+    public function selectQuery($statement, $binds = null, $fetchType = 'get')
+    {
         if (empty($statement)) {
             throw new \InvalidArgumentException('Query statement cannot be null in `selectQuery()` function.');
         }
@@ -1229,7 +1236,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->db_error_log($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
-      
+
         // Reset safeOutput
         $this->safeOutput(false);
 
@@ -1288,7 +1295,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         ];
 
         $queryType = $queryTypesList[$firstWord] ?? 'SELECT';
-        
+
         try {
 
             // Prepare the query statement
@@ -1315,7 +1322,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             } else {
                 // For DDL/DML queries, return status information
                 $affectedRows = $stmt->rowCount();
-                
+
                 $messages = [
                     'INSERT' => $success ? 'Data inserted successfully' : 'Failed to insert data',
                     'UPDATE' => $success ? 'Data updated successfully' : 'Failed to update data',
@@ -1330,7 +1337,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                     'REVOKE' => $success ? 'Privileges revoked successfully' : 'Failed to revoke privileges',
                     'SET' => $success ? 'Variable set successfully' : 'Failed to set variable'
                 ];
-                
+
                 $statusCodes = [
                     'INSERT' => $success ? 201 : 422,
                     'UPDATE' => $success ? 200 : 422,
@@ -1345,7 +1352,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                     'REVOKE' => $success ? 200 : 422,
                     'SET' => $success ? 200 : 422
                 ];
-                
+
                 $result = [
                     'code' => $statusCodes[$queryType],
                     'affected_rows' => $affectedRows,
@@ -1353,7 +1360,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                     'action' => strtolower($queryType)
                 ];
             }
-
         } catch (\PDOException $e) {
             $this->db_error_log($e, __FUNCTION__);
             throw $e; // Re-throw the exception
@@ -1712,8 +1718,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     public function paginate($start = 0, $limit = 10, $draw = 1)
     {
-        if($start < 0) {
-           $start = 0; 
+        if ($start < 0) {
+            $start = 0;
         }
 
         // Reset the offset & limit to ensure the $this->_query not generate with that when call _buildSelectQuery() function
@@ -1765,7 +1771,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'recordsTotal' => $total ?? 0,
                 'recordsFiltered' => $total ?? 0,
                 'data' => $this->_safeOutputSanitize($result) ?? null,
-                'last_page' => $totalPages            
+                'last_page' => $totalPages
             ];
         } catch (\PDOException $e) {
             // Log database errors
@@ -1817,33 +1823,33 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $orderBy = !empty($dataPost['order'][0]) ? $dataPost['order'][0] : false;
 
         $columns = $this->_paginateColumn;
-        if(!empty($searchValue)) {
-            
-            if(empty($columns)) {
+        if (!empty($searchValue)) {
+
+            if (empty($columns)) {
                 // Query to get all columns from the table based on database type
                 $columns = $this->getTableColumns();
             }
 
             // Build search conditions with OR logic
             $searchConditions = [];
-            foreach($columns as $column) {
+            foreach ($columns as $column) {
                 $searchConditions[] = trim($column);
             }
-            
-            if(!empty($searchConditions)) {
-                $this->where(function($query) use ($searchConditions, $searchValue) {
-                    foreach($searchConditions as $index => $column) {
-                        if($index === 0) {
-                            $query->where($column, 'LIKE', '%'.$searchValue.'%');
+
+            if (!empty($searchConditions)) {
+                $this->where(function ($query) use ($searchConditions, $searchValue) {
+                    foreach ($searchConditions as $index => $column) {
+                        if ($index === 0) {
+                            $query->where($column, 'LIKE', '%' . $searchValue . '%');
                         } else {
-                            $query->orWhere($column, 'LIKE', '%'.$searchValue.'%');
+                            $query->orWhere($column, 'LIKE', '%' . $searchValue . '%');
                         }
                     }
                 });
             }
         }
 
-        if($orderBy && !empty($columns)) {
+        if ($orderBy && !empty($columns)) {
             $this->orderBy($columns[$orderBy['column']] ?? $columns[0], $orderBy['dir']);
         }
 
@@ -2275,7 +2281,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $quotedTable = "`{$this->schema}`.`{$tableTruncate}`";
         }
 
-        
+
         $this->_query = "TRUNCATE {$quotedTable}";
 
         // Start profiler for performance measurement 
@@ -2300,7 +2306,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'message' => $success ? "Truncated {$tableTruncate} successfully" : "Failed to truncate table {$tableTruncate}",
                 'action' => 'truncate'
             ];
-
         } catch (\PDOException $e) {
             // Log database errors
             $this->db_error_log($e, __FUNCTION__);
@@ -2375,11 +2380,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             case 'object':
                 $data = json_decode(json_encode($data), false);
                 break;
-                
+
             case 'json':
                 $data = json_encode($data);
                 break;
-                
+
             case 'array':
             default:
                 // Data is already in array format, no conversion needed
@@ -2415,6 +2420,27 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
+     * Specify columns to exclude from secure output sanitization.
+     *
+     * This method allows you to define a list of column names that should be excluded
+     * from output sanitization (e.g., `htmlspecialchars`). This is useful for columns
+     * that contain safe HTML or other data that should not be escaped.
+     *
+     * @param array|string $columns An array or comma-separated string of column names to exclude.
+     * @return $this
+     */
+    public function safeOutputWithException($data = [])
+    {
+        if (empty($data)) {
+            return $this;
+        }
+
+        $data = is_array($data) ? $data : explode(',', $data);
+        $this->_secureOutputExeception = $data;
+        return $this;
+    }
+
+    /**
      * Sanitize column data to ensure that only valid columns are used.
      *
      * @param string $table The table name.
@@ -2442,7 +2468,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             return $data;
         }
 
-        return $this->sanitize($data);
+        return $this->sanitize($data, $this->_secureOutputExeception);
     }
 
     # EAGER LOADER SECTION
