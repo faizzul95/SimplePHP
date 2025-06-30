@@ -61,7 +61,7 @@ include_once __DIR__ . '/../_templates/header.php';
                                             <th style="color:white"> Contact Information </th>
                                             <th style="color:white"> Gender </th>
                                             <th style="color:white"> Status </th>
-                                            <th style="color:white"> Action </th>
+                                            <th style="color:white"> # </th>
                                         </tr>
                                     </thead>
                                     <tbody></tbody>
@@ -87,9 +87,10 @@ include_once __DIR__ . '/../_templates/header.php';
                 'action': 'listSelectOptionRole'
             });
 
-            const data = res.data.data;
-
             if (isSuccess(res)) {
+
+                const data = res.data.data;
+
                 $("#" + id).empty();
 
                 if (includeAll) {
@@ -119,12 +120,12 @@ include_once __DIR__ . '/../_templates/header.php';
                     },
                     {
                         "data": "name",
-                        "width": "40%",
+                        // "width": "40%",
                         "targets": 1
                     },
                     {
                         "data": "contact",
-                        "width": "30%",
+                        "width": "35%",
                         "targets": 2
                     },
                     {
@@ -144,6 +145,7 @@ include_once __DIR__ . '/../_templates/header.php';
                             return data;
                         },
                         "targets": -1,
+                        "width": "3%",
                         "searchable": false,
                         "orderable": false
                     }
@@ -160,10 +162,8 @@ include_once __DIR__ . '/../_templates/header.php';
                 'id': id
             });
 
-            const data = res.data.data;
-
             if (isSuccess(res)) {
-                loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Update User', data, 'offcanvas');
+                loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Update User', res.data.data, 'offcanvas');
             }
         }
 

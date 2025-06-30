@@ -813,7 +813,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         // Build the join clause
-        $this->joins .= " $joinType JOIN `$table` ON $foreignKey = $localKey";
+        $this->joins .= " $joinType JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey`";
 
         return $this;
     }
@@ -829,7 +829,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($localKey, 'Local Key');
 
         // Build the join clause
-        $this->joins .= " LEFT JOIN `$table` ON $foreignKey = $localKey $conditions";
+        $this->joins .= " LEFT JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
 
         return $this;
     }
@@ -845,7 +845,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($localKey, 'Local Key');
 
         // Build the join clause
-        $this->joins .= " RIGHT JOIN `$table` ON $foreignKey = $localKey $conditions";
+        $this->joins .= " RIGHT JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
 
         return $this;
     }
@@ -861,7 +861,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($localKey, 'Local Key');
 
         // Build the join clause
-        $this->joins .= " INNER JOIN `$table` ON $foreignKey = $localKey $conditions";
+        $this->joins .= " INNER JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
 
         return $this;
     }
@@ -877,7 +877,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($localKey, 'Local Key');
 
         // Build the join clause
-        $this->joins .= " FULL OUTER JOIN `$table` ON $foreignKey = $localKey $conditions";
+        $this->joins .= " FULL OUTER JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
 
         return $this;
     }

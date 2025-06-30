@@ -106,7 +106,7 @@
 				$("#uploadBtn").attr('disabled', false);
 				$('#undoBtn').show();
 				$('#redoBtn').show();
-			}, 180);
+			}, 100);
 		}
 	}
 

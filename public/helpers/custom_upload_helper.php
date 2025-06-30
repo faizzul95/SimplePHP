@@ -112,8 +112,8 @@ function upload($files, $folder, $data = NULL, $index = false, $compress = false
 	);
 
 	// Check if folder exist.
-	if (!is_dir($folder)) {
-		mkdir($folder, 0755, TRUE);
+	if (!is_dir(ROOT_DIR . $folder)) {
+		mkdir(ROOT_DIR . $folder, 0755, TRUE);
 	}
 
 	// Handle the file based on index
@@ -143,7 +143,7 @@ function upload($files, $folder, $data = NULL, $index = false, $compress = false
 	$saveName = $newName . '.' . $ext;
 	$path = $folder . '/' . $saveName;
 
-	if (move_uploaded_file($fileTmpPath, $path)) {
+	if (move_uploaded_file($fileTmpPath, ROOT_DIR . $path)) {
 
 		$entity_type = $entity_file_type = $entity_id = $user_id = 0;
 
@@ -151,14 +151,14 @@ function upload($files, $folder, $data = NULL, $index = false, $compress = false
 		if ($compress) {
 			$canCompress = ['jpg', 'png', 'jpeg', 'gif'];
 			if (in_array($ext, $canCompress)) {
-				$compressfolder = $folder . '/' . $newName . "_compress." . $ext;
-				$thumbnailfolder = $folder . '/' . $newName . "_thumbnail." . $ext;
+				$compressfolder = ROOT_DIR . $folder . '/' . $newName . "_compress." . $ext;
+				$thumbnailfolder = ROOT_DIR . $folder . '/' . $newName . "_thumbnail." . $ext;
 
 				if ($file_compression === 2) {
-					compress($path, $compressfolder, '60');
+					compress(ROOT_DIR . $path, $compressfolder, '60');
 				} elseif ($file_compression === 3) {
-					compress($path, $compressfolder, '60');
-					compress($path, $thumbnailfolder, '15');
+					compress(ROOT_DIR . $path, $compressfolder, '60');
+					compress(ROOT_DIR . $path, $thumbnailfolder, '15');
 				}
 
 				if (file_exists($compressfolder)) {

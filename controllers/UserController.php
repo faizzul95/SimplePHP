@@ -37,6 +37,7 @@ function listUserDatatable($request)
             $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
                 ->where('entity_file_type', 'USER_PROFILE');
         })
+        ->whereNull('deleted_at')
         ->safeOutput()
         ->paginate_ajax(request()->all());
 
@@ -56,7 +57,7 @@ function listUserDatatable($request)
         $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
 
         $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$id}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
-        $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 18px; right: -10px;" title="Change profile">
+        $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">
                                 <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>
                             </a>' : '';
 
@@ -71,11 +72,24 @@ function listUserDatatable($request)
             'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
             'gender' => $row['user_gender'] == 1 ? 'Male' : 'Female',
             'status' => $status[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>',
-            'action' => "<center>
-                                {$resetPassAction}
-                                <button class='btn btn-primary btn-sm' onclick='editRecord(\"{$id}\")' title='Edit' > <span class='tf-icons bx bx-edit'></span> </button> 
-                                <button class='btn btn-danger btn-sm' onclick='deleteRecord(\"{$id}\")' title='Delete'> <span class='tf-icons bx bx-trash'></span> </button>
-                            </center>"
+            'action' => "
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
+                </span>
+                <div class='dropdown' style='display: inline-block; vertical-align: middle;'>
+                    <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
+                        <i class='bx bx-dots-vertical-rounded'></i>
+                    </button>
+                    <div class='dropdown-menu'>
+                        <a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'>
+                            <i class='bx bx-trash me-1'></i> Delete
+                        </a>
+                        <a href='javascript:void(0);' onclick='resetPassword(\"{$id}\")' class='dropdown-item'>
+                            <i class='bx bx-key me-1'></i> Reset Password
+                        </a>
+                    </div>
+                </div>
+            "
         ];
     }, $result['data']);
 
@@ -111,6 +125,7 @@ function show($request)
             //         ->where('entity_file_type', 'USER_PROFILE');
             // });
         })
+        ->whereNull('deleted_at')
         ->safeOutput()
         ->fetch();
 
@@ -205,7 +220,14 @@ function destroy($request)
         jsonResponse(['code' => 400, 'message' => 'ID is required']);
     }
 
-    $result = db()->table('users')->where('id', $id)->delete();
+    // $result = db()->table('users')->where('id', $id)->delete();
+    $result = db()->table('users')->where('id', $id)->update(
+        [
+            'user_status' => 3,
+            'deleted_at' => timestamp(),
+            'updated_at' => timestamp()
+        ]
+    );
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to delete user']);

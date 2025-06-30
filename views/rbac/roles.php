@@ -46,7 +46,7 @@ include_once __DIR__ . '/../_templates/header.php';
                                             <th style="color:white"> Rank </th>
                                             <th style="color:white"> Count </th>
                                             <th style="color:white"> Status </th>
-                                            <th style="color:white"> Action </th>
+                                            <th style="color:white"> # </th>
                                         </tr>
                                     </thead>
                                     <tbody></tbody>
@@ -74,7 +74,7 @@ include_once __DIR__ . '/../_templates/header.php';
                 },
                 [{
                         "data": "name",
-                        "width": "60%",
+                        // "width": "60%",
                         "targets": 0
                     },
                     {
@@ -99,6 +99,7 @@ include_once __DIR__ . '/../_templates/header.php';
                             return data;
                         },
                         "targets": -1,
+                        "width": "3%",
                         "searchable": false,
                         "orderable": false
                     }
@@ -115,10 +116,8 @@ include_once __DIR__ . '/../_templates/header.php';
                 'id': id
             });
 
-            const data = res.data.data;
-
             if (isSuccess(res)) {
-                loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Update Roles', data, 'offcanvas');
+                loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Update Roles', res.data.data, 'offcanvas');
             }
         }
 

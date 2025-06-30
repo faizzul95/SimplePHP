@@ -93,7 +93,7 @@
                         <div class="col-lg-12">
                             <label class="form-label"> Description <span class="text-danger">*</span></label>
                             <input type="hidden" id="email_body" name="email_body" class="form-control" readonly>
-                            <textarea id="editor"></textarea>
+                            <textarea id="templateEditor"></textarea>
                         </div>
                     </div>
 
@@ -142,7 +142,7 @@
 
 <script>
     function initializeSummernote() {
-        $('#editor').summernote({
+        $('#templateEditor').summernote({
             callbacks: {
                 onChange: function(contents, $editable) {
                     // Update hidden field with content
@@ -184,10 +184,12 @@
 
         setTimeout(function() {
             // Initialize Summernote if not already initialized
-            if (!$('#editor').hasClass('note-editable')) {
+            if (!$('#templateEditor').hasClass('note-editable')) {
                 initializeSummernote();
             }
         }, 100);
+
+        $('#templateEditor').summernote('code', '');
 
         if (!empty(data)) {
             // Populate form fields
@@ -201,7 +203,7 @@
             $('#id').val(data['email_id'] || data['id'] || '');
 
             // Set Summernote content
-            $('#editor').summernote('code', data['email_body'] || '');
+            $('#templateEditor').summernote('code', data['email_body'] || '');
 
             // Update preview
             refreshPreview();
@@ -215,7 +217,7 @@
     function refreshPreview() {
         try {
             // Get content from Summernote editor
-            let editorContent = $('#editor').summernote('code');
+            let editorContent = $('#templateEditor').summernote('code');
 
             // Update hidden field
             $('#email_body').val(editorContent);
@@ -248,8 +250,8 @@
         $('#email_body').val('');
 
         // Clear Summernote editor
-        if ($('#editor').hasClass('note-editable')) {
-            $('#editor').summernote('code', '');
+        if ($('#templateEditor').hasClass('note-editable')) {
+            $('#templateEditor').summernote('code', '');
         }
     }
 
@@ -262,7 +264,7 @@
 
     function insertData(dataToInsert) {
         if (dataToInsert) {
-            $('#editor').summernote('insertText', '%' + dataToInsert + '%');
+            $('#templateEditor').summernote('insertText', '%' + dataToInsert + '%');
             refreshPreview();
         }
     }
@@ -272,7 +274,7 @@
         event.preventDefault();
 
         // Update email_body before validation
-        let editorContent = $('#editor').summernote('code');
+        let editorContent = $('#templateEditor').summernote('code');
         $('#email_body').val(editorContent);
 
         if (validateDataTemplate()) {

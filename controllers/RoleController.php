@@ -31,16 +31,29 @@ function listRolesDatatable($request)
     // Alter/formatting the data return
     $result['data'] = array_map(function ($row) {
         $id = encodeID($row['id']);
-        $delAction = $row['profile_count'] > 0 ? "disabled='disabled'" : "onclick='deleteRecord(\"{$id}\")'";
+        $delAction = $row['profile_count'] > 0 ? null : "onclick='deleteRecord(\"{$id}\")'";
+        $delText = empty($delAction) ? '(disabled)'  : '';
+
         return [
             'name' => $row['role_name'],
             'rank' => $row['role_rank'],
             'count' => number_format($row['profile_count']),
             'status' => $row['role_status'] ? '<span class="badge bg-label-success"> Active </span>' : '<span class="badge bg-label-warning"> Inactive </span>',
-            'action' => "<center>
-                                <button class='btn btn-primary btn-sm' onclick='editRecord(\"{$id}\")'> <span class='tf-icons bx bx-edit'></span> </button> 
-                                <button class='btn btn-danger btn-sm' {$delAction}> <span class='tf-icons bx bx-trash'></span> </button>
-                            </center>"
+            'action' => "
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
+                </span>
+                <div class='dropdown' style='display: inline-block; vertical-align: middle;'>
+                    <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
+                        <i class='bx bx-dots-vertical-rounded'></i>
+                    </button>
+                    <div class='dropdown-menu'>
+                        <a href='javascript:void(0);' {$delAction} class='dropdown-item'>
+                            <i class='bx bx-trash me-1'></i> Delete {$delText}
+                        </a>
+                    </div>
+                </div>
+            "
         ];
     }, $result['data']);
 

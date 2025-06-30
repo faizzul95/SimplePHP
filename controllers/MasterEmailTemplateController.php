@@ -35,10 +35,21 @@ function listEmailTemplateDatatable($request)
             'cc' => empty($row['email_cc']) ? 'NO' : 'YES',
             'bcc' => empty($row['email_bcc']) ? 'NO' : 'YES',
             'status' => $row['email_status'] ? '<span class="badge bg-label-success"> Active </span>' : '<span class="badge bg-label-warning"> Inactive </span>',
-            'action' => "<center>
-                                <button class='btn btn-primary btn-sm' onclick='editRecord(\"{$id}\")'> <span class='tf-icons bx bx-edit'></span> </button> 
-                                <button class='btn btn-danger btn-sm' onclick='deleteRecord(\"{$id}\")'> <span class='tf-icons bx bx-trash'></span> </button>
-                            </center>"
+            'action' => "
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
+                </span>
+                <div class='dropdown' style='display: inline-block; vertical-align: middle;'>
+                    <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
+                        <i class='bx bx-dots-vertical-rounded'></i>
+                    </button>
+                    <div class='dropdown-menu'>
+                        <a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'>
+                            <i class='bx bx-trash me-1'></i> Delete
+                        </a>
+                    </div>
+                </div>
+            "
         ];
     }, $result['data']);
 

@@ -173,8 +173,11 @@ const isNumberKey = (evt) => {
 
 const sizeToText = (size, decimal = 2) => {
 	try {
-		if (typeof size !== 'number') {
-			throw new Error('An error occurred in sizeToText(): Invalid input - size must be a number');
+		// Convert string to number if needed
+		const numSize = typeof size === 'string' ? parseFloat(size) : size;
+		
+		if (typeof numSize !== 'number' || isNaN(numSize)) {
+			throw new Error('An error occurred in sizeToText(): Invalid input - size must be a number or numeric string');
 		}
 
 		if (typeof decimal !== 'number') {
@@ -2548,6 +2551,11 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 		loaderMessage: "Loading preview...",
 		retry: 3,
 		skeletonLoader: null,
+		enableFullscreen: true,
+		enableDownload: true,
+		enableRotation: true, // For images
+		maxFileSize: 50 * 1024 * 1024, // 50MB limit
+		timeout: 30000, // 30 seconds timeout
 	};
 
 	// Merge default options with provided options
@@ -2559,150 +2567,766 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 	// Validate inputs
 	if (!fileLoc || !fileMime) {
 		console.error("Invalid file location or MIME type");
+		showContainerError(settings.display_id, "Invalid file parameters");
 		return;
 	}
 
-	// Add skeleton loader
+	// Get container and validate it exists
 	const $container = $(`#${settings.display_id}`);
+	if ($container.length === 0) {
+		console.error(`Container with ID '${settings.display_id}' not found`);
+		return;
+	}
+
 	$container.empty().css("display", "block");
 
-	// Use custom skeleton loader if provided, otherwise use default
-	if (typeof settings.skeletonLoader === "function") {
-		$container.append(settings.skeletonLoader());
-	} else {
-		// Default loading indicator
-		$container.append(`
-			<div class="text-center">
-				<div class="spinner-border" role="status">
-					<span class="visually-hidden"> ${settings.loaderMessage} </span>
+	// Enhanced skeleton loader
+	const showLoader = () => {
+		if (typeof settings.skeletonLoader === "function") {
+			$container.append(settings.skeletonLoader());
+		} else {
+			$container.append(`
+				<div class="d-flex flex-column align-items-center justify-content-center" style="height: ${settings.height};">
+					<div class="spinner-border text-primary mb-3" role="status">
+						<span class="visually-hidden">${settings.loaderMessage}</span>
+					</div>
+					<div class="text-muted">${settings.loaderMessage}</div>
+					<div class="progress mt-3" style="width: 200px;">
+						<div class="progress-bar progress-bar-striped progress-bar-animated" 
+							 role="progressbar" style="width: 100%"></div>
+					</div>
 				</div>
-			</div>
-		`);
-	}
+			`);
+		}
+	};
+
+	showLoader();
 
 	const url = base_url() + fileLoc;
 	let view = "";
 
-	// Supported MIME types mapping
-	const supportedMimeTypes = {
-		"application/pdf": true,
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
-		"application/vnd.ms-excel": true,
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
-		"application/msword": true,
-		// Image MIME types
-		"image/jpeg": true,
-		"image/png": true,
-		"image/gif": true,
-		"image/bmp": true,
-		"image/webp": true,
-		"image/svg+xml": false,
+	// Enhanced MIME types mapping with categories
+	const mimeTypeCategories = {
+		// Documents
+		documents: {
+			"application/pdf": { viewer: "pdf", icon: "fas fa-file-pdf", color: "#dc3545" },
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": { viewer: "google", icon: "fas fa-file-excel", color: "#198754" },
+			"application/vnd.ms-excel": { viewer: "google", icon: "fas fa-file-excel", color: "#198754" },
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document": { viewer: "google", icon: "fas fa-file-word", color: "#0d6efd" },
+			"application/msword": { viewer: "google", icon: "fas fa-file-word", color: "#0d6efd" },
+			"application/vnd.openxmlformats-officedocument.presentationml.presentation": { viewer: "google", icon: "fas fa-file-powerpoint", color: "#fd7e14" },
+			"application/vnd.ms-powerpoint": { viewer: "google", icon: "fas fa-file-powerpoint", color: "#fd7e14" },
+			"text/plain": { viewer: "text", icon: "fas fa-file-alt", color: "#6c757d" },
+			"text/csv": { viewer: "text", icon: "fas fa-file-csv", color: "#198754" },
+		},
+		// Images
+		images: {
+			"image/jpeg": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
+			"image/jpg": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
+			"image/png": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
+			"image/gif": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
+			"image/bmp": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
+			"image/webp": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
+			"image/svg+xml": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
+		},
+		// Videos
+		videos: {
+			"video/mp4": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
+			"video/webm": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
+			"video/ogg": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
+			"video/avi": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
+		},
+		// Audio
+		audios: {
+			"audio/mp3": { viewer: "audio", icon: "fas fa-music", color: "#d63384" },
+			"audio/wav": { viewer: "audio", icon: "fas fa-music", color: "#d63384" },
+			"audio/ogg": { viewer: "audio", icon: "fas fa-music", color: "#d63384" },
+			"audio/mpeg": { viewer: "audio", icon: "fas fa-music", color: "#d63384" },
+		}
 	};
 
-	// Image MIME types
-	const imageTypes = [
-		"image/jpeg",
-		"image/png",
-		"image/gif",
-		"image/bmp",
-		"image/webp",
-		"image/svg+xml",
-	];
+	// Get all supported MIME types
+	const getAllSupportedTypes = () => {
+		const allTypes = {};
+		Object.values(mimeTypeCategories).forEach(category => {
+			Object.assign(allTypes, category);
+		});
+		return allTypes;
+	};
 
-	// Retry fetch with configurable attempts
+	const supportedMimeTypes = getAllSupportedTypes();
+
+	// Enhanced fetch with retry, timeout, and progress
 	const fetchWithRetry = async (url, retries = 1) => {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), settings.timeout);
+
 		for (let attempt = 1; attempt <= retries; attempt++) {
 			try {
-				const response = await fetch(url);
+				const response = await fetch(url, {
+					signal: controller.signal,
+					headers: {
+						'Cache-Control': 'no-cache',
+					}
+				});
 
-				// Check for 200 status
-				if (response.status === 200) {
+				clearTimeout(timeoutId);
+
+				if (response.ok) {
+					// Check file size if possible
+					const contentLength = response.headers.get('content-length');
+					if (contentLength && parseInt(contentLength) > settings.maxFileSize) {
+						throw new Error(`File too large: ${(parseInt(contentLength) / 1024 / 1024).toFixed(2)}MB`);
+					}
 					return response;
 				}
 
-				// If not 200 and this is the last retry, throw an error
 				if (attempt === retries) {
-					throw new Error(`HTTP error! status: ${response.status}`);
+					throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 				}
 
-				// Wait a moment before retrying
-				await new Promise((resolve) => setTimeout(resolve, 1000));
+				await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
 			} catch (error) {
-				// If this is the last retry, throw the error
+				clearTimeout(timeoutId);
+				
+				if (error.name === 'AbortError') {
+					throw new Error('Request timeout - file took too long to load');
+				}
+				
 				if (attempt === retries) {
 					throw error;
 				}
 
-				// Wait a moment before retrying
-				await new Promise((resolve) => setTimeout(resolve, 1000));
+				await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
 			}
 		}
 	};
 
-	try {
-		// Determine viewer type
-		const isSupported = supportedMimeTypes[fileMime] || false;
-		const viewerUrl = "https://docs.google.com/gview?url=" + encodeURIComponent(url) + "&embedded=true";
+	// Enhanced error display
+	const showError = (message, details = null) => {
+		const errorView = `
+			<div class="alert alert-danger d-flex align-items-center" role="alert">
+				<i class="fas fa-exclamation-triangle me-2"></i>
+				<div>
+					<strong>Preview Error:</strong> ${message}
+					${details ? `<br><small class="text-muted">${details}</small>` : ''}
+				</div>
+			</div>
+			<div class="text-center mt-3">
+				<button class="btn btn-outline-primary" onclick="location.reload()">
+					<i class="fas fa-refresh me-1"></i> Retry
+				</button>
+				${settings.enableDownload ? `
+					<a href="${url}" class="btn btn-outline-secondary ms-2" download>
+						<i class="fas fa-download me-1"></i> Download
+					</a>
+				` : ''}
+			</div>
+		`;
+		$container.html(errorView);
+	};
 
-		// Use the new fetchWithRetry function
+	// Create action buttons
+	const createActionButtons = (fileType) => {
+		let buttons = '';
+		
+		if (settings.enableDownload) {
+			buttons += `
+				<button class="btn btn-sm btn-outline-primary me-2" onclick="downloadFile('${url}', '${fileLoc.split('/').pop()}')">
+					<i class="fas fa-download me-1"></i> Download
+				</button>
+			`;
+		}
+		
+		if (settings.enableFullscreen) {
+			buttons += `
+				<button class="btn btn-sm btn-outline-secondary me-2" onclick="toggleFullscreen('${settings.display_id}')">
+					<i class="fas fa-expand me-1"></i> Fullscreen
+				</button>
+			`;
+		}
+		
+		if (fileType === 'image' && settings.enableRotation) {
+			buttons += `
+				<button class="btn btn-sm btn-outline-info me-2" onclick="rotateImage('${settings.display_id}')">
+					<i class="fas fa-redo me-1"></i> Rotate
+				</button>
+			`;
+		}
+		
+		return buttons ? `<div class="mb-3 text-center">${buttons}</div>` : '';
+	};
+
+	try {
+		// Check if file type is supported
+		const fileInfo = supportedMimeTypes[fileMime];
+		
+		if (!fileInfo) {
+			throw new Error(`Unsupported file type: ${fileMime}`);
+		}
+
+		// Verify file accessibility
 		await fetchWithRetry(url, settings.retry);
 
+		const viewerUrl = "https://docs.google.com/gview?url=" + encodeURIComponent(url) + "&embedded=true";
+		const actionButtons = createActionButtons(fileInfo.viewer);
+
 		// Create view based on file type
-		if (imageTypes.includes(fileMime)) {
-			// Image handling
-			view = `
-				  <div class="text-center">
-					  <img 
-						  src="${url}" 
-						  alt="Preview" 
-						  class="img-fluid" 
-						  style="max-width: 100%; max-height: ${settings.height}; object-fit: contain;"
-						  onerror="showContainerError('${settings.display_id}', '${settings.errorMessage}')"
-					  />
-				  </div>
-			  `;
-		} else if (isSupported) {
-			// Document handling (PDF, Excel, Word)
-			view = `
-				  <iframe 
-					  src="${viewerUrl}" 
-					  width="${settings.width}" 
-					  height="${settings.height}" 
-					  frameborder="0"
-					  onerror="showContainerError('${settings.display_id}', '${settings.errorMessage}')"
-				  ></iframe>
-			  `;
-		} else {
-			// Fallback for unsupported types
-			view = `
-				  <object 
-					  type="${fileMime}" 
-					  data="${url}" 
-					  width="${settings.width}" 
-					  height="${settings.height}"
-					  onerror="showContainerError('${settings.display_id}', '${settings.errorMessage}')"
-				  >
-					  <p>${settings.errorMessage}</p>
-				  </object>
-			  `;
+		switch (fileInfo.viewer) {
+			case 'image':
+				view = `
+					${actionButtons}
+					<div class="text-center image-container" style="position: relative;">
+						<img 
+							src="${url}" 
+							alt="Preview" 
+							class="img-fluid preview-image" 
+							style="max-width: 100%; max-height: ${settings.height}; object-fit: contain; transition: transform 0.3s ease;"
+							onload="this.style.opacity='1'"
+							onerror="showContainerError('${settings.display_id}', '${settings.errorMessage}')"
+							ondragstart="return false"
+						/>
+						<div class="image-overlay" style="position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: white; padding: 5px 10px; border-radius: 3px; font-size: 0.8em;">
+							<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
+							${fileLoc.split('/').pop()}
+						</div>
+					</div>
+				`;
+				break;
+
+			case 'pdf':
+				// Multiple fallback options for PDF viewing
+				view = `
+					${actionButtons}
+					<div class="pdf-viewer-container">
+						<div class="pdf-viewer-tabs mb-2">
+							<button class="btn btn-sm btn-outline-primary active" onclick="switchPdfViewer('${settings.display_id}', 'embed')">
+								<i class="fas fa-file-pdf me-1"></i> Native
+							</button>
+							<button class="btn btn-sm btn-outline-secondary ms-2" onclick="switchPdfViewer('${settings.display_id}', 'google')">
+								<i class="fab fa-google me-1"></i> Google
+							</button>
+							<button class="btn btn-sm btn-outline-info ms-2" onclick="switchPdfViewer('${settings.display_id}', 'mozilla')">
+								<i class="fab fa-firefox me-1"></i> Mozilla
+							</button>
+						</div>
+						<div id="pdf-viewer-embed-${settings.display_id}" class="pdf-viewer active">
+							<embed 
+								src="${url}#toolbar=1&navpanes=1&scrollbar=1" 
+								type="application/pdf" 
+								width="${settings.width}" 
+								height="${settings.height}"
+								style="border: 1px solid #dee2e6; border-radius: 0.375rem;"
+							/>
+						</div>
+						<div id="pdf-viewer-google-${settings.display_id}" class="pdf-viewer" style="display: none;">
+							<iframe 
+								src="${viewerUrl}" 
+								width="${settings.width}" 
+								height="${settings.height}" 
+								frameborder="0"
+								style="border: 1px solid #dee2e6; border-radius: 0.375rem;"
+								onload="handleIframeLoad(this, '${settings.display_id}')"
+								onerror="handleIframeError(this, '${settings.display_id}')"
+							></iframe>
+						</div>
+						<div id="pdf-viewer-mozilla-${settings.display_id}" class="pdf-viewer" style="display: none;">
+							<iframe 
+								src="https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodeURIComponent(url)}" 
+								width="${settings.width}" 
+								height="${settings.height}" 
+								frameborder="0"
+								style="border: 1px solid #dee2e6; border-radius: 0.375rem;"
+							></iframe>
+						</div>
+					</div>
+				`;
+				break;
+
+			case 'video':
+				view = `
+					${actionButtons}
+					<div class="text-center">
+						<video 
+							controls 
+							style="max-width: 100%; max-height: ${settings.height};"
+							preload="metadata"
+						>
+							<source src="${url}" type="${fileMime}">
+							Your browser does not support the video tag.
+						</video>
+					</div>
+				`;
+				break;
+
+			case 'audio':
+				view = `
+					${actionButtons}
+					<div class="text-center">
+						<div class="card" style="max-width: 500px; margin: 0 auto;">
+							<div class="card-body">
+								<h5 class="card-title">
+									<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
+									${fileLoc.split('/').pop()}
+								</h5>
+								<audio controls style="width: 100%;" preload="metadata">
+									<source src="${url}" type="${fileMime}">
+									Your browser does not support the audio element.
+								</audio>
+							</div>
+						</div>
+					</div>
+				`;
+				break;
+
+			case 'text':
+				// For text files, fetch and display content
+				const textResponse = await fetch(url);
+				const textContent = await textResponse.text();
+				view = `
+					${actionButtons}
+					<div class="card">
+						<div class="card-header">
+							<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
+							${fileLoc.split('/').pop()}
+						</div>
+						<div class="card-body">
+							<pre style="max-height: ${settings.height}; overflow-y: auto; white-space: pre-wrap; font-size: 0.9em;">${textContent}</pre>
+						</div>
+					</div>
+				`;
+				break;
+
+			case 'google':
+			default:
+				view = `
+					${actionButtons}
+					<div class="position-relative">
+						<iframe 
+							src="${viewerUrl}" 
+							width="${settings.width}" 
+							height="${settings.height}" 
+							frameborder="0"
+							style="border: 1px solid #dee2e6; border-radius: 0.375rem;"
+							onload="this.style.opacity='1'"
+							onerror="showContainerError('${settings.display_id}', '${settings.errorMessage}')"
+						></iframe>
+						<div style="position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.9); padding: 5px 10px; border-radius: 3px; font-size: 0.8em;">
+							<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
+							${fileLoc.split('/').pop()}
+						</div>
+					</div>
+				`;
+				break;
 		}
 
 		// Clear and populate the container
 		$container.empty().css("display", "block").append(view);
 
-		// Handle modal/offcanvas
+		// Handle modal/offcanvas with enhanced styling
 		if (settings.modal_id) {
 			const $modal = $(`#${settings.modal_id}`);
 
 			if (settings.modal_type === "modal") {
 				$modal.modal("show").css("z-index", 2000);
+				// Add backdrop blur effect
+				$modal.on('shown.bs.modal', function() {
+					$('body').addClass('modal-backdrop-blur');
+				}).on('hidden.bs.modal', function() {
+					$('body').removeClass('modal-backdrop-blur');
+				});
 			} else if (settings.modal_type === "offcanvas") {
 				$modal.offcanvas("toggle").css("z-index", 2000);
 			}
 		}
+
+		console.log(`Successfully loaded ${fileInfo.viewer} file: ${fileLoc}`);
+
 	} catch (error) {
-		// Error handling
-		showContainerError(settings.display_id, settings.errorMessage);
 		console.error("Error loading document:", error);
+		showError(settings.errorMessage, error.message);
 	}
 };
+
+// Utility functions
+const showContainerError = (containerId, message) => {
+	const $container = $(`#${containerId}`);
+	$container.html(`
+		<div class="alert alert-danger text-center" role="alert">
+			<i class="fas fa-exclamation-triangle mb-2"></i>
+			<div>${message}</div>
+		</div>
+	`);
+};
+
+const downloadFile = (url, filename) => {
+	const link = document.createElement('a');
+	link.href = url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	document.body.removeChild(link);
+};
+
+const toggleFullscreen = (containerId) => {
+	const container = document.getElementById(containerId);
+	
+	if (!document.fullscreenElement && !document.webkitFullscreenElement && 
+		!document.mozFullScreenElement && !document.msFullscreenElement) {
+		
+		// Enter fullscreen
+		const requestFullscreen = container.requestFullscreen || 
+			container.webkitRequestFullscreen || 
+			container.mozRequestFullScreen || 
+			container.msRequestFullscreen;
+		
+		if (requestFullscreen) {
+			requestFullscreen.call(container).then(() => {
+				// Add fullscreen styles
+				container.classList.add('fullscreen-active');
+				
+				// Update button text/icon
+				const fullscreenBtn = container.querySelector('[onclick*="toggleFullscreen"]');
+				if (fullscreenBtn) {
+					fullscreenBtn.innerHTML = '<i class="fas fa-compress me-1"></i> Exit Fullscreen';
+				}
+				
+				// Make content fill the screen
+				const content = container.querySelector('iframe, embed, img, video, audio, .card');
+				if (content) {
+					content.style.width = '100vw';
+					content.style.height = '100vh';
+					content.style.maxWidth = '100vw';
+					content.style.maxHeight = '100vh';
+				}
+				
+				// Handle PDF viewers specifically
+				const pdfViewers = container.querySelectorAll('.pdf-viewer iframe, .pdf-viewer embed');
+				pdfViewers.forEach(viewer => {
+					viewer.style.width = '100vw';
+					viewer.style.height = '100vh';
+				});
+				
+			}).catch(err => {
+				console.error('Error entering fullscreen:', err);
+				// Fallback to custom fullscreen
+				createCustomFullscreen(containerId);
+			});
+		} else {
+			// Fallback for unsupported browsers
+			createCustomFullscreen(containerId);
+		}
+	} else {
+		// Exit fullscreen
+		const exitFullscreen = document.exitFullscreen || 
+			document.webkitExitFullscreen || 
+			document.mozCancelFullScreen || 
+			document.msExitFullscreen;
+		
+		if (exitFullscreen) {
+			exitFullscreen.call(document).then(() => {
+				container.classList.remove('fullscreen-active');
+				restoreNormalView(containerId);
+			});
+		} else {
+			// Exit custom fullscreen
+			exitCustomFullscreen(containerId);
+		}
+	}
+};
+
+// Custom fullscreen implementation as fallback
+const createCustomFullscreen = (containerId) => {
+	const container = document.getElementById(containerId);
+	
+	// Create fullscreen overlay
+	const overlay = document.createElement('div');
+	overlay.id = `fullscreen-overlay-${containerId}`;
+	overlay.className = 'custom-fullscreen-overlay';
+	overlay.innerHTML = `
+		<div class="fullscreen-header">
+			<div class="fullscreen-controls">
+				<button class="btn btn-light btn-sm me-2" onclick="exitCustomFullscreen('${containerId}')">
+					<i class="fas fa-compress me-1"></i> Exit Fullscreen
+				</button>
+				<button class="btn btn-light btn-sm" onclick="exitCustomFullscreen('${containerId}')">
+					<i class="fas fa-times"></i>
+				</button>
+			</div>
+		</div>
+		<div class="fullscreen-content" id="fullscreen-content-${containerId}"></div>
+	`;
+	
+	// Clone and move content to overlay
+	const originalContent = container.innerHTML;
+	const contentClone = container.cloneNode(true);
+	contentClone.id = `${containerId}-fullscreen-clone`;
+	
+	// Store original content for restoration
+	container.setAttribute('data-original-content', originalContent);
+	
+	// Append to body
+	document.body.appendChild(overlay);
+	document.getElementById(`fullscreen-content-${containerId}`).appendChild(contentClone);
+	
+	// Add escape key listener
+	const escapeHandler = (e) => {
+		if (e.key === 'Escape') {
+			exitCustomFullscreen(containerId);
+		}
+	};
+	document.addEventListener('keydown', escapeHandler);
+	overlay.setAttribute('data-escape-handler', 'true');
+	
+	// Prevent body scrolling
+	document.body.style.overflow = 'hidden';
+	
+	// Update content dimensions
+	const content = contentClone.querySelector('iframe, embed, img, video, audio, .card');
+	if (content) {
+		content.style.width = '100%';
+		content.style.height = 'calc(100vh - 60px)';
+		content.style.maxWidth = '100%';
+		content.style.maxHeight = 'calc(100vh - 60px)';
+	}
+};
+
+const exitCustomFullscreen = (containerId) => {
+	const overlay = document.getElementById(`fullscreen-overlay-${containerId}`);
+	if (overlay) {
+		// Remove escape key listener
+		const escapeHandler = (e) => {
+			if (e.key === 'Escape') {
+				exitCustomFullscreen(containerId);
+			}
+		};
+		document.removeEventListener('keydown', escapeHandler);
+		
+		// Restore body scrolling
+		document.body.style.overflow = '';
+		
+		// Remove overlay
+		overlay.remove();
+	}
+	
+	// Restore normal view
+	restoreNormalView(containerId);
+};
+
+const restoreNormalView = (containerId) => {
+	const container = document.getElementById(containerId);
+	
+	// Update button text/icon
+	const fullscreenBtn = container.querySelector('[onclick*="toggleFullscreen"]');
+	if (fullscreenBtn) {
+		fullscreenBtn.innerHTML = '<i class="fas fa-expand me-1"></i> Fullscreen';
+	}
+	
+	// Restore original dimensions
+	const content = container.querySelector('iframe, embed, img, video, audio, .card');
+	if (content) {
+		content.style.width = '';
+		content.style.height = '';
+		content.style.maxWidth = '';
+		content.style.maxHeight = '';
+	}
+	
+	// Handle PDF viewers specifically
+	const pdfViewers = container.querySelectorAll('.pdf-viewer iframe, .pdf-viewer embed');
+	pdfViewers.forEach(viewer => {
+		viewer.style.width = '';
+		viewer.style.height = '';
+	});
+};
+
+let imageRotation = 0;
+const rotateImage = (containerId) => {
+	const $img = $(`#${containerId} .preview-image`);
+	imageRotation += 90;
+	if (imageRotation >= 360) imageRotation = 0;
+	$img.css('transform', `rotate(${imageRotation}deg)`);
+};
+
+// PDF viewer switching functionality
+const switchPdfViewer = (containerId, viewerType) => {
+	// Hide all viewers
+	$(`#${containerId} .pdf-viewer`).hide().removeClass('active');
+	$(`#${containerId} .pdf-viewer-tabs button`).removeClass('active btn-primary').addClass('btn-outline-primary');
+	
+	// Show selected viewer
+	$(`#pdf-viewer-${viewerType}-${containerId}`).show().addClass('active');
+	$(`#${containerId} .pdf-viewer-tabs button`).eq(viewerType === 'embed' ? 0 : viewerType === 'google' ? 1 : 2)
+		.removeClass('btn-outline-primary').addClass('btn-primary active');
+};
+
+// Handle iframe load events for better error handling
+const handleIframeLoad = (iframe, containerId) => {
+	// Check if Google Docs viewer shows "No preview available"
+	setTimeout(() => {
+		try {
+			const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+			const bodyText = iframeDoc.body.innerText || iframeDoc.body.textContent;
+			
+			if (bodyText.includes('No preview available') || bodyText.includes('Sorry, we can\'t display this file')) {
+				// Switch to native viewer automatically
+				switchPdfViewer(containerId, 'embed');
+				showToast('Google Viewer unavailable, switched to native viewer', 'warning');
+			}
+		} catch (e) {
+			// Cross-origin restrictions prevent access, assume it's working
+			console.log('Cannot access iframe content due to CORS, assuming successful load');
+		}
+	}, 2000);
+};
+
+const handleIframeError = (iframe, containerId) => {
+	console.error('Iframe failed to load, switching to native viewer');
+	switchPdfViewer(containerId, 'embed');
+	showToast('Viewer failed to load, switched to native viewer', 'error');
+};
+
+// Toast notification system
+const showToast = (message, type = 'info') => {
+	const toastId = 'preview-toast-' + Date.now();
+	const toastColors = {
+		success: 'text-bg-success',
+		warning: 'text-bg-warning', 
+		error: 'text-bg-danger',
+		info: 'text-bg-info'
+	};
+	
+	const toastHtml = `
+		<div id="${toastId}" class="toast ${toastColors[type] || toastColors.info}" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999;">
+			<div class="toast-body">
+				<i class="fas fa-${type === 'success' ? 'check' : type === 'warning' ? 'exclamation-triangle' : type === 'error' ? 'times' : 'info-circle'} me-2"></i>
+				${message}
+			</div>
+		</div>
+	`;
+	
+	$('body').append(toastHtml);
+	const toast = new bootstrap.Toast(document.getElementById(toastId), { delay: 4000 });
+	toast.show();
+	
+	// Remove from DOM after hiding
+	$(`#${toastId}`).on('hidden.bs.toast', function() {
+		$(this).remove();
+	});
+};
+
+// Optional: Add CSS for enhanced styling
+const addPreviewStyles = () => {
+	if (!document.getElementById('preview-styles')) {
+		const style = document.createElement('style');
+		style.id = 'preview-styles';
+		style.textContent = `
+			.modal-backdrop-blur {
+				backdrop-filter: blur(5px);
+			}
+			.image-container:hover .image-overlay {
+				opacity: 1;
+			}
+			.image-overlay {
+				opacity: 0.7;
+				transition: opacity 0.3s ease;
+			}
+			.preview-image {
+				box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+				border-radius: 8px;
+			}
+			.progress-bar-animated {
+				animation: progress-bar-stripes 1s linear infinite;
+			}
+			.pdf-viewer-tabs button {
+				transition: all 0.3s ease;
+			}
+			.pdf-viewer {
+				transition: opacity 0.3s ease;
+			}
+			.toast {
+				min-width: 300px;
+			}
+			.custom-fullscreen-overlay {
+				position: fixed;
+				top: 0;
+				left: 0;
+				width: 100vw;
+				height: 100vh;
+				background: #000;
+				z-index: 9999;
+				display: flex;
+				flex-direction: column;
+			}
+			.fullscreen-header {
+				background: rgba(0, 0, 0, 0.8);
+				padding: 10px 20px;
+				display: flex;
+				justify-content: flex-end;
+				align-items: center;
+				min-height: 50px;
+			}
+			.fullscreen-content {
+				flex: 1;
+				overflow: auto;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 10px;
+			}
+			.fullscreen-content > div {
+				width: 100%;
+				height: 100%;
+			}
+			.fullscreen-active {
+				background: #000 !important;
+			}
+			.fullscreen-active iframe,
+			.fullscreen-active embed,
+			.fullscreen-active img,
+			.fullscreen-active video {
+				border: none !important;
+				border-radius: 0 !important;
+				box-shadow: none !important;
+			}
+			/* Handle native fullscreen styling */
+			.fullscreen-active .pdf-viewer-tabs {
+				position: absolute;
+				top: 10px;
+				left: 10px;
+				z-index: 1000;
+				background: rgba(0, 0, 0, 0.7);
+				padding: 5px;
+				border-radius: 5px;
+			}
+			.fullscreen-active .pdf-viewer-tabs button {
+				font-size: 0.8em;
+				padding: 5px 10px;
+			}
+		`;
+		document.head.appendChild(style);
+	}
+};
+
+// Initialize styles when the script loads
+$(document).ready(() => {
+	addPreviewStyles();
+	
+	// Handle fullscreen change events
+	const fullscreenEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+	
+	fullscreenEvents.forEach(event => {
+		document.addEventListener(event, () => {
+			// Find all containers with fullscreen functionality
+			const containers = document.querySelectorAll('[id*="showDocument"], [class*="preview-container"]');
+			
+			containers.forEach(container => {
+				if (!document.fullscreenElement && !document.webkitFullscreenElement && 
+					!document.mozFullScreenElement && !document.msFullscreenElement) {
+					// Exited fullscreen
+					container.classList.remove('fullscreen-active');
+					restoreNormalView(container.id);
+				}
+			});
+		});
+	});
+});

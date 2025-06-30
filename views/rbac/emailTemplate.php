@@ -47,7 +47,7 @@ include_once __DIR__ . '/../_templates/header.php';
                                             <th style="color:white"> CC </th>
                                             <th style="color:white"> BCC </th>
                                             <th style="color:white"> Status </th>
-                                            <th style="color:white"> Action </th>
+                                            <th style="color:white"> # </th>
                                         </tr>
                                     </thead>
                                     <tbody></tbody>
@@ -75,22 +75,22 @@ include_once __DIR__ . '/../_templates/header.php';
                 },
                 [{
                         "data": "type",
-                        "width": "20%",
+                        "width": "22%",
                         "targets": 0
                     },
                     {
                         "data": "subject",
-                        "width": "50%",
+                        // "width": "50%",
                         "targets": 1
                     },
                     {
                         "data": "cc",
-                        "width": "5%",
+                        "width": "6%",
                         "targets": 2
                     },
                     {
                         "data": "bcc",
-                        "width": "5%",
+                        "width": "6%",
                         "targets": 3
                     },
                     {
@@ -105,6 +105,7 @@ include_once __DIR__ . '/../_templates/header.php';
                             return data;
                         },
                         "targets": -1,
+                        "width": "3%",
                         "searchable": false,
                         "orderable": false
                     }
@@ -123,8 +124,7 @@ include_once __DIR__ . '/../_templates/header.php';
             });
 
             if (isSuccess(res)) {
-                const data = res.data.data;
-                emailTemplateForm('update', data);
+                emailTemplateForm('update', res.data.data);
             }
         }
 
