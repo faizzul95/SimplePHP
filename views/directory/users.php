@@ -36,12 +36,17 @@ include_once __DIR__ . '/../_templates/header.php';
                                 <option value="4"> Unverified </option>
                             </select>
 
+                            <!-- <select id="filter_deleted_user" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
+                                <option value=""> All User </option>
+                                <option value="1"> Deleted User </option>
+                            </select> -->
+
                             <select id="filter_gender_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All Gender </option>
                                 <option value="1"> Male </option>
                                 <option value="2"> Female </option>
                             </select>
-
+                            
                             <select id="filter_profile" class="form-control form-control-sm me-2 float-end" style="width: 180px;" onchange="getDataList()">
                                 <option value=""> All Profiles </option>
                             </select>
@@ -111,7 +116,8 @@ include_once __DIR__ . '/../_templates/header.php';
                     'action': 'listUserDatatable',
                     'user_status_filter': $("#filter_user_status").val(),
                     'user_gender_filter': $("#filter_gender_status").val(),
-                    'user_profile_filter': $("#filter_profile").val()
+                    'user_profile_filter': $("#filter_profile").val(),
+                    'user_deleted_filter': $("#filter_deleted_user").val()
                 },
                 [{
                         "data": "avatar",

@@ -93,7 +93,7 @@ interface QueryInterface
      * @param callable $callback The callback function to apply to each chunk.
      * @return mixed The result of processing the chunks.
      */
-    public function chunk($size, callable $callback);
+    public function chunk(int $size, callable $callback);
 
     /**
      * Returns a generator that yields results one by one using a database cursor.
@@ -101,7 +101,7 @@ interface QueryInterface
      * @param int $size The size of each chunk.
      * @return \Generator
      */
-    public function cursor($chunkSize);
+    public function cursor(int $chunkSize);
 
     /**
      * Returns a lazy collection for iterating over the results.
@@ -109,7 +109,7 @@ interface QueryInterface
      * @param int $size The size of each chunk.
      * @return \Traversable
      */
-    public function lazy($chunkSize);
+    public function lazy(int $chunkSize);
 
     /**
      * Paginates the result set.
@@ -119,7 +119,16 @@ interface QueryInterface
      * @param int $draw The draw counter for pagination.
      * @return mixed The paginated result set.
      */
-    public function paginate($start = 1, $limit = 10, $draw = 1);
+    public function paginate(int $start = 1, int $limit = 10, int $draw = 1);
+
+    /**
+     * Retrieve a single column's values from the database as an array.
+     *
+     * @param string $column The column to retrieve values from.
+     * @param string|null $keyColumn Optional. The column to use as array keys.
+     * @return array The array of plucked values.
+     */
+    public function pluck(string $column, ?string $keyColumn);
 
     /**
      * Returns the current SQL query without showing the eager query.

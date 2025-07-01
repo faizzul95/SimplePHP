@@ -92,12 +92,15 @@ function show($request)
 
 function save($request)
 {
-    if (empty($request['role_name'])) {
-        jsonResponse(['code' => 400, 'message' => 'Role name is required']);
-    }
+    $validation = validator(request()->all(), [
+        'role_name' => 'required|string|min_length:3|max_length:64|secure_value',
+        'role_rank' => 'required|numeric|min:1|max_length:5',
+        'role_status' => 'required|integer|min:0|max_length:1',
+        'id' => 'numeric',
+    ])->validate();
 
-    if (empty($request['role_rank'])) {
-        jsonResponse(['code' => 400, 'message' => 'Role rank is required']);
+    if (!$validation->passed()) {
+        jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
     }
 
     if (empty($request['id'])) {
@@ -130,7 +133,14 @@ function destroy($request)
         jsonResponse(['code' => 400, 'message' => 'ID is required']);
     }
 
-    $result = db()->table('master_roles')->where('id', $id)->delete();
+    // $result = db()->table('master_roles')->where('id', $id)->delete();
+    $result = db()->table('master_roles')->where('id', $id)->update(
+        [
+            'role_status' => 0,
+            'deleted_at' => timestamp(),
+            'updated_at' => timestamp()
+        ]
+    );
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to delete role']);
@@ -147,6 +157,6 @@ function destroy($request)
 
 function listSelectOptionRole($request)
 {
-    $role = db()->table('master_roles')->safeOutput()->get();
+    $role = db()->table('master_roles')->whereNull('deleted_at')->safeOutput()->get();
     jsonResponse(['code' => 200, 'data' => $role]);
 }

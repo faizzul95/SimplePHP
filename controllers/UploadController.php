@@ -7,71 +7,48 @@ function uploadImageCropper($request)
 {
     $response = ['code' => 400, 'message' => 'Invalid request'];
 
+    $validation = validator(request()->all(), [
+        // 'change_image' => 'required|file|mimes:jpg,jpeg,png|max_file_size:8192', // 8MB (8192 KB)
+        'entity_type' => 'required|string|max_length:255|secure_value',
+        'entity_file_type' => 'required|string|max_length:255|secure_value',
+        'entity_id' => 'required|string', // use string instead of numeric/integer since the id is encode
+        'id' => 'string',  // use string instead of numeric/integer since the id is encode
+    ], [
+        // 'change_image.required' => 'File upload is required',
+        // 'change_image.file' => 'File upload must be a valid file',
+        // 'change_image.mimes' => 'File upload must be a valid image file (jpg, jpeg, png)',
+        // 'change_image.max_file_size' => 'File upload must not exceed 8MB',
+    ])->validate();
+
+    if (!$validation->passed()) {
+        jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
+    }
+
     try {
-        $user_id = currentUserID();
-        $id = decodeID(request()->input('id'));
         $entity_id = decodeID(request()->input('entity_id'));
         $entity_type = request()->input('entity_type');
         $entity_file_type = request()->input('entity_file_type');
         $image = $request['image'] ?? null;
 
-        // Validate required fields
-        if (empty($image) || empty($entity_id) || empty($entity_type) || empty($entity_file_type)) {
-            $response = ['code' => 400, 'message' => 'Missing required fields'];
+        $imageConvert = convertBase64String($image);
+
+        if (!$imageConvert['status']) {
+            $response = ['code' => 400, 'message' => $imageConvert['error']];
             jsonResponse($response);
         }
 
+        $imageUpload = $imageConvert['data'];
+        $extension = $imageConvert['extension'];
+
+        $user_id = currentUserID();
+        $id = decodeID(request()->input('id'));
         $folder_group = request()->input('folder_group', 'unknown');
         $folder_type = request()->input('folder_type', 'unknown');
 
         // Generate folder
         $folder = folder($folder_group, $entity_id, $folder_type);
 
-        // Validate base64 image format
-        if (!preg_match('/^data:image\/[a-zA-Z]+;base64,/', $image)) {
-            $response = ['code' => 400, 'message' => 'Invalid image format'];
-            jsonResponse($response);
-        }
-
-        // Extract image data
-        list($type, $image_data) = explode(';', $image);
-        list(, $image_data) = explode(',', $image_data);
-
-        // Extract file extension from MIME type
-        $mimeType = str_replace('data:', '', $type);
-        $extension = '';
-
-        switch ($mimeType) {
-            case 'image/jpeg':
-            case 'image/jpg':
-                $extension = '.jpg';
-                break;
-            case 'image/png':
-                $extension = '.png';
-                break;
-            case 'image/gif':
-                $extension = '.gif';
-                break;
-            case 'image/webp':
-                $extension = '.webp';
-                break;
-            case 'image/bmp':
-                $extension = '.bmp';
-                break;
-            default:
-                $extension = '.jpg'; // fallback to jpg
-                break;
-        }
-
-        $imageUpload = base64_decode($image_data);
-
-        // Validate decoded image
-        if ($imageUpload === false) {
-            $response = ['code' => 400, 'message' => 'Failed to decode image'];
-            jsonResponse($response);
-        }
-
-        $fileNameNew = $entity_id . "_" . date('dFY') . "_" . date('his') . $extension;
+        $fileNameNew = $entity_id . "_" . date('dFY') . "_" . date('his') . '.' . $extension;
         $path = ROOT_DIR . $folder . '/' . $fileNameNew;
 
         // Get previous data if updating

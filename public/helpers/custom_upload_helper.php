@@ -4,281 +4,281 @@ const BANNED_REPLACE_WORD = '[CONTENT-BLOCKED]';
 
 function folder($foldername = 'directory', $folderid = NULL, $type = 'image')
 {
-	// $foldername = replaceFolderName($foldername);
-	$type = replaceFolderName($type);
+    // $foldername = replaceFolderName($foldername);
+    $type = replaceFolderName($type);
 
-	if (empty($folderid)) {
-		$folder = 'public/upload/' . $foldername . '/' . $type;
-	} else {
-		$folderid = replaceFolderName($folderid);
-		$folder = 'public/upload/' . $foldername . '/' . $folderid . '/' . $type;
-	}
+    if (empty($folderid)) {
+        $folder = 'public/upload/' . $foldername . '/' . $type;
+    } else {
+        $folderid = replaceFolderName($folderid);
+        $folder = 'public/upload/' . $foldername . '/' . $folderid . '/' . $type;
+    }
 
-	// check if folder current not exist, 
-	// create one with permission (server) to upload
-	if (!is_dir(ROOT_DIR . $folder)) {
+    // check if folder current not exist, 
+    // create one with permission (server) to upload
+    if (!is_dir(ROOT_DIR . $folder)) {
 
-		$old = umask(0);
-		mkdir(ROOT_DIR . $folder, 0755, true);
-		umask($old);
+        $old = umask(0);
+        mkdir(ROOT_DIR . $folder, 0755, true);
+        umask($old);
 
-		chmod(ROOT_DIR . $folder, 0755);
-	}
+        chmod(ROOT_DIR . $folder, 0755);
+    }
 
-	return $folder;
+    return $folder;
 }
 
 function replaceFolderName($folderName)
 {
-	return str_replace(array('\'', '/', '"', ',', ';', '<', '>', '@', '|'), '_', preg_replace('/\s+/', '_', $folderName));
+    return str_replace(array('\'', '/', '"', ',', ';', '<', '>', '@', '|'), '_', preg_replace('/\s+/', '_', $folderName));
 }
 
 function get_mime_type($filename)
 {
-	$idx = pathinfo($filename, PATHINFO_EXTENSION);
+    $idx = pathinfo($filename, PATHINFO_EXTENSION);
 
-	$mimet = array(
-		'txt' => 'text/plain',
-		'htm' => 'text/html',
-		'html' => 'text/html',
-		'php' => 'text/html',
-		'css' => 'text/css',
-		'js' => 'application/javascript',
-		'json' => 'application/json',
-		'xml' => 'application/xml',
-		'swf' => 'application/x-shockwave-flash',
-		'flv' => 'video/x-flv',
+    $mimet = array(
+        'txt' => 'text/plain',
+        'htm' => 'text/html',
+        'html' => 'text/html',
+        'php' => 'text/html',
+        'css' => 'text/css',
+        'js' => 'application/javascript',
+        'json' => 'application/json',
+        'xml' => 'application/xml',
+        'swf' => 'application/x-shockwave-flash',
+        'flv' => 'video/x-flv',
 
-		// images
-		'png' => 'image/png',
-		'jpe' => 'image/jpeg',
-		'jpeg' => 'image/jpeg',
-		'jpg' => 'image/jpeg',
-		'gif' => 'image/gif',
-		'bmp' => 'image/bmp',
-		'ico' => 'image/vnd.microsoft.icon',
-		'tiff' => 'image/tiff',
-		'tif' => 'image/tiff',
-		'svg' => 'image/svg+xml',
-		'svgz' => 'image/svg+xml',
+        // images
+        'png' => 'image/png',
+        'jpe' => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'jpg' => 'image/jpeg',
+        'gif' => 'image/gif',
+        'bmp' => 'image/bmp',
+        'ico' => 'image/vnd.microsoft.icon',
+        'tiff' => 'image/tiff',
+        'tif' => 'image/tiff',
+        'svg' => 'image/svg+xml',
+        'svgz' => 'image/svg+xml',
 
-		// archives
-		'zip' => 'application/zip',
-		'rar' => 'application/x-rar-compressed',
-		'exe' => 'application/x-msdownload',
-		'msi' => 'application/x-msdownload',
-		'cab' => 'application/vnd.ms-cab-compressed',
+        // archives
+        'zip' => 'application/zip',
+        'rar' => 'application/x-rar-compressed',
+        'exe' => 'application/x-msdownload',
+        'msi' => 'application/x-msdownload',
+        'cab' => 'application/vnd.ms-cab-compressed',
 
-		// audio/video
-		'mp3' => 'audio/mpeg',
-		'qt' => 'video/quicktime',
-		'mov' => 'video/quicktime',
+        // audio/video
+        'mp3' => 'audio/mpeg',
+        'qt' => 'video/quicktime',
+        'mov' => 'video/quicktime',
 
-		// adobe
-		'pdf' => 'application/pdf',
-		'psd' => 'image/vnd.adobe.photoshop',
-		'ai' => 'application/postscript',
-		'eps' => 'application/postscript',
-		'ps' => 'application/postscript',
+        // adobe
+        'pdf' => 'application/pdf',
+        'psd' => 'image/vnd.adobe.photoshop',
+        'ai' => 'application/postscript',
+        'eps' => 'application/postscript',
+        'ps' => 'application/postscript',
 
-		// ms office
-		'doc' => 'application/msword',
-		'rtf' => 'application/rtf',
-		'xls' => 'application/vnd.ms-excel',
-		'ppt' => 'application/vnd.ms-powerpoint',
-		'docx' => 'application/msword',
-		'xlsx' => 'application/vnd.ms-excel',
-		'pptx' => 'application/vnd.ms-powerpoint',
+        // ms office
+        'doc' => 'application/msword',
+        'rtf' => 'application/rtf',
+        'xls' => 'application/vnd.ms-excel',
+        'ppt' => 'application/vnd.ms-powerpoint',
+        'docx' => 'application/msword',
+        'xlsx' => 'application/vnd.ms-excel',
+        'pptx' => 'application/vnd.ms-powerpoint',
 
 
-		// open office
-		'odt' => 'application/vnd.oasis.opendocument.text',
-		'ods' => 'application/vnd.oasis.opendocument.spreadsheet',
-	);
+        // open office
+        'odt' => 'application/vnd.oasis.opendocument.text',
+        'ods' => 'application/vnd.oasis.opendocument.spreadsheet',
+    );
 
-	if (isset($mimet[$idx])) {
-		return $mimet[$idx];
-	} else {
-		return 'application/octet-stream';
-	}
+    if (isset($mimet[$idx])) {
+        return $mimet[$idx];
+    } else {
+        return 'application/octet-stream';
+    }
 }
 
 function upload($files, $folder, $data = NULL, $index = false, $compress = false, $file_compression = 1)
 {
-	// Check PHP.ini settings
-	$maxFileSize = min(
-		convertPHPSizeToBytes(ini_get('upload_max_filesize')),
-		convertPHPSizeToBytes(ini_get('post_max_size'))
-	);
+    // Check PHP.ini settings
+    $maxFileSize = min(
+        convertPHPSizeToBytes(ini_get('upload_max_filesize')),
+        convertPHPSizeToBytes(ini_get('post_max_size'))
+    );
 
-	// Check if folder exist.
-	if (!is_dir(ROOT_DIR . $folder)) {
-		mkdir(ROOT_DIR . $folder, 0755, TRUE);
-	}
+    // Check if folder exist.
+    if (!is_dir(ROOT_DIR . $folder)) {
+        mkdir(ROOT_DIR . $folder, 0755, TRUE);
+    }
 
-	// Handle the file based on index
-	$fileTmpPath = ($index === false) ? $files['tmp_name'] : $files['tmp_name'][$index];
-	$fileName = ($index === false) ? $files['name'] : $files['name'][$index];
-	$fileSize = ($index === false) ? $files['size'] : $files['size'][$index];
-	$fileError = ($index === false) ? $files['error'] : $files['error'][$index];
+    // Handle the file based on index
+    $fileTmpPath = ($index === false) ? $files['tmp_name'] : $files['tmp_name'][$index];
+    $fileName = ($index === false) ? $files['name'] : $files['name'][$index];
+    $fileSize = ($index === false) ? $files['size'] : $files['size'][$index];
+    $fileError = ($index === false) ? $files['error'] : $files['error'][$index];
 
-	// Check for PHP file upload errors
-	if ($fileError !== UPLOAD_ERR_OK) {
-		return [
-			'status' => 400,
-			'error' => 'File upload error: ' . fileUploadErrorMessage($fileError)
-		];
-	}
+    // Check for PHP file upload errors
+    if ($fileError !== UPLOAD_ERR_OK) {
+        return [
+            'status' => 400,
+            'error' => 'File upload error: ' . fileUploadErrorMessage($fileError)
+        ];
+    }
 
-	// Check file size limit
-	if ($fileSize > $maxFileSize) {
-		return [
-			'status' => 400,
-			'error' => 'File exceeds the maximum allowed size'
-		];
-	}
+    // Check file size limit
+    if ($fileSize > $maxFileSize) {
+        return [
+            'status' => 400,
+            'error' => 'File exceeds the maximum allowed size'
+        ];
+    }
 
-	$ext = pathinfo($fileName, PATHINFO_EXTENSION);
-	$newName = md5($fileName) . date('dmYhis');
-	$saveName = $newName . '.' . $ext;
-	$path = $folder . '/' . $saveName;
+    $ext = pathinfo($fileName, PATHINFO_EXTENSION);
+    $newName = md5($fileName) . date('dmYhis');
+    $saveName = $newName . '.' . $ext;
+    $path = $folder . '/' . $saveName;
 
-	if (move_uploaded_file($fileTmpPath, ROOT_DIR . $path)) {
+    if (move_uploaded_file($fileTmpPath, ROOT_DIR . $path)) {
 
-		$entity_type = $entity_file_type = $entity_id = $user_id = 0;
+        $entity_type = $entity_file_type = $entity_id = $user_id = 0;
 
-		// Handle compression if required
-		if ($compress) {
-			$canCompress = ['jpg', 'png', 'jpeg', 'gif'];
-			if (in_array($ext, $canCompress)) {
-				$compressfolder = ROOT_DIR . $folder . '/' . $newName . "_compress." . $ext;
-				$thumbnailfolder = ROOT_DIR . $folder . '/' . $newName . "_thumbnail." . $ext;
+        // Handle compression if required
+        if ($compress) {
+            $canCompress = ['jpg', 'png', 'jpeg', 'gif'];
+            if (in_array($ext, $canCompress)) {
+                $compressfolder = ROOT_DIR . $folder . '/' . $newName . "_compress." . $ext;
+                $thumbnailfolder = ROOT_DIR . $folder . '/' . $newName . "_thumbnail." . $ext;
 
-				if ($file_compression === 2) {
-					compress(ROOT_DIR . $path, $compressfolder, '60');
-				} elseif ($file_compression === 3) {
-					compress(ROOT_DIR . $path, $compressfolder, '60');
-					compress(ROOT_DIR . $path, $thumbnailfolder, '15');
-				}
+                if ($file_compression === 2) {
+                    compress(ROOT_DIR . $path, $compressfolder, '60');
+                } elseif ($file_compression === 3) {
+                    compress(ROOT_DIR . $path, $compressfolder, '60');
+                    compress(ROOT_DIR . $path, $thumbnailfolder, '15');
+                }
 
-				if (file_exists($compressfolder)) {
-					$fileSize += filesize($compressfolder);
-				}
+                if (file_exists($compressfolder)) {
+                    $fileSize += filesize($compressfolder);
+                }
 
-				if (file_exists($thumbnailfolder)) {
-					$fileSize += filesize($thumbnailfolder);
-				}
-			}
-		}
+                if (file_exists($thumbnailfolder)) {
+                    $fileSize += filesize($thumbnailfolder);
+                }
+            }
+        }
 
-		if (!empty($data)) {
-			$user_id = $data['user_id'] ?? NULL;
-			$entity_type = $data['type'] ?? NULL;
-			$entity_file_type = $data['file_type'] ?? NULL;
-			$entity_id = $data['entity_id'] ?? NULL;
-		}
+        if (!empty($data)) {
+            $user_id = $data['user_id'] ?? NULL;
+            $entity_type = $data['type'] ?? NULL;
+            $entity_file_type = $data['file_type'] ?? NULL;
+            $entity_id = $data['entity_id'] ?? NULL;
+        }
 
-		$filesMime = get_mime_type($fileName);
-		$fileType = explodeArr($filesMime, '/', 0)[0];
+        $filesMime = get_mime_type($fileName);
+        $fileType = explodeArr($filesMime, '/', 0)[0];
 
-		return [
-			'status' => 200,
-			'data' => [
-				'files_name' => $saveName,
-				'files_original_name' => $fileName,
-				'files_folder' => $folder,
-				'files_type' => $fileType,
-				'files_mime' => $filesMime,
-				'files_extension' => $ext,
-				'files_size' => $fileSize,
-				'files_compression' => $file_compression,
-				'files_path' => $path,
-				'files_path_is_url' => 0,
-				'entity_type' => $entity_type,
-				'entity_file_type' => $entity_file_type,
-				'entity_id' => $entity_id,
-				'user_id' => $user_id,
-			]
-		];
-	}
+        return [
+            'status' => 200,
+            'data' => [
+                'files_name' => $saveName,
+                'files_original_name' => $fileName,
+                'files_folder' => $folder,
+                'files_type' => $fileType,
+                'files_mime' => $filesMime,
+                'files_extension' => $ext,
+                'files_size' => $fileSize,
+                'files_compression' => $file_compression,
+                'files_path' => $path,
+                'files_path_is_url' => 0,
+                'entity_type' => $entity_type,
+                'entity_file_type' => $entity_file_type,
+                'entity_id' => $entity_id,
+                'user_id' => $user_id,
+            ]
+        ];
+    }
 
-	return [
-		'status' => 400,
-		'error' => 'File could not be moved to destination directory'
-	];
+    return [
+        'status' => 400,
+        'error' => 'File could not be moved to destination directory'
+    ];
 }
 
 function moveFile($filesName, $currentPath, $folder, $data = NULL, $type = 'rename', $compress = false, $file_compression = 1)
 {
-	$ext = pathinfo($filesName, PATHINFO_EXTENSION);
-	$newName = md5($filesName) . date('dmYhis');
-	$saveName = $newName . '.' . $ext;
-	$path = $folder . '/' . $saveName;
-	$fileSize = filesize($currentPath);
+    $ext = pathinfo($filesName, PATHINFO_EXTENSION);
+    $newName = md5($filesName) . date('dmYhis');
+    $saveName = $newName . '.' . $ext;
+    $path = $folder . '/' . $saveName;
+    $fileSize = filesize($currentPath);
 
-	if ($type($currentPath, ROOT_DIR . $path)) {
+    if ($type($currentPath, ROOT_DIR . $path)) {
 
-		$entity_type = $entity_file_type = $entity_id = $user_id = 0;
+        $entity_type = $entity_file_type = $entity_id = $user_id = 0;
 
-		// 1 = full size only, 2 = full size & compressed, 3 = full size, compressed & thumbnail	
-		if ($compress) {
-			$canCompress = ['jpg', 'png', 'jpeg', 'gif'];
-			if (in_array(pathinfo($saveName, PATHINFO_EXTENSION), $canCompress)) {
-				$compressfolder = ROOT_DIR . $folder . '/' . $newName . "_compress." . $ext;
-				$thumbnailfolder = ROOT_DIR . $folder . '/' . $newName . "_thumbnail." . $ext;
+        // 1 = full size only, 2 = full size & compressed, 3 = full size, compressed & thumbnail	
+        if ($compress) {
+            $canCompress = ['jpg', 'png', 'jpeg', 'gif'];
+            if (in_array(pathinfo($saveName, PATHINFO_EXTENSION), $canCompress)) {
+                $compressfolder = ROOT_DIR . $folder . '/' . $newName . "_compress." . $ext;
+                $thumbnailfolder = ROOT_DIR . $folder . '/' . $newName . "_thumbnail." . $ext;
 
-				if ($file_compression === 2) {
-					$file_compression = 2;
-					$compressImage = compress(ROOT_DIR . $path, $compressfolder, '60');
-				} elseif ($file_compression === 3) {
-					$file_compression = 3;
-					$compressImage = compress(ROOT_DIR . $path, $compressfolder, '60');
-					$thumbnailImage = compress(ROOT_DIR . $path, $thumbnailfolder, '15');
-				}
+                if ($file_compression === 2) {
+                    $file_compression = 2;
+                    $compressImage = compress(ROOT_DIR . $path, $compressfolder, '60');
+                } elseif ($file_compression === 3) {
+                    $file_compression = 3;
+                    $compressImage = compress(ROOT_DIR . $path, $compressfolder, '60');
+                    $thumbnailImage = compress(ROOT_DIR . $path, $thumbnailfolder, '15');
+                }
 
-				// adjustment for _compress
-				if (file_exists($compressfolder))
-					$fileSize = $fileSize + filesize($compressfolder);
+                // adjustment for _compress
+                if (file_exists($compressfolder))
+                    $fileSize = $fileSize + filesize($compressfolder);
 
-				// adjustment for _thumbnail
-				if (file_exists($thumbnailfolder))
-					$fileSize = $fileSize + filesize($thumbnailfolder);
-			}
-		}
+                // adjustment for _thumbnail
+                if (file_exists($thumbnailfolder))
+                    $fileSize = $fileSize + filesize($thumbnailfolder);
+            }
+        }
 
-		if (!empty($data)) {
-			$user_id = (isset($data['user_id'])) ? $data['user_id'] : NULL;
-			$entity_type = (isset($data['type'])) ? $data['type'] : NULL;
-			$entity_file_type = (isset($data['file_type'])) ? $data['file_type'] : 'PROFILE_PHOTO';
-			$entity_id = (isset($data['entity_id'])) ? $data['entity_id'] : NULL;
-		}
+        if (!empty($data)) {
+            $user_id = (isset($data['user_id'])) ? $data['user_id'] : NULL;
+            $entity_type = (isset($data['type'])) ? $data['type'] : NULL;
+            $entity_file_type = (isset($data['file_type'])) ? $data['file_type'] : 'PROFILE_PHOTO';
+            $entity_id = (isset($data['entity_id'])) ? $data['entity_id'] : NULL;
+        }
 
-		$filesMime = get_mime_type($filesName);
-		$fileType = explodeArr($filesMime, '/',  0);
-		$fileType = $fileType[0];
+        $filesMime = get_mime_type($filesName);
+        $fileType = explodeArr($filesMime, '/',  0);
+        $fileType = $fileType[0];
 
-		//Clear cache and check filesize again
-		clearstatcache();
+        //Clear cache and check filesize again
+        clearstatcache();
 
-		return [
-			'files_name' => $saveName,
-			'files_original_name' => $filesName,
-			'files_folder' => $folder,
-			'files_type' => $fileType,
-			'files_mime' => $filesMime,
-			'files_extension' => $ext,
-			'files_size' => round($fileSize, 2),
-			'files_compression' => $file_compression,
-			'files_path' => $path,
-			'files_path_is_url' => 0,
-			'entity_type' => $entity_type,
-			'entity_file_type' => $entity_file_type,
-			'entity_id' => $entity_id,
-			'user_id' => $user_id,
-		];
-	}
+        return [
+            'files_name' => $saveName,
+            'files_original_name' => $filesName,
+            'files_folder' => $folder,
+            'files_type' => $fileType,
+            'files_mime' => $filesMime,
+            'files_extension' => $ext,
+            'files_size' => round($fileSize, 2),
+            'files_compression' => $file_compression,
+            'files_path' => $path,
+            'files_path_is_url' => 0,
+            'entity_type' => $entity_type,
+            'entity_file_type' => $entity_file_type,
+            'entity_id' => $entity_id,
+            'user_id' => $user_id,
+        ];
+    }
 
-	return [];
+    return [];
 }
 
 function unlinkOldFiles($data = null)
@@ -346,11 +346,11 @@ function getFilesCompression($data, $compression = null)
         // 1 = full size only, 2 = full size & compressed, 3 = full size, compressed & thumbnail	
         if ($file_compression === 2) {
             if (file_exists(ROOT_DIR . $compressfolder)) {
-                 return $compressfolder;
+                return $compressfolder;
             }
         } elseif ($file_compression === 3) {
             if (file_exists(ROOT_DIR . $thumbnailfolder)) {
-                 return $thumbnailfolder;
+                return $thumbnailfolder;
             }
         }
     }
@@ -362,95 +362,196 @@ function getFilesCompression($data, $compression = null)
 // Quality: quality is optional, and ranges from 0 (worst quality, smaller file) to 100 (best quality, biggest file),
 function compress($source, $destination, $quality = '100')
 {
-    if(!file_exists($source) && !is_readable($source)) {
+    if (!file_exists($source) && !is_readable($source)) {
         throw new Exception("Source file does not exist or is not readable: " . $source);
     }
 
-	$info = getimagesize($source);
+    $info = getimagesize($source);
     $image = null;
 
-	if ($info['mime'] == 'image/jpeg')
-		$image = imagecreatefromjpeg($source);
-	elseif ($info['mime'] == 'image/gif')
-		$image = imagecreatefromgif($source);
-	elseif ($info['mime'] == 'image/png')
-		$image = imagecreatefrompng($source);
+    if ($info['mime'] == 'image/jpeg')
+        $image = imagecreatefromjpeg($source);
+    elseif ($info['mime'] == 'image/gif')
+        $image = imagecreatefromgif($source);
+    elseif ($info['mime'] == 'image/png')
+        $image = imagecreatefrompng($source);
 
     if ($image) {
         imagejpeg($image, $destination, $quality);
     }
-	
-	return $destination;
+
+    return $destination;
 }
 
 // Compress on the go
 function compressImageonthego($source, $quality)
 {
-    if(!file_exists($source) && !is_readable($source)) {
+    if (!file_exists($source) && !is_readable($source)) {
         throw new Exception("Source file does not exist or is not readable: " . $source);
     }
 
-	$info = getimagesize($source);
-	$extension = explode(".", $source);
+    $info = getimagesize($source);
+    $extension = explode(".", $source);
 
-	$newname = "temp" . rand(10, 100);
+    $newname = "temp" . rand(10, 100);
 
-	if ($info['mime'] == 'image/jpeg')
-		$image = imagecreatefromjpeg($source);
+    if ($info['mime'] == 'image/jpeg')
+        $image = imagecreatefromjpeg($source);
 
-	elseif ($info['mime'] == 'image/gif')
-		$image = imagecreatefromgif($source);
+    elseif ($info['mime'] == 'image/gif')
+        $image = imagecreatefromgif($source);
 
-	elseif ($info['mime'] == 'image/png')
-		$image = imagecreatefrompng($source);
+    elseif ($info['mime'] == 'image/png')
+        $image = imagecreatefrompng($source);
 
-	imagejpeg($image, "images/" . $newname . "." . $extension[1], $quality);
-	echo "<b>" . $newname . "." . $extension[1] . "</b>";
+    imagejpeg($image, "images/" . $newname . "." . $extension[1], $quality);
+    echo "<b>" . $newname . "." . $extension[1] . "</b>";
 }
 
 // Convert base64 string
 function convertBase64String($base64String)
 {
-	list($type, $base64String) = explode(';', $base64String);
-	list(, $base64String) = explode(',', $base64String);
+    try {
+        // Initialize result array
+        $result = [
+            'status' => false,
+            'data' => null,
+            'mime_type' => null,
+            'extension' => null,
+            'error' => null
+        ];
 
-	// Decode the base64-encoded data
-	$decoded_data = base64_decode($base64String);
+        // Check if base64 string is valid format
+        if (strpos($base64String, 'data:') !== 0) {
+            throw new Exception("Invalid file format");
+        }
 
-	// Check if the decoding was successful
-	if ($decoded_data !== false) {
-		// Validation successful
-		return $decoded_data;
-	} else {
-		// Validation failed
-		return NULL;
-	}
+        // Split the base64 string
+        $parts = explode(';', $base64String);
+        if (count($parts) < 2) {
+            return $result;
+        }
+
+        // Extract mime type
+        $mimeType = str_replace('data:', '', $parts[0]);
+
+        // Split base64 data
+        $dataParts = explode(',', $parts[1]);
+        if (count($dataParts) < 2) {
+            return $result;
+        }
+
+        $base64Data = $dataParts[1];
+
+        // Decode the base64-encoded data
+        $decodedData = base64_decode($base64Data);
+
+        // Check if the decoding was successful
+        if ($decodedData === false) {
+            throw new Exception("Failed to decode file");
+        }
+
+        // Get file extension from mime type
+        $extension = getExtensionFromMimeType($mimeType);
+
+        // Return successful result
+        $result['status'] = true;
+        $result['data'] = $decodedData;
+        $result['mime_type'] = $mimeType;
+        $result['extension'] = $extension;
+
+        return $result;
+    } catch (Exception $e) {
+        return [
+            'status' => false,
+            'data' => null,
+            'mime_type' => null,
+            'extension' => null,
+            'error' => $e->getMessage()
+        ];
+    }
+}
+
+function getExtensionFromMimeType($mimeType)
+{
+    $mimeToExt = [
+        // Images
+        'image/jpeg' => 'jpg',
+        'image/jpg' => 'jpg',
+        'image/png' => 'png',
+        'image/gif' => 'gif',
+        'image/bmp' => 'bmp',
+        'image/webp' => 'webp',
+        'image/svg+xml' => 'svg',
+        'image/tiff' => 'tiff',
+        'image/ico' => 'ico',
+
+        // Documents
+        'application/pdf' => 'pdf',
+        'application/msword' => 'doc',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+        'application/vnd.ms-excel' => 'xls',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+        'application/vnd.ms-powerpoint' => 'ppt',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'pptx',
+        'text/plain' => 'txt',
+        'text/csv' => 'csv',
+        'application/rtf' => 'rtf',
+
+        // Archives
+        'application/zip' => 'zip',
+        'application/x-rar-compressed' => 'rar',
+        'application/x-tar' => 'tar',
+        'application/gzip' => 'gz',
+
+        // Audio
+        'audio/mpeg' => 'mp3',
+        'audio/wav' => 'wav',
+        'audio/ogg' => 'ogg',
+        'audio/mp4' => 'm4a',
+
+        // Video
+        'video/mp4' => 'mp4',
+        'video/mpeg' => 'mpeg',
+        'video/quicktime' => 'mov',
+        'video/x-msvideo' => 'avi',
+        'video/x-ms-wmv' => 'wmv',
+
+        // Other
+        'application/json' => 'json',
+        'application/xml' => 'xml',
+        'text/html' => 'html',
+        'text/css' => 'css',
+        'application/javascript' => 'js'
+    ];
+
+    return isset($mimeToExt[$mimeType]) ? $mimeToExt[$mimeType] : null;
 }
 
 // convert from GB to Byte
 function convertGBToByte($gbValue)
 {
-	return $gbValue * pow(1024, 3);
+    return $gbValue * pow(1024, 3);
 }
 
 // Function to convert PHP size notation to bytes
 function convertPHPSizeToBytes($size)
 {
-	$suffix = strtoupper(substr($size, -1));
-	$value = (int)substr($size, 0, -1);
-	switch ($suffix) {
-		case 'P':
-			$value *= 1024;
-		case 'T':
-			$value *= 1024;
-		case 'G':
-			$value *= 1024;
-		case 'M':
-			$value *= 1024;
-		case 'K':
-			$value *= 1024;
-	}
-	return $value;
+    $suffix = strtoupper(substr($size, -1));
+    $value = (int)substr($size, 0, -1);
+    switch ($suffix) {
+        case 'P':
+            $value *= 1024;
+        case 'T':
+            $value *= 1024;
+        case 'G':
+            $value *= 1024;
+        case 'M':
+            $value *= 1024;
+        case 'K':
+            $value *= 1024;
+    }
+    return $value;
 }
 
 // Function to handle file upload errors
@@ -567,9 +668,20 @@ if (!function_exists('containsMalicious')) {
 
         // Array of only dangerous event handlers to check (reduced list to focus on commonly exploited ones)
         $event_handlers = [
-            'onload', 'onerror', 'onmouseover', 'onclick', 'onmousedown',
-            'onmouseup', 'onkeypress', 'onkeydown', 'onkeyup', 'onsubmit',
-            'onunload', 'onchange', 'onfocus', 'onblur'
+            'onload',
+            'onerror',
+            'onmouseover',
+            'onclick',
+            'onmousedown',
+            'onmouseup',
+            'onkeypress',
+            'onkeydown',
+            'onkeyup',
+            'onsubmit',
+            'onunload',
+            'onchange',
+            'onfocus',
+            'onblur'
         ];
 
         // Build a pattern to match dangerous event handlers in context (not just as words)
@@ -689,8 +801,8 @@ if (!function_exists('containsMalicious')) {
             '\[\s*"prototype"\s*\]|' .           // prototype access
             '\bwith\s*\(/ix';                    // with statement with word boundaries
 
-            // XML dangerous patterns - actual attack vectors only
-            '<!\[CDATA\[.*?<.*?>.*?\]\]>|' .       // CDATA containing HTML tags
+        // XML dangerous patterns - actual attack vectors only
+        '<!\[CDATA\[.*?<.*?>.*?\]\]>|' .       // CDATA containing HTML tags
             '<!ENTITY.*?SYSTEM|' .                 // External entity declarations only
             '<!DOCTYPE.*?SYSTEM|' .                // DOCTYPE with SYSTEM
 
@@ -1127,7 +1239,6 @@ if (!function_exists('extractSafeCSVContent')) {
             }
 
             $result['column_empty_count'] = $columnHasValue;
-
         } catch (Exception $e) {
             if (is_resource($handle)) {
                 fclose($handle);
@@ -1135,7 +1246,6 @@ if (!function_exists('extractSafeCSVContent')) {
 
             $result['message'] = 'Error processing CSV: ' . $e->getMessage();
             return $result;
-
         } finally {
             if (is_resource($handle)) {
                 fclose($handle);

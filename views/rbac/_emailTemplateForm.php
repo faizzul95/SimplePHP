@@ -187,7 +187,7 @@
             if (!$('#templateEditor').hasClass('note-editable')) {
                 initializeSummernote();
             }
-        }, 100);
+        }, 250);
 
         $('#templateEditor').summernote('code', '');
 

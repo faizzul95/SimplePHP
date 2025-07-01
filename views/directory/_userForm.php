@@ -147,7 +147,7 @@
 
         const message = {
             'name': 'Full Name',
-            'user_preferred_name': 'Preffered Rank',
+            'user_preferred_name': 'Preffered Name',
             'email': 'Email',
             'user_contact_no': 'Contact No',
             'role_id': 'Role',

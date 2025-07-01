@@ -1553,6 +1553,8 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 				.catch(error => {
 
 					log('ERROR SubmitApi 1');
+					loadingBtn(submitIdBtn, false, submitBtnText);
+
 					let textMessage = isset(error.response.data.message) ? error.response.data.message : error.response.statusText;
 
 					if (isError(error.response.status)) {

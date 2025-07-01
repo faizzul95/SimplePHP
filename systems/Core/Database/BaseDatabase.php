@@ -1856,6 +1856,24 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->paginate($start, $limit, $draw);
     }
 
+    public function pluck($column, $keyColumn = null)
+    {
+        $result = [];
+
+        $this->select($keyColumn ? [$keyColumn, $column] : [$column])
+            ->chunk(1000, function ($rows) use (&$result, $column, $keyColumn) {
+                foreach ($rows as $row) {
+                    if ($keyColumn !== null && isset($row[$keyColumn])) {
+                        $result[$row[$keyColumn]] = $row[$column];
+                    } else {
+                        $result[] = $row[$column];
+                    }
+                }
+            });
+
+        return $result;
+    }
+
     // Helper for paginate. override in each driver
     abstract public function _getLimitOffsetPaginate($query, $limit, $offset);
 

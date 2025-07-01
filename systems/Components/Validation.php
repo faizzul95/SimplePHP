@@ -180,6 +180,8 @@ class Validation
         'ip' => 'The :field must be a valid IP address.',
         'min' => 'The :field must be at least :min characters.',
         'max' => 'The :field may not be greater than :max characters.',
+        'min_length' => 'The :field must be at least :min_length characters long.',
+        'max_length' => 'The :field may not be more than :max_length characters long.',
         'between' => 'The :field must be between :min and :max characters.',
         'size' => 'The :field must be exactly :size characters.',
         'same' => 'The :field and :other must match.',
@@ -213,6 +215,7 @@ class Validation
         'xss' => 'The :field contains potentially dangerous content.',
         'safe_html' => 'The :field contains unsafe HTML content.',
         'no_sql_injection' => 'The :field contains potentially dangerous SQL patterns.',
+        'secure_value' => 'The :field contains potentially dangerous content.',
         'secure_filename' => 'The :field contains an unsafe filename.',
         'file_extension' => 'The :field has an invalid file extension.',
         'max_file_size' => 'The :field exceeds the maximum file size of :max KB.',
@@ -397,6 +400,31 @@ class Validation
     }
 
     /**
+     * Get validation status
+     * 
+     * @return array
+     */
+    public function status(): array
+    {
+        return [
+            'valid' => empty($this->errors),
+            'errors' => $this->errors,
+            'failed_fields' => $this->failedFields,
+            'count' => count($this->errors)
+        ];
+    }
+
+    /**
+     * Get validation passed status
+     * 
+     * @return bool
+     */
+    public function passed(): bool
+    {
+        return empty($this->errors);
+    }
+
+    /**
      * Get validation errors
      * 
      * @return array
@@ -407,11 +435,47 @@ class Validation
     }
 
     /**
+     * Get the very first validation error message
+     * 
+     * @return string
+     */
+    public function getFirstError(): string
+    {
+        if (empty($this->errors)) {
+            return '';
+        }
+
+        // Get the first field that had errors
+        $firstField = array_key_first($this->errors);
+        $messages = $this->errors[$firstField];
+
+        return reset($messages);
+    }
+
+    /**
+     * Get the very last validation error message
+     * 
+     * @return string
+     */
+    public function getLastError(): string
+    {
+        if (empty($this->errors)) {
+            return '';
+        }
+
+        // Get the last field that had errors
+        $lastField = array_key_last($this->errors);
+        $messages = $this->errors[$lastField];
+
+        return end($messages);
+    }
+
+    /**
      * Validate the data
      * 
-     * @return array
+     * @return self
      */
-    public function validate(): array
+    public function validate(): self
     {
         try {
             // Reset errors
@@ -433,20 +497,10 @@ class Validation
             // Execute after hooks
             $this->executeAfterHooks();
 
-            return [
-                'valid' => empty($this->errors),
-                'errors' => $this->errors,
-                'failed_fields' => $this->failedFields,
-                'count' => count($this->errors)
-            ];
+            return $this;
 
         } catch (Exception $e) {
-            return [
-                'valid' => false,
-                'errors' => ['validation_error' => [$e->getMessage()]],
-                'failed_fields' => ['validation_error'],
-                'count' => 1
-            ];
+            throw new Exception("Validation failed: " . $e->getMessage());
         }
     }
 
@@ -461,8 +515,8 @@ class Validation
         $results = [];
 
         try {
+            $originalData = $this->data;
             foreach ($datasets as $index => $data) {
-                $originalData = $this->data;
                 $this->setData($data);
 
                 $result = $this->validate();
@@ -844,13 +898,18 @@ class Validation
                 $message = "The $field field is invalid.";
             }
 
+            // Remove underscores from field name for display
+            $displayField = str_replace('_', ' ', $field);
+
             // Replace placeholders
-            $message = str_replace(':field', $field, $message);
+            $message = str_replace(':field', $displayField, $message);
 
             if (!empty($params)) {
                 switch ($rule) {
                     case 'min':
                     case 'max':
+                    case 'min_length':
+                    case 'max_length':
                     case 'size':
                     case 'max_file_size':
                         $message = str_replace(':' . $rule, $params[0], $message);
@@ -1107,6 +1166,27 @@ class Validation
             if ($extension && in_array($extension, $this->dangerousExtensions, true)) {
                 return false;
             }
+
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate secure value
+     */
+    private function validateSecurevalue(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (!is_string($value)) {
+                return false;
+            }
+
+            $sanitizeValue = trim($value);
+
+            $this->validateXss($field, $sanitizeValue, $params);
+            $this->validateNosqlinjection($field, $sanitizeValue, $params);
 
             return true;
         } catch (Exception $e) {
@@ -1425,6 +1505,58 @@ class Validation
 
             if (is_array($value)) {
                 return count($value) >= $min;
+            }
+
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate max length rule (for strings and numbers)
+     */
+    private function validateMaxLength(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (empty($params)) {
+                return false;
+            }
+
+            $maxLength = $params[0];
+
+            if (is_string($value)) {
+                return strlen($value) <= $maxLength;
+            }
+
+            if (is_numeric($value)) {
+                return strlen((string)$value) <= $maxLength;
+            }
+
+            return false;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate min length rule (for strings and numbers)
+     */
+    private function validateMinLength(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (empty($params)) {
+                return false;
+            }
+
+            $minLength = $params[0];
+
+            if (is_string($value)) {
+                return strlen($value) >= $minLength;
+            }
+
+            if (is_numeric($value)) {
+                return strlen((string)$value) >= $minLength;
             }
 
             return false;

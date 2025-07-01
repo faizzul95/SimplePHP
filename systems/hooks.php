@@ -153,3 +153,30 @@ if (!function_exists('request')) {
         return new \Components\Request();
     }
 }
+
+/*
+|--------------------------------------------------------------------------
+| VALIDATION COMPONENT
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('validator')) {
+    function validator($data = [], $rules = [], $customMessage = [])
+    {
+        $validator = new \Components\Validation();
+
+        if (!empty($data)) {
+            $validator->setData($data);
+        }
+
+        if (!empty($rules)) {
+            $validator->setRules($rules);
+        }
+
+        if (!empty($customMessage)) {
+            $validator->setMessages($customMessage);
+        }
+
+        return $validator;
+    }
+}

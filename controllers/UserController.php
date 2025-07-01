@@ -15,9 +15,10 @@ function listUserDatatable($request)
     $statusF = request()->input('user_status_filter');
     $genderF = request()->input('user_gender_filter');
     $profileF = request()->input('user_profile_filter');
+    $onlyTrashed = request()->input('user_deleted_filter', false);
 
     $db = db();
-    $db->table('users')->select('id, name, email, user_gender, user_contact_no, user_dob, user_status');
+    $db->table('users')->select('id, name, email, user_gender, user_contact_no, user_dob, user_status, deleted_at');
 
     if ($statusF == 0 || !empty($statusF)) {
         $db->where('user_status', $statusF);
@@ -25,6 +26,12 @@ function listUserDatatable($request)
 
     if ($genderF == 0 || !empty($genderF)) {
         $db->where('user_gender', $genderF);
+    }
+
+    if ($onlyTrashed) {
+        $db->whereNotNull('deleted_at'); // only show deleted users
+    } else {
+        $db->whereNull('deleted_at');
     }
 
     if ($profileF == 0 || !empty($profileF)) {
@@ -37,7 +44,6 @@ function listUserDatatable($request)
             $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
                 ->where('entity_file_type', 'USER_PROFILE');
         })
-        ->whereNull('deleted_at')
         ->safeOutput()
         ->paginate_ajax(request()->all());
 
@@ -49,49 +55,61 @@ function listUserDatatable($request)
         '<span class="badge bg-label-dark"> Unverified </span>'
     ];
 
-    // Alter/formatting the data return
-    $result['data'] = array_map(function ($row) use ($status) {
-        $id = encodeID($row['id']);
-        $avatar = isset($row['avatar']['files_path']) ? asset(getFilesCompression($row['avatar']), false) : asset('upload/default.jpg');
-        $avatarOriginal = isset($row['avatar']['files_path']) ? asset($row['avatar']['files_path'], false) : asset('upload/default.jpg');
-        $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
+    if (!empty($result['data'])) {
+        $listSuperadmin = db()->table('user_profile')->where('role_id', 1)->pluck('user_id');
 
-        $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$id}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
-        $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">
+        // Alter/formatting the data return
+        $result['data'] = array_map(function ($row) use ($status, $listSuperadmin) {
+            $id = encodeID($row['id']);
+            $avatar = isset($row['avatar']['files_path']) ? asset(getFilesCompression($row['avatar']), false) : asset('upload/default.jpg');
+            $avatarOriginal = isset($row['avatar']['files_path']) ? asset($row['avatar']['files_path'], false) : asset('upload/default.jpg');
+            $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
+
+            $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$id}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
+            $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">
                                 <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>
                             </a>' : '';
 
-        $resetPassAction = "<a class='btn btn-sm btn-outline-info' href='javascript:void(0);' onclick=\"resetPassword('{$id}')\" title='Reset password to default'> <span class='tf-icons bx bx-key'></span> </a>";
+            $statusUser = !empty($row['deleted_at']) ? '<span class="badge bg-label-danger"> Deleted </span>' : $status[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>';
 
-        return [
-            'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">
-                            <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '">
-                           ' . $uploadAction . '
-                        </div>',
-            'name' => $row['name'],
-            'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
-            'gender' => $row['user_gender'] == 1 ? 'Male' : 'Female',
-            'status' => $status[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>',
-            'action' => "
+            if (!empty($row['deleted_at'])) {
+                $action = "<a href='javascript:void(0);' onclick='restoreRecord(\"{$id}\")' title='Restore users'> <i class='bx bx-refresh'></i> </a>";
+            } else {
+                $delResetAction = in_array($row['id'], $listSuperadmin) ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
+                                <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
+                                    <i class='bx bx-dots-vertical-rounded'></i>
+                                </button>
+                                <div class='dropdown-menu'>
+                                    <a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'>
+                                        <i class='bx bx-trash me-1'></i> Delete
+                                    </a>
+                                    <a href='javascript:void(0);' onclick='resetPassword(\"{$id}\")' class='dropdown-item'>
+                                        <i class='bx bx-key me-1'></i> Reset Password
+                                    </a>
+                                </div>
+                            </div>";
+
+                $action = "
                 <span style='display: inline-block; vertical-align: middle;'>
                     <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
                 </span>
-                <div class='dropdown' style='display: inline-block; vertical-align: middle;'>
-                    <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
-                        <i class='bx bx-dots-vertical-rounded'></i>
-                    </button>
-                    <div class='dropdown-menu'>
-                        <a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'>
-                            <i class='bx bx-trash me-1'></i> Delete
-                        </a>
-                        <a href='javascript:void(0);' onclick='resetPassword(\"{$id}\")' class='dropdown-item'>
-                            <i class='bx bx-key me-1'></i> Reset Password
-                        </a>
-                    </div>
-                </div>
-            "
-        ];
-    }, $result['data']);
+               {$delResetAction}
+            ";
+            }
+
+            return [
+                'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">
+                            <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '">
+                           ' . $uploadAction . '
+                        </div>',
+                'name' => $row['name'],
+                'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
+                'gender' => $row['user_gender'] == 1 ? 'Male' : 'Female',
+                'status' => $statusUser,
+                'action' => $action
+            ];
+        }, $result['data']);
+    }
 
     jsonResponse($result);
 }
@@ -144,19 +162,21 @@ function show($request)
 
 function save($request)
 {
-    if (empty($request['name'])) {
-        jsonResponse(['code' => 400, 'message' => 'User name is required']);
-    }
-
-    if (empty($request['user_preferred_name'])) {
-        jsonResponse(['code' => 400, 'message' => 'Preferred name is required']);
-    }
-
-    if (empty($request['email'])) {
-        jsonResponse(['code' => 400, 'message' => 'Email is required']);
-    }
-
     $data = request()->all();
+
+    $validation = validator($data, [
+        'name' => 'required|string|min_length:3|max_length:255|secure_value',
+        'user_preferred_name' => 'required|string|min_length:3|max_length:255|secure_value',
+        'email' => 'required|email|max_length:255|secure_value',
+        'user_contact_no' => 'required|numeric|min_length:10|max_length:15',
+        'role_id' => 'required|integer|min:1',
+        'user_status' => 'required|integer|min:0|max_length:2',
+        'id' => 'numeric',
+    ])->validate();
+
+    if (!$validation->passed()) {
+        jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
+    }
 
     if (isset($data['id'])) {
         unset($data['id']); // Remove ID from data if exists, 
