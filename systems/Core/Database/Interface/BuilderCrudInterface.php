@@ -77,4 +77,17 @@ interface BuilderCrudInterface
      * @return mixed The result of the upsert operation, depending on the database driver.
      */
     public function upsert(array $values, string|array $uniqueBy = 'id', array $updateColumns = null);
+
+    /**
+     * Insert or update a record based on a primary or unique key condition.
+     *
+     * This method attempts to update an existing record that matches the given conditions (such as a primary key or unique constraint).
+     * If no matching record exists, it will insert a new record with the provided data.
+     *
+     * @param array $conditions An associative array of column(s) and value(s) to identify the record (e.g., ['email' => 'user@example.com']).
+     * @param array $data An associative array of column names and their values to insert or update.
+     * @param string $primaryKey The primary key column name to use for matching (default is 'id').
+     * @return mixed The result of the insert or update operation, depending on the database driver.
+     */
+    public function insertOrUpdate(array $conditions, array $data, string $primaryKey = 'id');
 }

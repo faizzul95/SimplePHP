@@ -225,7 +225,8 @@ class Validation
         'max_image_height' => 'The :field may not be more than :max pixels high.',
         'deep_array' => 'The :field array structure is invalid.',
         'array_keys' => 'The :field array contains invalid keys.',
-        'array_values' => 'The :field array contains invalid values.'
+        'array_values' => 'The :field array contains invalid values.',
+        'base64' => 'The :field must be a valid base64-encoded string.'
     ];
 
     /**
@@ -1398,6 +1399,10 @@ class Validation
     private function validateNumeric(string $field, $value, array $params = []): bool
     {
         try {
+            if (empty($value)) {
+                return true;
+            }
+
             return is_numeric($value);
         } catch (Exception $e) {
             return false;
@@ -1410,6 +1415,10 @@ class Validation
     private function validateInteger(string $field, $value, array $params = []): bool
     {
         try {
+            if (empty($value)) {
+                return true;
+            }
+
             return filter_var($value, FILTER_VALIDATE_INT) !== false;
         } catch (Exception $e) {
             return false;
@@ -2236,6 +2245,40 @@ class Validation
             }
 
             return filter_var($value, FILTER_VALIDATE_IP) !== false;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate Base64-encoding
+     */
+    private function validateBase64(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (!is_string($value) || $value === '') {
+                return false;
+            }
+
+            // Remove data URI prefix if present
+            if (preg_match('/^data:[^;]+;base64,/', $value)) {
+                $value = preg_replace('/^data:[^;]+;base64,/', '', $value);
+            }
+
+            // Check if valid base64 (must be divisible by 4, only valid chars)
+            if (!preg_match('/^[A-Za-z0-9+\/\r\n]+={0,2}$/', $value)) {
+                return false;
+            }
+
+            // Decode and re-encode to verify
+            $decoded = base64_decode($value, true);
+            if ($decoded === false) {
+                return false;
+            }
+            // Check if re-encoding matches original (ignoring padding)
+            $reencoded = rtrim(base64_encode($decoded), '=');
+            $original = rtrim($value, '=');
+            return $reencoded === $original;
         } catch (Exception $e) {
             return false;
         }

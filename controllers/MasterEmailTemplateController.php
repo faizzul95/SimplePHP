@@ -11,14 +11,14 @@ require_once '../init.php';
 
 function listEmailTemplateDatatable($request)
 {
-    $status = request()->input('email_status');
+    $statusF = request()->input('email_status');
 
     $db = db();
-    $db->table('master_email_templates')->select('id, email_type, email_subject, email_status, email_cc, email_bcc');
-
-    if ($status == 0 || !empty($status)) {
-        $db->where('email_status', $status);
-    }
+    $db->table('master_email_templates')
+        ->select('id, email_type, email_subject, email_status, email_cc, email_bcc')
+        ->when($statusF == 0 || !empty($statusF), function ($query) use ($statusF) {
+            $query->where('email_status', $statusF);
+        });
 
     // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
     $result = $db->setPaginateFilterColumn(['email_type', 'email_subject'])
@@ -88,16 +88,15 @@ function show($request)
 
 function save($request)
 {
-    if (empty($request['email_subject'])) {
-        jsonResponse(['code' => 400, 'message' => 'Email subject is required']);
-    }
+    $validation = validator($request, [
+        'email_subject' => 'required|string|min_length:3|max_length:255|secure_value',
+        'email_type' => 'required|string|min_length:3|max_length:255|secure_value',
+        'email_body' => 'required|string',
+        'id' => 'numeric',
+    ])->validate();
 
-    if (empty($request['email_type'])) {
-        jsonResponse(['code' => 400, 'message' => 'Email type is required']);
-    }
-
-    if (empty($request['email_body'])) {
-        jsonResponse(['code' => 400, 'message' => 'Description is required']);
+    if (!$validation->passed()) {
+        jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
     }
 
     $dataToSave = [
@@ -110,14 +109,12 @@ function save($request)
         'email_status' => request()->input('email_status')
     ];
 
-    if (empty($request['id'])) {
-        $result = db()->table('master_email_templates')
-            ->insert(array_merge($dataToSave, ['created_at' => timestamp()]));
-    } else {
-        $result = db()->table('master_email_templates')
-            ->where('id', request()->input('id'))
-            ->update(array_merge($dataToSave, ['updated_at' => timestamp()]));
-    }
+    $result = db()->table('master_email_templates')->insertOrUpdate(
+        [
+            'id' => request()->input('id')
+        ],
+        $dataToSave
+    );
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to save email template']);

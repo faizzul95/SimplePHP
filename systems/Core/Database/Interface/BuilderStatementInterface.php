@@ -293,6 +293,23 @@ interface BuilderStatementInterface
     public function whereJsonContains($columnName, $jsonPath, $value);
 
     /**
+     * Conditionally adds query constraints if the given conditions are true.
+     *
+     * This method allows you to fluently add query clauses only when certain conditions are met.
+     * If $conditions evaluates to true, the $callback is executed and receives the current query builder instance.
+     *
+     * Example usage:
+     *   $builder->when($isActive, function($query) {
+     *       $query->where('status', 'active');
+     *   });
+     *
+     * @param mixed $conditions The condition(s) to evaluate (bool, value, or closure).
+     * @param callable $callback The callback to execute if the condition is true. Receives the builder instance.
+     * @return $this
+     */
+    public function when($conditions, $callback);
+
+    /**
      * Adds a join clause to the query.
      *
      * @param string $table The table to join.

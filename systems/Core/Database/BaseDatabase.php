@@ -796,6 +796,22 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     abstract public function orWhereTime($column, $operator, $value);
     abstract public function whereJsonContains($columnName, $jsonPath, $value);
 
+    public function when($condition, $callback)
+    {
+        // If the condition is a closure, evaluate it
+        if (is_callable($condition) && !is_string($condition)) {
+            $condition = $condition($this);
+        }
+
+        // If the condition is truthy, execute the callback
+        if ($condition) {
+            // The callback receives the current builder instance
+            $callback($this);
+        }
+
+        return $this;
+    }
+
     public function join($table, $foreignKey, $localKey, $joinType = 'LEFT')
     {
         if (empty($this->table)) {
@@ -2048,6 +2064,60 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->_query .= " VALUES ($placeholders)";
 
         return $this;
+    }
+
+    public function insertOrUpdate($conditions, $data, $primaryKey = 'id')
+    {
+        // Default response
+        $response = ['code' => 400, 'message' => 'Failed to insert or update data', 'action' => 'insertOrUpdate'];
+
+        try {
+            if (empty($this->table)) {
+                throw new \InvalidArgumentException('Please specify the table.');
+            }
+            if (empty($conditions) || !is_array($conditions)) {
+                throw new \InvalidArgumentException('Conditions must be a non-empty associative array.');
+            }
+            if (empty($data) || !is_array($data)) {
+                throw new \InvalidArgumentException('Data must be a non-empty associative array.');
+            }
+
+            if (isset($conditions[$primaryKey]) && empty($conditions[$primaryKey])) {
+                unset($conditions[$primaryKey]); // removed from the conditions if exists
+            }
+
+            $records = array_merge($conditions, $data);
+
+            if (isset($records[$primaryKey]) && !empty($records[$primaryKey])) {
+                $updateRecs = array_merge($data, ['updated_at' => date('Y-m-d H:i:s')]);
+                return $this->where($primaryKey, $records[$primaryKey])->update($updateRecs);
+            }
+
+            // If no condition to check, then insert as a new records
+            if (empty($conditions)) {
+                $insertRecs = array_merge($records, ['created_at' => date('Y-m-d H:i:s')]);
+                return $this->insert($insertRecs);
+            }
+
+            // Check if record exists
+            $query = clone $this;
+            $existing = $query->where($conditions)->fetch();
+
+            if ($existing) {
+                $updateRecs = array_merge($data, ['updated_at' => date('Y-m-d H:i:s')]);
+                return $this->where($conditions)->update($updateRecs);
+            } else {
+                $insertRecs = array_merge($records, ['created_at' => date('Y-m-d H:i:s')]);
+                return $this->insert($insertRecs);
+            }
+        } catch (\Exception $e) {
+            $this->db_error_log($e, __FUNCTION__);
+            $response['message'] = $e->getMessage();
+        }
+
+        // Reset internal properties for next query
+        $this->reset();
+        return $this->_returnResult($response);
     }
 
     # UPDATE DATA OPERATION

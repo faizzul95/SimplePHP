@@ -18,24 +18,22 @@ function listUserDatatable($request)
     $onlyTrashed = request()->input('user_deleted_filter', false);
 
     $db = db();
-    $db->table('users')->select('id, name, email, user_gender, user_contact_no, user_dob, user_status, deleted_at');
-
-    if ($statusF == 0 || !empty($statusF)) {
-        $db->where('user_status', $statusF);
-    }
-
-    if ($genderF == 0 || !empty($genderF)) {
-        $db->where('user_gender', $genderF);
-    }
+    $db->table('users')
+        ->select('id, name, email, user_gender, user_contact_no, user_dob, user_status, deleted_at')
+        ->when($genderF == 0 || !empty($genderF), function ($query) use ($genderF) {
+            $query->where('user_gender', $genderF);
+        })
+        ->when($statusF == 0 || !empty($statusF), function ($query) use ($statusF) {
+            $query->where('user_status', $statusF);
+        })
+        ->when($profileF == 0 || !empty($profileF), function ($query) use ($profileF) {
+            $query->whereRaw('EXISTS (SELECT 1 FROM user_profile WHERE user_id = users.id AND role_id = ?)', [$profileF]);
+        });
 
     if ($onlyTrashed) {
         $db->whereNotNull('deleted_at'); // only show deleted users
     } else {
         $db->whereNull('deleted_at');
-    }
-
-    if ($profileF == 0 || !empty($profileF)) {
-        $db->whereRaw('EXISTS (SELECT 1 FROM user_profile WHERE user_id = users.id AND role_id = ?)', [$profileF]);
     }
 
     // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
@@ -194,34 +192,31 @@ function save($request)
             $password = request()->input('user_contact_no');
         }
 
-        $data = array_merge($data, ['username' => $username, 'password' => password_hash($password, PASSWORD_DEFAULT), 'created_at' => timestamp()]);
-        $result = db()->table('users')->insert($data);
-    } else {
-        $id = request()->input('id');
-        $result = db()->table('users')->where('id', $id)->update(array_merge($data, ['updated_at' => timestamp()]));
+        $data = array_merge($data, ['username' => $username, 'password' => password_hash($password, PASSWORD_DEFAULT)]);
     }
+
+    $result = db()->table('users')->insertOrUpdate(
+        [
+            'id' => request()->input('id')
+        ],
+        $data
+    );
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to save user']);
     }
 
-    // If the user ID is not set, it means we are creating a new user
-    if (empty($request['id'])) {
-        db()->table('user_profile')->insert([
-            'user_id' => $result['id'],
+    db()->table('user_profile')->insertOrUpdate(
+        [
+            'id' => request()->input('id')
+        ],
+        [
+            'user_id' => request()->input('id'),
             'role_id' => $request['role_id'],
             'profile_status' => 1,
-            'is_main' => 1,
-            'created_at' => timestamp(),
-        ]);
-    } else {
-        db()->table('user_profile')->where('user_id', $id)->update([
-            'role_id' => $request['role_id'],
-            'profile_status' => 1,
-            'is_main' => 1,
-            'updated_at' => timestamp(),
-        ]);
-    }
+            'is_main' => 1
+        ]
+    );
 
     jsonResponse(['code' => 200, 'message' => 'User saved']);
 }

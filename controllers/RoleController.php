@@ -15,13 +15,12 @@ function listRolesDatatable($request)
 
     $db = db();
     $db->table('master_roles')->select('id, role_name, role_rank, role_status')
+        ->when($status == 0 || !empty($status), function ($query) use ($status) {
+            $query->where('role_status', $status);
+        })
         ->withCount('profile', 'user_profile', 'role_id', 'id', function ($q) {
             $q->where('profile_status', '1');
         });
-
-    if ($status == 0 || !empty($status)) {
-        $db->where('role_status', $status);
-    }
 
     // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
     $result = $db->setPaginateFilterColumn(['role_name', 'role_rank'])
@@ -103,14 +102,12 @@ function save($request)
         jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
     }
 
-    if (empty($request['id'])) {
-        $result = db()->table('master_roles')
-            ->insert(array_merge(request()->all(), ['created_at' => timestamp()]));
-    } else {
-        $result = db()->table('master_roles')
-            ->where('id', request()->input('id'))
-            ->update(array_merge(request()->all(), ['updated_at' => timestamp()]));
-    }
+    $result = db()->table('master_roles')->insertOrUpdate(
+        [
+            'id' => request()->input('id')
+        ],
+        request()->all()
+    );
 
     if (isError($result['code'])) {
         jsonResponse(['code' => 422, 'message' => 'Failed to save role']);
