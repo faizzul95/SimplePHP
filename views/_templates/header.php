@@ -27,12 +27,6 @@
       content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0"
     />
 
-    <!-- IMPORTANT -->
-    <?php
-    require_once '../../init.php';
-    isLogin($loginRequired);
-    ?>
-
     <title><?= APP_NAME ?> | <?= $titlePage ?> </title>
 
     <base href="<?= BASE_URL ?>">

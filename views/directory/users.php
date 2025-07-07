@@ -1,9 +1,4 @@
 <?php
-$loginRequired = true;
-$titlePage = "List User";
-$currentPage = 'directory';
-$currentSubPage = null;
-$permission = 'user-view';
 include_once __DIR__ . '/../_templates/header.php';
 ?>
 

@@ -604,6 +604,7 @@ simplephp/
 │   │   ├── Debug.php
 │   │   ├── Logger.php
 │   │   └── Request.php
+│   │   └── Validation.php
 │   ├── Core/               # Core functionality
 │   │    ├── Database/       # Database drivers and helpers
 │   │    │   ├── Drivers/
@@ -637,6 +638,7 @@ simplephp/
 ├── logs/                  # Application logs
 ├── env.php                # Environment configuration
 └── init.php              
+└── index.php              
 ```
 
 ## Helper Functions
@@ -681,6 +683,7 @@ SimplePHP includes various helper functions organized by category:
 | `orWhereYear()`         | Adds an OR WHERE clause for a specific year.                                                                |
 | `whereTime()`           | Adds a WHERE clause for a specific time.                                                                    |
 | `orWhereTime()`         | Adds an OR WHERE clause for a specific time.                                                                |
+| `when()`                | Conditionally adds clauses to the query based on a given value or callback.                                 |
 | `join()`                | Adds a JOIN clause to the query.                                                                            |
 | `leftJoin()`            | Adds a LEFT JOIN clause.                                                                                    |
 | `rightJoin()`           | Adds a RIGHT JOIN clause.                                                                                   |
@@ -719,6 +722,7 @@ SimplePHP includes various helper functions organized by category:
 | `delete()`              | Deletes records from the table.                                                                             |
 | `truncate()`            | Truncates (empties) the table.                                                                              |
 | `upsert()`              | Inserts or updates records based on unique key.                                                             |
+| `insertOrUpdate()`      | Inserts or updates records based on unique key or conditions.                                               |
 | `toArray()`             | Sets the return type to array.                                                                              |
 | `toObject()`            | Sets the return type to object.                                                                             |
 | `toJson()`              | Sets the return type to JSON.                                                                               |

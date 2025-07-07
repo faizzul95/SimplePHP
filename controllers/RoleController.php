@@ -14,17 +14,15 @@ function listRolesDatatable($request)
     $status = request()->input('role_status');
 
     $db = db();
-    $db->table('master_roles')->select('id, role_name, role_rank, role_status')
+    $result = $db->table('master_roles')->select('id, role_name, role_rank, role_status')
         ->when($status == 0 || !empty($status), function ($query) use ($status) {
             $query->where('role_status', $status);
         })
         ->withCount('profile', 'user_profile', 'role_id', 'id', function ($q) {
             $q->where('profile_status', '1');
-        });
-
-    // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
-    $result = $db->setPaginateFilterColumn(['role_name', 'role_rank'])
-        ->safeOutput()
+        })
+        ->setPaginateFilterColumn(['role_name', 'role_rank'])
+        ->safeOutput() // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
         ->paginate_ajax(request()->all());
 
     // Alter/formatting the data return

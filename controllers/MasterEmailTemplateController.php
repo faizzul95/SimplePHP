@@ -14,15 +14,13 @@ function listEmailTemplateDatatable($request)
     $statusF = request()->input('email_status');
 
     $db = db();
-    $db->table('master_email_templates')
+    $result = $db->table('master_email_templates')
         ->select('id, email_type, email_subject, email_status, email_cc, email_bcc')
         ->when($statusF == 0 || !empty($statusF), function ($query) use ($statusF) {
             $query->where('email_status', $statusF);
-        });
-
-    // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
-    $result = $db->setPaginateFilterColumn(['email_type', 'email_subject'])
-        ->safeOutput()
+        })
+        ->setPaginateFilterColumn(['email_type', 'email_subject'])
+        ->safeOutput() // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
         ->paginate_ajax(request()->all());
 
     // Alter/formatting the data return
@@ -71,7 +69,10 @@ function show($request)
     }
 
     // Can't use ->safeOutput() since need to update the email_body
-    $emailTemplate = db()->table('master_email_templates')->where('id', $id)->safeOutputWithException(['email_body'])->fetch();
+    $emailTemplate = db()->table('master_email_templates')
+        ->where('id', $id)
+        ->safeOutputWithException(['email_body'])
+        ->fetch();
 
     if (!$emailTemplate) {
         jsonResponse(['code' => 404, 'message' => 'Email template not found']);

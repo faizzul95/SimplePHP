@@ -1,9 +1,4 @@
 <?php
-$loginRequired = true;
-$titlePage = "Dashboard";
-$currentPage = 'dashboard';
-$currentSubPage = null;
-$permission = null; // No specific permission required for dashboard
 include_once __DIR__ . '/../_templates/header.php';
 ?>
 

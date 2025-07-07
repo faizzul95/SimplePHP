@@ -7,13 +7,13 @@ define('APP_NAME', "SimplePHP");
 
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require_once __DIR__ . '/vendor/autoload.php';
-} 
+}
 
 require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/systems/hooks.php';
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
-define('REDIRECT_LOGIN', 'views/auth/login.php');
+define('REDIRECT_LOGIN', '?_rp=login');
 define('REDIRECT_403', 'views/errors/general_error.php');
 define('REDIRECT_404', 'views/errors/404.php');
 
@@ -77,52 +77,62 @@ loadHelperFiles();
 */
 
 $menuList = [
-    [
+    'dashboard' => [
         'currentPage' => 'dashboard', // use in each file (without whitespace or any character)
         'desc' => 'Dashboard',
-        'url' => url('views/dashboard/admin.php'),
+        'url' => base_url("?_rp=dashboard"),
+        'file' => 'views/dashboard/admin.php',
         'icon' => 'tf-icons bx bx-home-smile',
         'permission' => null,
+        'authenticate' => true,
         'subpage' => [],
     ],
-    [
+    'directory' => [
         'currentPage' => 'directory', // use in each file (without whitespace or any character)
         'desc' => 'Directory',
-        'url' => url('views/directory/users.php'),
+        'url' => base_url("?_rp=directory"),
+        'file' => 'views/directory/users.php',
         'icon' => 'tf-icons bx bx-user',
         'permission' => 'user-view',
+        'authenticate' => true,
         'subpage' => [],
     ],
-    [
+    'rbac' => [
         'currentPage' => 'rbac', // use in each file (without whitespace or any character)
         'desc' => 'App Management',
         'url' => 'javascript:void(0);',
         'icon' => 'tf-icons bx bx-shield-quarter',
         'permission' => 'management-view',
         'subpage' => [
-            [
+            'roles' => [
                 'currentSubPage' => 'roles', // use in each file (without whitespace or any character)
                 'desc' => 'Roles',
-                'url' => url('views/rbac/roles.php'),
+                'url' => base_url("?_rp=rbac&_sp=roles"),
+                'file' => 'views/rbac/roles.php',
                 'permission' => null,
+                'authenticate' => true,
             ],
-            [
+            'email' => [
                 'currentSubPage' => 'email', // use in each file (without whitespace or any character)
                 'desc' => 'Email Template',
-                'url' => url('views/rbac/emailTemplate.php'),
+                'url' => base_url("?_rp=rbac&_sp=email"),
+                'file' => 'views/rbac/emailTemplate.php',
                 'permission' => null,
+                'authenticate' => true,
             ],
-            // [
+            // 'abilities' => [
             //     'currentSubPage' => 'abilities', // use in each file (without whitespace or any character)
             //     'desc' => 'Abilities',
             //     'url' => 'javascript:void(0);', // No specific page yet
+            //     'file' => 'views/rbac/abilities.php',
             //     'permission' => null,
+            //     'authenticate' => true,
             // ]
         ],
     ],
 ];
 
-$redirectAuth = $menuList[0]['url']; // Default redirect after login, can be changed as needed
+$redirectAuth = $menuList['dashboard']['url']; // Default redirect after login, can be changed as needed
 
 // Start connection to database, all configuration in env.php
 require_once __DIR__ . '/systems/app.php';

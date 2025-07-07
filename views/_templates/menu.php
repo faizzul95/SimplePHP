@@ -39,7 +39,7 @@
                  </svg>
 
              </span>
-             <span class="app-brand-text demo menu-text fw-bolder ms-2">VacayRia</span>
+             <span class="app-brand-text demo menu-text fw-bolder ms-2"><?= APP_NAME ?></span>
          </a>
 
          <a href="javascript:void(0);" class="layout-menu-toggle menu-link text-large ms-auto">

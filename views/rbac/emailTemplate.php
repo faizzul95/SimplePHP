@@ -1,9 +1,4 @@
 <?php
-$loginRequired = true;
-$titlePage = "List Email Template";
-$currentPage = 'rbac';
-$currentSubPage = 'email';
-$permission = ''; // All users can access this page if not set
 include_once __DIR__ . '/../_templates/header.php';
 ?>
 
