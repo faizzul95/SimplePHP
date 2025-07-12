@@ -94,7 +94,7 @@ $menuList = [
             'icon' => 'tf-icons bx bx-user',
             'permission' => 'user-view',
             'authenticate' => true,
-            'active' => false,
+            'active' => true,
             'subpage' => [],
         ],
         'rbac' => [
