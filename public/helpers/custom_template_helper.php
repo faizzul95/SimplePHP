@@ -40,6 +40,10 @@ if (!function_exists('sidebarMenu')) {
                 continue; // Skip this menu item if permission is not granted
             }
 
+            if (!$menu['active']) {
+                continue; // Skip this menu item if status is not active
+            }
+
             // Check if this menu has subpages
             if (!empty($menu['subpage'])) {
                 // Menu item with subpages
@@ -55,7 +59,11 @@ if (!function_exists('sidebarMenu')) {
                 foreach ($menu['subpage'] as $subPageKey => $subpage) {
 
                     if (permission($subpage['permission'] ?? null) === false) {
-                        continue; // Skip this menu item if permission is not granted
+                        continue; // Skip this sub menu item if permission is not granted
+                    }
+
+                    if (!$subpage['active']) {
+                        continue; // Skip this sub menu item if status is not active
                     }
 
                     $currentSubActive = (isset($currentSubPage) && $currentSubPage == $subPageKey) ? 'active' : '';

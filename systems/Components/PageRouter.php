@@ -4,12 +4,16 @@ namespace Components;
 
 class PageRouter
 {
-    private $menuList;
-    private $authPages = ['login', 'register', 'forgot', 'reset_password'];
+    private $authPages = ['login', 'signin', 'signup', 'register', 'forgot', 'reset_password'];
+    private $config;
 
-    public function __construct($menuList)
+    public function __construct($config)
     {
-        $this->menuList = $menuList;
+        if (empty($config)) {
+            throw new \Exception("Configuration array is required");
+        }
+
+        $this->config = $config;
     }
 
     /**
@@ -18,8 +22,14 @@ class PageRouter
     public function route()
     {
         try {
-            $page = $this->sanitizeInput(request()->input('_p'));
-            $spage = $this->sanitizeInput(request()->input('_sp'));
+            $page = $this->sanitizeInput($this->config['page']);
+            $spage = $this->sanitizeInput($this->config['subpage']);
+
+            // Check if page is active
+            if (!$this->isPageActive()) {
+                $this->show500();
+                return;
+            }
 
             // Handle authentication pages (no login required)
             if ($this->handleAuthPages($page)) {
@@ -92,31 +102,26 @@ class PageRouter
      */
     private function handleSubPage($page, $spage)
     {
-        if (!isset($this->menuList[$page]['subpage'][$spage])) {
-            return false;
-        }
-
-        $subPageConfig = $this->menuList[$page]['subpage'][$spage];
-        $filePath = $subPageConfig['file'] ?? null;
+        $filePath = $this->config['file'] ?? null;
 
         if (empty($filePath)) {
-            error_log("Subpage file path not configured for: {$page}/{$spage}");
+            error_log("File path not configured for: {$page}/{$spage}");
             return false;
         }
 
         if (!$this->fileExists($filePath)) {
-            error_log("Subpage file not found: {$filePath}");
+            error_log("File not found: {$filePath}");
             return false;
         }
 
         // Check authentication
-        $loginRequired = $subPageConfig['authenticate'] ?? false;
+        $loginRequired = $this->config['authenticate'] ?? false;
         if (!$this->checkAuthentication($loginRequired)) {
             return false;
         }
 
         // Set page variables
-        $this->setPageVariables($page, $spage, $subPageConfig);
+        $this->setPageVariables($page, $spage);
 
         return $this->includeFile($filePath);
     }
@@ -126,31 +131,26 @@ class PageRouter
      */
     private function handleMainPage($page)
     {
-        if (!isset($this->menuList[$page])) {
-            return false;
-        }
-
-        $pageConfig = $this->menuList[$page];
-        $filePath = $pageConfig['file'] ?? null;
+        $filePath = $this->config['file'] ?? null;
 
         if (empty($filePath)) {
-            error_log("Main page file path not configured for: {$page}");
+            error_log("File path not configured for: {$page}");
             return false;
         }
 
         if (!$this->fileExists($filePath)) {
-            error_log("Main page file not found: {$filePath}");
+            error_log("File not found: {$filePath}");
             return false;
         }
 
         // Check authentication
-        $loginRequired = $pageConfig['authenticate'] ?? false;
+        $loginRequired = $this->config['authenticate'] ?? false;
         if (!$this->checkAuthentication($loginRequired)) {
             return false;
         }
 
         // Set page variables
-        $this->setPageVariables($page, null, $pageConfig);
+        $this->setPageVariables($page, null);
 
         return $this->includeFile($filePath);
     }
@@ -220,28 +220,57 @@ class PageRouter
     /**
      * Set page variables
      */
-    private function setPageVariables($page, $spage = null, $config = [])
+    private function setPageVariables($page, $spage = null)
     {
-        global $titlePage, $titleSubPage, $currentPage, $currentSubPage, $permission, $menuList;
+        global $titlePage, $titleSubPage, $currentPage, $currentSubPage, $permission;
 
         $currentPage = $page;
         $currentSubPage = $spage;
-        $menuList = $this->menuList;
-
-        $titleSubPage = null;
+        $permission = $this->config['permission'] ?? null;
 
         if (!empty($spage)) {
-            // Main page variable
-            $titlePage = $menuList[$page]['desc'] ?? '';
-
-            // Subpage variables
-            $titleSubPage = $config['desc'] ?? '';
-            $permission = $config['permission'] ?? null;
+            $titlePage = $this->config['desc'] ?? '';
+            $titleSubPage = $this->config['desc'] ?? '';
         } else {
-            // Main page variables
-            $titlePage = $config['desc'] ?? '';
-            $permission = $config['permission'] ?? null;
+            $titlePage = $this->config['desc'] ?? '';
         }
+    }
+
+    /**
+     * Check if the current page is active
+     * @return bool
+     */
+    private function isPageActive()
+    {
+        // Skip active check for auth pages
+        $page = $this->config['page'] ?? null;
+        if (in_array($page, $this->authPages)) {
+            return true;
+        }
+
+        return $this->config['active'] ?? true;
+    }
+
+    /**
+     * Show 404 error
+     */
+    private function showError($code, $title, $message, $image = null)
+    {
+        http_response_code($code);
+
+        $errorCode = $code;
+        $errorTitle = $title;
+        $errorMessage = $message;
+        $errorImage = $image;
+
+        $errorLayout = ROOT_DIR . 'views/errors/layouts/error.php';
+
+        if (file_exists($errorLayout)) {
+            include $errorLayout;
+        } else {
+            echo "$code - $title";
+        }
+        exit;
     }
 
     /**
@@ -249,12 +278,24 @@ class PageRouter
      */
     private function show404()
     {
-        if (function_exists('show_404')) {
-            show_404();
-        } else {
-            http_response_code(404);
-            echo "404 - Page Not Found";
-        }
-        exit;
+        $this->showError(
+            404,
+            'Page Not Found',
+            'Sorry, the page you are looking for does not exist or has been moved.',
+            base_url('/public/sneat/img/illustrations/page-misc-error-light.png')
+        );
+    }
+
+    /**
+     * Show 500 error
+     */
+    private function show500()
+    {
+        $this->showError(
+            500,
+            'Internal Server Error',
+            'Oops! Something went wrong on our end. Please try again later.',
+            base_url('/public/sneat/img/illustrations/page-misc-error-light.png')
+        );
     }
 }

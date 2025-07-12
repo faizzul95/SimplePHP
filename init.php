@@ -50,7 +50,8 @@ switch (ENVIRONMENT) {
 // Start session only if it hasn't been started already
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
-    if (!isset($_SESSION['last_regeneration']) || (time() - $_SESSION['last_regeneration']) > 300) {
+} else {
+    if ($config['sess_regenerate_destroy'] && (!isset($_SESSION['last_regeneration']) || (time() - $_SESSION['last_regeneration']) > $config['sess_time_to_update'])) {
         session_regenerate_id(true);
         $_SESSION['last_regeneration'] = time();
     }
@@ -59,8 +60,6 @@ if (session_status() === PHP_SESSION_NONE) {
 define('BASE_URL', getProjectBaseUrl());
 define('APP_DIR', basename(BASE_URL));
 define('APP_ENV', ENVIRONMENT);
-
-$_ENV['APP_ENV'] = APP_ENV;
 
 /*
 |--------------------------------------------------------------------------
@@ -77,66 +76,70 @@ loadHelperFiles();
 */
 
 $menuList = [
-    'dashboard' => [
-        'desc' => 'Dashboard',
-        'url' => paramUrl(['_p' => "dashboard"], true),
-        'file' => 'views/dashboard/admin.php',
-        'icon' => 'tf-icons bx bx-home-smile',
-        'permission' => null,
-        'roles' => [],
-        'authenticate' => true,
-        'subpage' => [],
-    ],
-    'directory' => [
-        'desc' => 'Directory',
-        'url' => paramUrl(['_p' => "directory"], true),
-        'file' => 'views/directory/users.php',
-        'icon' => 'tf-icons bx bx-user',
-        'permission' => 'user-view',
-        'roles' => [],
-        'authenticate' => true,
-        'subpage' => [],
-    ],
-    'rbac' => [
-        'desc' => 'App Management',
-        'url' => 'javascript:void(0);',
-        'icon' => 'tf-icons bx bx-shield-quarter',
-        'permission' => 'management-view',
-        'subpage' => [
-            'roles' => [
-                'desc' => 'Roles',
-                'url' => paramUrl(
-                    ['_p' => "rbac", '_sp' => "roles"],
-                    true
-                ),
-                'file' => 'views/rbac/roles.php',
-                'permission' => 'rbac-roles-view',
-                'roles' => [],
-                'authenticate' => true,
-            ],
-            'email' => [
-                'desc' => 'Email Template',
-                'url' => paramUrl(
-                    ['_p' => "rbac", '_sp' => "email"],
-                    true
-                ),
-                'file' => 'views/rbac/emailTemplate.php',
-                'permission' => 'rbac-email-view',
-                'roles' => [],
-                'authenticate' => true,
-            ],
-            // 'abilities' => [
-            //     'desc' => 'Abilities',
-            //     'url' => 'javascript:void(0);', // No specific page yet
-            //     'file' => 'views/rbac/abilities.php',
-            //     'permission' => null,
-            //     'authenticate' => true,
-            // ]
+    'main' => [
+        'dashboard' => [
+            'desc' => 'Dashboard',
+            'url' => paramUrl(['_p' => "dashboard"], true),
+            'file' => 'views/dashboard/admin.php',
+            'icon' => 'tf-icons bx bx-home-smile',
+            'permission' => null,
+            'authenticate' => true,
+            'active' => true,
+            'subpage' => [],
         ],
-    ],
+        'directory' => [
+            'desc' => 'Directory',
+            'url' => paramUrl(['_p' => "directory"], true),
+            'file' => 'views/directory/users.php',
+            'icon' => 'tf-icons bx bx-user',
+            'permission' => 'user-view',
+            'authenticate' => true,
+            'active' => false,
+            'subpage' => [],
+        ],
+        'rbac' => [
+            'desc' => 'App Management',
+            'url' => 'javascript:void(0);',
+            'icon' => 'tf-icons bx bx-shield-quarter',
+            'permission' => 'management-view',
+            'active' => true,
+            'subpage' => [
+                'roles' => [
+                    'desc' => 'Roles',
+                    'url' => paramUrl(
+                        ['_p' => "rbac", '_sp' => "roles"],
+                        true
+                    ),
+                    'file' => 'views/rbac/roles.php',
+                    'permission' => 'rbac-roles-view',
+                    'active' => true,
+                    'authenticate' => true,
+                ],
+                'email' => [
+                    'desc' => 'Email Template',
+                    'url' => paramUrl(
+                        ['_p' => "rbac", '_sp' => "email"],
+                        true
+                    ),
+                    'file' => 'views/rbac/emailTemplate.php',
+                    'permission' => 'rbac-email-view',
+                    'active' => true,
+                    'authenticate' => true,
+                ],
+                // 'abilities' => [
+                //     'desc' => 'Abilities',
+                //     'url' => 'javascript:void(0);', // No specific page yet
+                //     'file' => 'views/rbac/abilities.php',
+                //     'permission' => null,
+                //     'active' => false,
+                //     'authenticate' => true,
+                // ]
+            ],
+        ],
+    ]
 ];
 
-$redirectAuth = $menuList['dashboard']['url']; // Default redirect after login, can be changed as needed
+$redirectAuth = $menuList['main']['dashboard']['url']; // Default redirect after login, can be changed as needed
 
 // Start connection to database, all configuration in env.php
 require_once __DIR__ . '/systems/app.php';
