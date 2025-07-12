@@ -18,7 +18,7 @@ class PageRouter
     public function route()
     {
         try {
-            $page = $this->sanitizeInput(request()->input('_rp'));
+            $page = $this->sanitizeInput(request()->input('_p'));
             $spage = $this->sanitizeInput(request()->input('_sp'));
 
             // Handle authentication pages (no login required)

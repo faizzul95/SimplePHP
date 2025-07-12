@@ -13,7 +13,7 @@ require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/systems/hooks.php';
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
-define('REDIRECT_LOGIN', '?_rp=login');
+define('REDIRECT_LOGIN', '?_p=login');
 define('REDIRECT_403', 'views/errors/general_error.php');
 define('REDIRECT_404', 'views/errors/404.php');
 
@@ -79,19 +79,21 @@ loadHelperFiles();
 $menuList = [
     'dashboard' => [
         'desc' => 'Dashboard',
-        'url' => base_url("?_rp=dashboard"),
+        'url' => paramUrl(['_p' => "dashboard"], true),
         'file' => 'views/dashboard/admin.php',
         'icon' => 'tf-icons bx bx-home-smile',
         'permission' => null,
+        'roles' => [],
         'authenticate' => true,
         'subpage' => [],
     ],
     'directory' => [
         'desc' => 'Directory',
-        'url' => base_url("?_rp=directory"),
+        'url' => paramUrl(['_p' => "directory"], true),
         'file' => 'views/directory/users.php',
         'icon' => 'tf-icons bx bx-user',
         'permission' => 'user-view',
+        'roles' => [],
         'authenticate' => true,
         'subpage' => [],
     ],
@@ -103,16 +105,24 @@ $menuList = [
         'subpage' => [
             'roles' => [
                 'desc' => 'Roles',
-                'url' => base_url("?_rp=rbac&_sp=roles"),
+                'url' => paramUrl(
+                    ['_p' => "rbac", '_sp' => "roles"],
+                    true
+                ),
                 'file' => 'views/rbac/roles.php',
                 'permission' => 'rbac-roles-view',
+                'roles' => [],
                 'authenticate' => true,
             ],
             'email' => [
                 'desc' => 'Email Template',
-                'url' => base_url("?_rp=rbac&_sp=email"),
+                'url' => paramUrl(
+                    ['_p' => "rbac", '_sp' => "email"],
+                    true
+                ),
                 'file' => 'views/rbac/emailTemplate.php',
                 'permission' => 'rbac-email-view',
+                'roles' => [],
                 'authenticate' => true,
             ],
             // 'abilities' => [

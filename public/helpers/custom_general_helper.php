@@ -410,6 +410,156 @@ if (!function_exists('url')) {
 }
 
 /**
+ * Add or update URL parameters to the current URL
+ * 
+ * @param string|array $params Parameters to add/update
+ * @param bool $resetParam Whether to reset all existing parameters (default: false)
+ * @return string Modified URL with parameters
+ * @throws InvalidArgumentException When invalid parameter types are provided
+ */
+if (!function_exists('paramUrl')) {
+	function paramUrl($params, $resetParam = false)
+	{
+		$url = $_SERVER['REQUEST_URI'] ?? '';
+
+		// Enhanced URL sanitization to prevent XSS
+		$url = filter_var($url, FILTER_SANITIZE_URL);
+
+		// Additional security: Remove any potential script tags or javascript protocols
+		$url = preg_replace('/javascript:/i', '', $url);
+		$url = preg_replace('/<script[^>]*>.*?<\/script>/is', '', $url);
+
+		// Validate URL structure
+		if (!$url || strlen($url) > 2048) { // Reasonable URL length limit
+			throw new InvalidArgumentException('Invalid or excessively long URL');
+		}
+
+		// Parse the URL to separate path and query string
+		$urlParts = parse_url($url);
+
+		if ($urlParts === false) {
+			throw new InvalidArgumentException('Malformed URL');
+		}
+
+		$path = $urlParts['path'] ?? '';
+		$query = $urlParts['query'] ?? '';
+		$fragment = isset($urlParts['fragment']) ? '#' . $urlParts['fragment'] : '';
+
+		// Sanitize path component
+		$path = filter_var($path, FILTER_SANITIZE_URL);
+
+		// Internal function to sanitize parameters
+		$sanitizeParams = function ($params) use (&$sanitizeParams) {
+			$sanitized = [];
+
+			foreach ($params as $key => $value) {
+				// Sanitize parameter keys 
+				$cleanKey = trim($key);
+				$cleanKey = preg_replace('/[^\w\-_\.]/', '', $cleanKey);
+				$cleanKey = substr($cleanKey, 0, 100); // Limit key length
+
+
+				// Accept key '0' as valid
+				if ($cleanKey === '' && $cleanKey !== '0') {
+					continue; // Skip invalid keys except '0'
+				}
+
+				if (is_array($value)) {
+					// Recursively sanitize array values
+					$sanitized[$cleanKey] = $sanitizeParams($value);
+				} else {
+					// Sanitize individual values
+					$value = (string) $value;
+
+					// Limit value length to prevent abuse
+					if (strlen($value) > 1000) {
+						continue; // Skip this parameter
+					}
+
+					// Remove potentially dangerous characters and patterns
+					$value = preg_replace('/[<>"\']/', '', $value);
+					$value = preg_replace('/javascript:/i', '', $value);
+					$value = preg_replace('/on\w+\s*=/i', '', $value);
+					$value = preg_replace('/data:\s*[^;]*;base64/i', '', $value);
+					$value = preg_replace('/vbscript:/i', '', $value);
+					$value = preg_replace('/expression\s*\(/i', '', $value);
+
+					// Remove control characters (modern replacement for FILTER_FLAG_STRIP_LOW)
+					$value = preg_replace('/[\x00-\x1F\x7F]/', '', $value);
+
+					// HTML entity encode for extra safety
+					$cleanValue = htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+					// Final validation - ensure it's not empty after sanitization
+					// Accept value '0' as valid
+					if ($cleanValue !== '' && $cleanValue !== false && $cleanValue !== null) {
+						$sanitized[$cleanKey] = $cleanValue;
+					}
+				}
+			}
+
+			return $sanitized;
+		};
+
+		// Parse existing query parameters (only if not resetting)
+		$existingParams = [];
+		if (!$resetParam && !empty($query)) {
+			parse_str($query, $existingParams);
+			// Sanitize existing parameters
+			$existingParams = $sanitizeParams($existingParams);
+		}
+
+		// Handle different parameter input types
+		$newParams = [];
+
+		if (is_string($params)) {
+			// Validate string input for potential XSS
+			if (strlen($params) > 2048) {
+				throw new InvalidArgumentException('Parameter string too long');
+			}
+
+			// Parse string parameters (e.g., "id=20&status=ACTV")
+			parse_str($params, $newParams);
+		} elseif (is_array($params)) {
+			// Use array directly
+			$newParams = $params;
+		} else {
+			// Invalid parameter type
+			throw new InvalidArgumentException('Parameters must be string or array');
+		}
+
+		// Sanitize new parameters
+		$newParams = $sanitizeParams($newParams);
+
+		// Merge parameters based on resetParam flag
+		if ($resetParam) {
+			// Only use new parameters, ignore existing ones
+			$mergedParams = $newParams;
+		} else {
+			// Merge existing parameters with new ones (new ones override existing)
+			$mergedParams = array_merge($existingParams, $newParams);
+		}
+
+		// Build the new query string
+		$newQuery = http_build_query($mergedParams, '', '&', PHP_QUERY_RFC3986);
+
+		// Construct the final URL
+		$finalUrl = $path;
+		if (!empty($newQuery)) {
+			$finalUrl .= '?' . $newQuery;
+		}
+
+		// Sanitize fragment before adding
+		if (!empty($fragment)) {
+			$fragment = filter_var($fragment, FILTER_SANITIZE_URL);
+			$finalUrl .= $fragment;
+		}
+
+		return $finalUrl;
+	}
+}
+
+/**
  * Create a new instance of a class from a given namespace.
  *
  * @param string $namespace  The fully-qualified class namespace.
@@ -662,25 +812,25 @@ if (!function_exists('nodata')) {
 	function nodata($showText = true, $filesName = '5.png')
 	{
 		echo "<div id='nodata' class='col-lg-12 mb-4 mt-2'>
-          <center>
-            <img src='" . url('public/general/images/nodata/' . $filesName) . "' class='img-fluid mb-3' width='38%'>
-            <h4 style='letter-spacing :2px; font-family: Quicksand, sans-serif !important;margin-bottom:15px'> 
-             <strong> NO INFORMATION FOUND </strong>
-            </h4>";
+		  <center>
+			<img src='" . url('public/general/images/nodata/' . $filesName) . "' class='img-fluid mb-3' width='38%'>
+			<h4 style='letter-spacing :2px; font-family: Quicksand, sans-serif !important;margin-bottom:15px'> 
+			 <strong> NO INFORMATION FOUND </strong>
+			</h4>";
 		if ($showText) {
 			echo "<h6 style='letter-spacing :2px; font-family: Quicksand, sans-serif !important;font-size: 13px;'> 
-                Here are some action suggestions for you to try :- 
-            </h6>";
+				Here are some action suggestions for you to try :- 
+			</h6>";
 		}
 		echo "</center>";
 		if ($showText) {
 			echo "<div class='row d-flex justify-content-center w-100'>
-            <div class='col-lg m-1 text-left' style='max-width: 350px !important;letter-spacing :1px; font-family: Quicksand, sans-serif !important;font-size: 12px;'>
-              1. Try the registrar function (if any).<br>
-              2. Change your word or search selection.<br>
-              3. Contact the system support immediately.<br>
-            </div>
-          </div>";
+			<div class='col-lg m-1 text-left' style='max-width: 350px !important;letter-spacing :1px; font-family: Quicksand, sans-serif !important;font-size: 12px;'>
+			  1. Try the registrar function (if any).<br>
+			  2. Change your word or search selection.<br>
+			  3. Contact the system support immediately.<br>
+			</div>
+		  </div>";
 		}
 		echo "</div>";
 	}
@@ -690,11 +840,11 @@ if (!function_exists('nodataAccess')) {
 	function nodataAccess($filesName = '403.png')
 	{
 		echo "<div id='nodata' class='col-lg-12 mb-4 mt-2'>
-          <center>
-            <img src='" . url('public/general/images/nodata/' . $filesName) . "' class='img-fluid mb-2' width='30%'>
-            <h3 style='letter-spacing :2px; font-family: Quicksand, sans-serif !important;margin-bottom:15px'> 
-             <strong> NO ACCESS TO THIS INFORMATION </strong>
-            </h3>";
+		  <center>
+			<img src='" . url('public/general/images/nodata/' . $filesName) . "' class='img-fluid mb-2' width='30%'>
+			<h3 style='letter-spacing :2px; font-family: Quicksand, sans-serif !important;margin-bottom:15px'> 
+			 <strong> NO ACCESS TO THIS INFORMATION </strong>
+			</h3>";
 		echo "</center>";
 		echo "</div>";
 	}
