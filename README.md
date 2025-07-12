@@ -276,7 +276,7 @@ db()->table('users')->with('posts', 'posts', 'user_id', 'id')->paginate();
 db()->table('users')->withOne('profile', 'profiles', 'user_id', 'id')->get();
 ```
 
-### Insert, Update, Delete, Truncate
+### Insert, Update, Delete, Soft delete, Truncate
 
 ```php
 // Insert new record
@@ -296,6 +296,21 @@ db()->table('users')
 db()->table('system_login_attempt')
     ->where('user_id', $userData['id'])
     ->delete();
+
+// Soft delete a user (set deleted_at to current timestamp)
+db()->table('users')
+    ->where('id', 1)
+    ->softDelete();
+
+// Soft delete and set status to 0 (inactive)
+db()->table('users')
+    ->where('id', 1)
+    ->softDelete(['deleted_at' => date('Y-m-d H:i:s'), 'status' => 0]);
+
+// Soft delete with custom column and value
+db()->table('users')
+    ->where('id', 1)
+    ->softDelete('status', 0);
 
 // Insert or Update record (similar to insertOrUpdate/upsert laravel)
 db()->table('users')->upsert(['name' => 'Jane Doe']);
@@ -603,6 +618,7 @@ simplephp/
 │   ├── Components/          # System components
 │   │   ├── Debug.php
 │   │   ├── Logger.php
+│   │   └── PageRouter.php
 │   │   └── Request.php
 │   │   └── Validation.php
 │   ├── Core/               # Core functionality
@@ -632,8 +648,10 @@ simplephp/
 │       ├── custom_date_time_helper.php
 │       ├── custom_debug_helper.php
 │       ├── custom_general_helper.php
+│       ├── custom_mailer_helper.php
 │       ├── custom_project_helper.php
 │       ├── custom_session_helper.php
+│       ├── custom_template_helper.php
 │       └── custom_upload_helper.php
 ├── logs/                  # Application logs
 ├── env.php                # Environment configuration
@@ -714,12 +732,13 @@ SimplePHP includes various helper functions organized by category:
 | `lazy()`                | Returns a lazy collection for large result sets.                                                            |
 | `paginate()`            | Returns paginated results.                                                                                  |
 | `setPaginateFilterColumn()` | Sets columns to use for filtering in pagination.                                                        |
-| `paginate_ajax()`       | Handles AJAX pagination with search and ordering.                                                           |
+| `paginate_ajax()`       | Handles bootstrap AJAX datatable pagination with search and ordering.                                       |
 | `toSql()`               | Returns the built SQL query as a string.                                                                    |
 | `toDebugSql()`          | Returns the SQL query with bound values for debugging.                                                      |
 | `insert()`              | Inserts a new record into the table.                                                                        |
 | `update()`              | Updates records in the table.                                                                               |
 | `delete()`              | Deletes records from the table.                                                                             |
+| `softDelete()`          | Soft deletes or updates records by setting the specified column(s) to a value.                              |
 | `truncate()`            | Truncates (empties) the table.                                                                              |
 | `upsert()`              | Inserts or updates records based on unique key.                                                             |
 | `insertOrUpdate()`      | Inserts or updates records based on unique key or conditions.                                               |

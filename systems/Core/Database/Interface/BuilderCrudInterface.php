@@ -42,6 +42,23 @@ interface BuilderCrudInterface
     public function delete();
 
     /**
+     * Soft deletes or updates a record by setting the specified column(s) to a value.
+     *
+     * If called with no arguments, defaults to setting the 'deleted_at' column to the current timestamp.
+     * You can also pass a column name and value, or an associative array of columns and values to update.
+     *
+     * Examples:
+     *   softDelete(); // sets 'deleted_at' to now
+     *   softDelete('status', 0); // sets 'status' to 0
+     *   softDelete(['deleted_at' => ..., 'status' => 0]); // sets both columns
+     *
+     * @param string|array $column The column name or an associative array of columns and values to update.
+     * @param mixed $value The value to set for the column (ignored if $column is array).
+     * @return mixed The result of the update operation, depending on the database driver.
+     */
+    public function softDelete(string|array $column = 'deleted_at', $value = null);
+
+    /**
      * Truncates the specified table, removing all rows and resetting any auto-increment counters.
      *
      * @param string|null $table The name of the table to truncate. If null, uses the default table if set.

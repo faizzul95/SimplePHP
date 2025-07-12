@@ -50,55 +50,7 @@
      <div class="menu-inner-shadow"></div>
 
      <ul class="menu-inner py-1">
-         <?php
-            foreach ($menuList as $menu) {
-                $currentActive = $currentPage == $menu['currentPage'] ? 'active' : '';
-
-                if(permission($menu['permission'] ?? null) === false) {
-                    continue; // Skip this menu item if permission is not granted
-                }
-
-                // Check if this menu has subpages
-                if (!empty($menu['subpage'])) {
-                    // Menu item with subpages
-                    $currentActive = !empty($currentActive) ? 'active open' : '';
-                    echo '<li class="menu-item ' . $currentActive . '">
-                            <a href="javascript:void(0);" class="menu-link menu-toggle">
-                                <i class="menu-icon ' . $menu['icon'] . '"></i>
-                                <div class="text-truncate" data-i18n="' . $menu['desc'] . '">' . $menu['desc'] . '</div>
-                            </a>
-                            <ul class="menu-sub">';
-
-                            // Loop through subpages
-                            foreach ($menu['subpage'] as $subpage) {
-
-                                if(permission($subpage['permission'] ?? null) === false) {
-                                    continue; // Skip this menu item if permission is not granted
-                                }
-                
-                                $currentSubActive = (isset($currentSubPage) && $currentSubPage == $subpage['currentSubPage']) ? 'active' : '';
-
-                                echo '<li class="menu-item ' . $currentSubActive . '">
-                                        <a href="' . $subpage['url'] . '" class="menu-link">
-                                            <div class="text-truncate" data-i18n="' . $subpage['desc'] . '">' . $subpage['desc'] . '</div>
-                                        </a>
-                                    </li>';
-                            }
-
-                            echo '</ul>
-                    </li>';
-                } else {
-                    // Regular menu item without subpages
-                    echo '<li class="menu-item ' . $currentActive . '">
-                                <a href="' . $menu['url'] . '" class="menu-link">
-                                    <i class="menu-icon ' . $menu['icon'] . '"></i>
-                                    <div data-i18n="' . $menu['desc'] . '">' . $menu['desc'] . '</div>
-                                </a>
-                            </li>';
-                }
-            }
-
-            ?>
+         <?= sidebarMenu(); ?>
      </ul>
 
  </aside>

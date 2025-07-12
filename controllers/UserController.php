@@ -97,7 +97,7 @@ function listUserDatatable($request)
 
             return [
                 'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">
-                            <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '">
+                            <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '" onerror="this.onerror=null;this.src=\'' . asset('upload/default.jpg') . '\';">
                            ' . $uploadAction . '
                         </div>',
                 'name' => $row['name'],
@@ -236,11 +236,10 @@ function destroy($request)
     }
 
     // $result = db()->table('users')->where('id', $id)->delete();
-    $result = db()->table('users')->where('id', $id)->update(
+    $result = db()->table('users')->where('id', $id)->softDelete(
         [
             'user_status' => 3,
-            'deleted_at' => timestamp(),
-            'updated_at' => timestamp()
+            'deleted_at' => timestamp()
         ]
     );
 

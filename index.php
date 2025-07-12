@@ -1,54 +1,19 @@
-    <!-- important -->
-    <?php
+<?php
 
-    require_once 'init.php';
+require_once 'init.php';
 
-    $page = request()->input('_rp');
-    $spage = request()->input('_sp');
-
-    // Use to render page without login checking
-    if (!empty($page) && in_array($page, ['login', 'register', 'forgot', 'reset_password'])) {
-        $filePath = "views/auth/{$page}.php";
-        if (!empty($filePath) && file_exists(ROOT_DIR . $filePath)) {
-            include_once ROOT_DIR . $filePath;
-            exit;
-        }
+// Initialize and run the router
+try {
+    
+    if (!isset($menuList) || !is_array($menuList)) {
+        throw new Exception("Menu list not properly initialized, Please configure in init files.");
     }
 
-    if (!empty($page) && !empty($spage)) {
-        $filePath = $menuList[$page]['subpage'][$spage]['file'] ?? null;
-        if (!empty($filePath) && file_exists(ROOT_DIR . $filePath)) {
-            $loginRequired = $menuList[$page]['subpage'][$spage]['authenticate'] ?? false;
+    $router = new \Components\PageRouter($menuList);
+    $router->route();
 
-            // Check if user not login, then redirect to page login
-            isLogin($loginRequired, 'isLoggedIn', REDIRECT_LOGIN);
-
-            $titlePage = $menuList[$page]['subpage'][$spage]['desc'] ?? '';
-            $currentPage = $menuList[$page]['currentPage'] ?? '';
-            $currentSubPage = $menuList[$page]['subpage'][$spage]['currentSubPage'] ?? null;
-            $permission = $menuList[$page]['subpage'][$spage]['permission'] ?? null; // No specific permission 
-
-            include_once ROOT_DIR . $filePath;
-            exit;
-        }
-    } else if (!empty($page)) {
-        $filePath = $menuList[$page]['file'] ?? null;
-        if (!empty($filePath) && file_exists(ROOT_DIR . $filePath)) {
-            $loginRequired = $menuList[$page]['authenticate'] ?? false;
-            
-            // Check if user not login, then redirect to page login
-            isLogin($loginRequired, 'isLoggedIn', REDIRECT_LOGIN);
-
-            $titlePage = $menuList[$page]['desc'] ?? '';
-            $currentPage = $menuList[$page]['currentPage'] ?? '';
-            $currentSubPage = null;
-            $permission = $menuList[$page]['permission'] ?? null; // No specific permission 
-
-            include_once ROOT_DIR . $filePath;
-            exit;
-        }
-    }
-
-    show_404();
-
-    ?>
+} catch (Exception $e) {
+    error_log("Router initialization error: " . $e->getMessage());
+    http_response_code(500);
+    echo "500 - Internal Server Error";
+}

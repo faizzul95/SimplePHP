@@ -112,6 +112,36 @@ if (!function_exists('permission')) {
     }
 }
 
+/**
+ * Checks and enforces page-level permission for the current user.
+ *
+ * This function checks if the current user has the required permission (from the global $permission variable).
+ * If permission is granted, it returns true. If not, and $render is true, it renders a 403 error page and exits.
+ * Otherwise, it sets the HTTP response code to 403 and outputs a simple error message.
+ *
+ * @param bool $render Whether to render the 403 error page and exit on failure (default: true).
+ * @return bool Returns true if permission is granted, false otherwise.
+ */
+if (!function_exists('requirePagePermission ')) {
+    function requirePagePermission ($render = true)
+    {
+        global $permission;
+
+        if (permission($permission ?? null)) {
+            return true;
+        }
+
+        if ($render) {
+            show_403();
+            exit;
+        }
+
+        http_response_code(403);
+        echo "403 - No permission";
+        return false;
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | CUSTOM HELPER BY PROJECT
@@ -189,27 +219,27 @@ if (!function_exists('isAdmin')) {
 if (!function_exists('currentRoleID')) {
     function currentRoleID()
     {
-        return getSession('roleID');
+        return getSession('roleID') ?? '0';
     }
 }
 
 if (!function_exists('currentUserFullname')) {
     function currentUserFullname()
     {
-        return getSession('userFullName');
+        return getSession('userFullName') ?? 'Guest User';
     }
 }
 
 if (!function_exists('currentUserRoleName')) {
     function currentUserRoleName()
     {
-        return getSession('roleName');
+        return getSession('roleName') ?? 'Guest';
     }
 }
 
 if (!function_exists('currentUserAvatar')) {
     function currentUserAvatar()
     {
-        return getSession('userAvatar');
+        return getSession('userAvatar') ?? 'public/upload/default.jpg';
     }
 }

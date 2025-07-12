@@ -2,11 +2,11 @@
 include_once __DIR__ . '/../_templates/header.php';
 ?>
 
-<?php if (permission($permission ?? null)) { ?>
+<?php if (requirePagePermission()) : ?>
     <div class="container-fluid flex-grow-1 container-p-y">
 
         <h4 class="fw-bold py-3 mb-4">
-            <span class="text-muted fw-light"> Directory /</span> <?= $titlePage ?>
+            <?= showPageTitle() ?>
         </h4>
 
         <div class="col-lg-12 order-2 mb-4">
@@ -41,7 +41,7 @@ include_once __DIR__ . '/../_templates/header.php';
                                 <option value="1"> Male </option>
                                 <option value="2"> Female </option>
                             </select>
-                            
+
                             <select id="filter_profile" class="form-control form-control-sm me-2 float-end" style="width: 180px;" onchange="getDataList()">
                                 <option value=""> All Profiles </option>
                             </select>
@@ -228,8 +228,6 @@ include_once __DIR__ . '/../_templates/header.php';
             })
         }
     </script>
-<?php } else {
-    show_403();
-} ?>
+<?php endif; ?>
 
 <?php include_once __DIR__ . '/../_templates/footer.php' ?>

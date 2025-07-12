@@ -72,13 +72,12 @@ loadHelperFiles();
 
 /*
 |--------------------------------------------------------------------------
-| MENU SIDEBAR (Admin)
+| MENU SIDEBAR 
 |--------------------------------------------------------------------------
 */
 
 $menuList = [
     'dashboard' => [
-        'currentPage' => 'dashboard', // use in each file (without whitespace or any character)
         'desc' => 'Dashboard',
         'url' => base_url("?_rp=dashboard"),
         'file' => 'views/dashboard/admin.php',
@@ -88,7 +87,6 @@ $menuList = [
         'subpage' => [],
     ],
     'directory' => [
-        'currentPage' => 'directory', // use in each file (without whitespace or any character)
         'desc' => 'Directory',
         'url' => base_url("?_rp=directory"),
         'file' => 'views/directory/users.php',
@@ -98,30 +96,26 @@ $menuList = [
         'subpage' => [],
     ],
     'rbac' => [
-        'currentPage' => 'rbac', // use in each file (without whitespace or any character)
         'desc' => 'App Management',
         'url' => 'javascript:void(0);',
         'icon' => 'tf-icons bx bx-shield-quarter',
         'permission' => 'management-view',
         'subpage' => [
             'roles' => [
-                'currentSubPage' => 'roles', // use in each file (without whitespace or any character)
                 'desc' => 'Roles',
                 'url' => base_url("?_rp=rbac&_sp=roles"),
                 'file' => 'views/rbac/roles.php',
-                'permission' => null,
+                'permission' => 'rbac-roles-view',
                 'authenticate' => true,
             ],
             'email' => [
-                'currentSubPage' => 'email', // use in each file (without whitespace or any character)
                 'desc' => 'Email Template',
                 'url' => base_url("?_rp=rbac&_sp=email"),
                 'file' => 'views/rbac/emailTemplate.php',
-                'permission' => null,
+                'permission' => 'rbac-email-view',
                 'authenticate' => true,
             ],
             // 'abilities' => [
-            //     'currentSubPage' => 'abilities', // use in each file (without whitespace or any character)
             //     'desc' => 'Abilities',
             //     'url' => 'javascript:void(0);', // No specific page yet
             //     'file' => 'views/rbac/abilities.php',

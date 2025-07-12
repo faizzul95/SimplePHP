@@ -15,6 +15,7 @@ function listRolesDatatable($request)
 
     $db = db();
     $result = $db->table('master_roles')->select('id, role_name, role_rank, role_status')
+        ->whereNull('deleted_at') // filter for records soft deleted
         ->when($status == 0 || !empty($status), function ($query) use ($status) {
             $query->where('role_status', $status);
         })
@@ -128,12 +129,10 @@ function destroy($request)
         jsonResponse(['code' => 400, 'message' => 'ID is required']);
     }
 
-    // $result = db()->table('master_roles')->where('id', $id)->delete();
-    $result = db()->table('master_roles')->where('id', $id)->update(
+    $result = db()->table('master_roles')->where('id', $id)->softDelete(
         [
             'role_status' => 0,
-            'deleted_at' => timestamp(),
-            'updated_at' => timestamp()
+            'deleted_at' => timestamp()
         ]
     );
 

@@ -33,7 +33,7 @@ $config['security'] = [
 |--------------------------------------------------------------------------
 */
 $config['error_debug'] = true; // set true or false
-$config['error_log_path'] = 'logs/database/error.log';
+$config['error_log_path'] = 'logs/error.log';
 
 /*
 |--------------------------------------------------------------------------

@@ -2239,7 +2239,52 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this;
     }
 
-    # DELETE / TRUNCATE DATA OPERATION
+    # SOFT DELETE / DELETE / TRUNCATE DATA OPERATION
+
+    /**
+     * Soft deletes or updates a record by setting the specified column(s) to a value.
+     * If no value is provided, defaults to current timestamp for 'deleted_at'.
+     * Can update any column (e.g., status) by passing an associative array.
+     *
+     * @param string|array $column The column name or an associative array of columns and values to update.
+     * @param mixed $value The value to set for the column (ignored if $column is array).
+     * @return array|false The result of the update operation, or error array on failure.
+     */
+    public function softDelete($column = 'deleted_at', $value = null) {
+        try {
+            $columns_table = $this->getTableColumns();
+            $updateData = [];
+
+            if (is_array($column)) {
+                // $column is an associative array of columns and values
+                foreach ($column as $col => $val) {
+                    if (!in_array($col, $columns_table)) {
+                        throw new \InvalidArgumentException("Column '$col' does not exist in the table.");
+                    }
+                    $updateData[$col] = $val;
+                }
+            } else {
+                // $column is a string (single column)
+                if (!in_array($column, $columns_table)) {
+                    throw new \InvalidArgumentException("Column '$column' does not exist in the table.");
+                }
+                // If value is null and column is 'deleted_at', set to current timestamp
+                if ($value === null && $column === 'deleted_at') {
+                    $value = date('Y-m-d H:i:s');
+                }
+                $updateData[$column] = $value;
+            }
+
+            return $this->update($updateData);
+        } catch (\Exception $e) {
+            $this->db_error_log($e, __FUNCTION__);
+            return [
+                'code' => 400,
+                'message' => $e->getMessage(),
+                'action' => 'softDelete',
+            ];
+        }
+    }
 
     /**
      * Deletes records from the database based on the previously configured criteria.
@@ -2266,6 +2311,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $newDb = clone $this;
             $deletedData = $newDb->get();
             unset($newDb); // remove to free memory
+
+            // Check for soft delete columns
+            $columns = $this->getTableColumns();
+            if (in_array('deleted_at', $columns)) {
+                return $this->softDelete(); // Use soft delete
+            } 
         }
 
         // Start profiler for performance measurement 
@@ -3047,10 +3098,14 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $query;
     }
 
+    /**
+     * Get all column names for the current table.
+     *
+     * @return array List of column names, or empty array on error.
+     */
     protected function getTableColumns()
     {
         $columns = [];
-
         try {
             $stmt = $this->pdo[$this->connectionName]->prepare("DESCRIBE {$this->schema}.{$this->table}");
             $stmt->execute();
@@ -3059,8 +3114,22 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->db_error_log($e, __FUNCTION__);
             return [];
         }
-
         return $columns;
+    }
+
+    /**
+     * Check if a column exists in the current table.
+     *
+     * @param string $column The column name to check.
+     * @return bool True if the column exists, false otherwise.
+     */
+    public function hasColumn($column)
+    {
+        if (empty($column) || !is_string($column)) {
+            return false;
+        }
+        $columns = $this->getTableColumns();
+        return in_array($column, $columns, true);
     }
 
     /**
