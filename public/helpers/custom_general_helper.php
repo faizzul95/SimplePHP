@@ -148,18 +148,18 @@ if (!function_exists('encodeID')) {
 			return $id;
 		}
 
-		// Simple substitution map with single characters
+		// More complex and less predictable substitution map
 		static $map = [
-			// '0' => 'X',
-			'1' => 'm$',
-			'2' => 'Ne0',
-			'3' => 'e@3',
-			'4' => 'd!e',
-			'5' => 'Se',
-			'6' => 't7',
-			'7' => 'L#',
-			'8' => 'K4i',
-			'9' => 'Jj'
+			'0' => 'kz0#2',
+			'1' => 'qZ1$5',
+			'2' => 'b72!1',
+			'3' => 'Xp3@8',
+			'4' => 'r#469',
+			'5' => 'nE5^3',
+			'6' => 'uP6&4',
+			'7' => 'yC7*0',
+			'8' => 'fG8%6',
+			'9' => 'oS9(7'
 		];
 
 		// Single transformation pass
@@ -168,7 +168,7 @@ if (!function_exists('encodeID')) {
 		// Simple checksum
 		$checksum = substr(md5($encoded . $salt), 0, 5);
 
-		$permitted_chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+		$permitted_chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()';
 		$uniqueURL = substr(str_shuffle($permitted_chars), 0, 5);
 
 		return encode_base64($uniqueURL . $encoded . $checksum);
@@ -190,7 +190,7 @@ if (!function_exists('decodeID')) {
 			}
 
 			// Extract parts with proper validation
-			if (strlen($decoded) < 9) {
+			if (strlen($decoded) < 10) {
 				return false;
 			}
 
@@ -205,16 +205,16 @@ if (!function_exists('decodeID')) {
 
 			// Static reverse map matching the encodeID map exactly
 			static $reverse_map = [
-				// 'X' => '0',
-				'm$' => '1',
-				'Ne0' => '2',
-				'e@3' => '3',
-				'd!e' => '4',
-				'Se' => '5',
-				't7' => '6',
-				'L#' => '7',
-				'K4i' => '8',
-				'Jj' => '9'
+				'kz0#2' => '0',
+				'qZ1$5' => '1',
+				'b72!1' => '2',
+				'Xp3@8' => '3',
+				'r#469' => '4',
+				'nE5^3' => '5',
+				'uP6&4' => '6',
+				'yC7*0' => '7',
+				'fG8%6' => '8',
+				'oS9(7' => '9'
 			];
 
 			// Convert back to numbers
@@ -458,7 +458,6 @@ if (!function_exists('paramUrl')) {
 				$cleanKey = preg_replace('/[^\w\-_\.]/', '', $cleanKey);
 				$cleanKey = substr($cleanKey, 0, 100); // Limit key length
 
-
 				// Accept key '0' as valid
 				if ($cleanKey === '' && $cleanKey !== '0') {
 					continue; // Skip invalid keys except '0'
@@ -467,6 +466,9 @@ if (!function_exists('paramUrl')) {
 				if (is_array($value)) {
 					// Recursively sanitize array values
 					$sanitized[$cleanKey] = $sanitizeParams($value);
+				} elseif (is_null($value)) {
+					// Explicitly include null values as empty string
+					$sanitized[$cleanKey] = '';
 				} else {
 					// Sanitize individual values
 					$value = (string) $value;
@@ -479,7 +481,7 @@ if (!function_exists('paramUrl')) {
 					// Remove potentially dangerous characters and patterns
 					$value = preg_replace('/[<>"\']/', '', $value);
 					$value = preg_replace('/javascript:/i', '', $value);
-					$value = preg_replace('/on\w+\s*=/i', '', $value);
+					$value = preg_replace('/on\w+\s*= /i', '', $value);
 					$value = preg_replace('/data:\s*[^;]*;base64/i', '', $value);
 					$value = preg_replace('/vbscript:/i', '', $value);
 					$value = preg_replace('/expression\s*\(/i', '', $value);

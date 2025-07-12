@@ -276,7 +276,7 @@ db()->table('users')->with('posts', 'posts', 'user_id', 'id')->paginate();
 db()->table('users')->withOne('profile', 'profiles', 'user_id', 'id')->get();
 ```
 
-### Insert, Update, Delete, Soft delete, Truncate
+### Insert, Update, Delete, Soft delete, InsertOrUpdate, Truncate
 
 ```php
 // Insert new record
@@ -312,8 +312,16 @@ db()->table('users')
     ->where('id', 1)
     ->softDelete('status', 0);
 
-// Insert or Update record (similar to insertOrUpdate/upsert laravel)
+// Insert or Update record (similar to upsert laravel)
 db()->table('users')->upsert(['name' => 'Jane Doe']);
+
+// Insert or Update record 
+db()->table('users')->insertOrUpdate(
+    [
+        'id' => request()->input('id')
+    ],
+    request()->all()
+);
 
 // Truncate table
 db()->table('users')->truncate(); // or db()->truncate('users'); 

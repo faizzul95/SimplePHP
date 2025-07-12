@@ -27,7 +27,7 @@
       content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0"
     />
 
-    <title><?= APP_NAME ?> | <?= $titlePage ?> </title>
+    <title><?= APP_NAME ?> | <?= pageTitle() ?> </title>
 
     <base href="<?= BASE_URL ?>">
     <meta name="base_url" content="<?= BASE_URL ?>" />
