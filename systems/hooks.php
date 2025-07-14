@@ -180,3 +180,17 @@ if (!function_exists('validator')) {
         return $validator;
     }
 }
+
+/*
+|--------------------------------------------------------------------------
+| CSRF COMPONENT
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('csrf')) {
+    function csrf()
+    {
+        global $config;
+        return new \Components\CSRF($config);
+    }
+}

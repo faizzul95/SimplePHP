@@ -158,7 +158,7 @@ function logout()
     jsonResponse([
         'code' => 200,
         'message' => 'Logout',
-        'redirectUrl' => REDIRECT_LOGIN,
+        'redirectUrl' => paramUrl(['_p' => REDIRECT_LOGIN], true),
     ]);
 }
 

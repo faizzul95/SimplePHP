@@ -14,7 +14,7 @@ $config['environment'] = 'development'; // development, staging, production
 | TIMEZONE CONFIGURATION
 |--------------------------------------------------------------------------
 */
-$config['timezone'] = 'Asia/Kuala_Lumpur'; 
+$config['timezone'] = 'Asia/Kuala_Lumpur';
 
 /*
 |--------------------------------------------------------------------------
@@ -27,12 +27,22 @@ $config['security'] = [
     'permission_request' => false,
 ];
 
+$config['csrf_protection']    = false;
+$config['csrf_token_name']    = 'csrf_token';
+$config['csrf_cookie_name']   = 'csrf_cookie';
+$config['csrf_expire']        = 7200;
+$config['csrf_regenerate']    = true;
+$config['csrf_exclude_uris']  = [];
+$config['csrf_secure_cookie'] = true;
+$config['csrf_httponly']      = false;
+$config['csrf_samesite']      = 'Strict';
+
 /*
 |--------------------------------------------------------------------------
 | DEBUG CONFIGURATION
 |--------------------------------------------------------------------------
 */
-$config['error_debug'] = true; // set true or false
+$config['error_debug']    = true; // set true or false
 $config['error_log_path'] = 'logs/error.log';
 
 /*
@@ -43,6 +53,7 @@ $config['error_log_path'] = 'logs/error.log';
 $config['middleware'] = [
     'XMLHttpRequestMiddleware',
     'DynamicModalRequestMiddleware',
+    'CSRFMiddleware',
 ];
 
 /*
@@ -53,31 +64,31 @@ $config['middleware'] = [
 $config['db'] = [
     'default' => [
         'development' => [
-            'driver' => 'mysql',
-            'host' => 'localhost',
+            'driver'   => 'mysql',
+            'host'     => 'localhost',
             'username' => 'root',
             'password' => '',
             'database' => 'example_db',
-            'port' => '3306',
-            'charset' => 'utf8mb4',
+            'port'     => '3306',
+            'charset'  => 'utf8mb4',
         ],
         'staging' => [
-            'driver' => 'mysql',
-            'host' => 'localhost',
+            'driver'   => 'mysql',
+            'host'     => 'localhost',
             'username' => 'root',
             'password' => '',
             'database' => '',
-            'port' => '3306',
-            'charset' => 'utf8mb4',
+            'port'     => '3306',
+            'charset'  => 'utf8mb4',
         ],
         'production' => [
-            'driver' => 'mysql',
-            'host' => 'localhost',
+            'driver'   => 'mysql',
+            'host'     => 'localhost',
             'username' => 'root',
             'password' => '',
             'database' => '',
-            'port' => '3306',
-            'charset' => 'utf8mb4',
+            'port'     => '3306',
+            'charset'  => 'utf8mb4',
         ]
     ],
 

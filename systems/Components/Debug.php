@@ -7,11 +7,6 @@ namespace Components;
  *
  * A comprehensive utility class for debugging PHP applications with various output options.
  *
- * @category  Helpers
- * @package   CT
- * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
- * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @version   1.0.0
  */
 class Debug
 {

@@ -11,7 +11,7 @@ use ZipArchive;
  *
  * Handles logging with file rotation, error handling, and additional utilities.
  *
- * @category  Helpers
+ * @category  Components
  * @package   CT
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License

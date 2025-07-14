@@ -13,7 +13,7 @@ require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/systems/hooks.php';
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
-define('REDIRECT_LOGIN', '?_p=login');
+define('REDIRECT_LOGIN', 'login');
 define('REDIRECT_403', 'views/errors/general_error.php');
 define('REDIRECT_404', 'views/errors/404.php');
 
