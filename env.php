@@ -32,7 +32,12 @@ $config['csrf_token_name']    = 'csrf_token';
 $config['csrf_cookie_name']   = 'csrf_cookie';
 $config['csrf_expire']        = 7200;
 $config['csrf_regenerate']    = true;
-$config['csrf_exclude_uris']  = [];
+$config['csrf_include_uris']  = [
+    'UserController\save',
+    // 'RoleController\save',
+    // 'MasterEmailTemplateController\save',
+    // 'UploadController\uploadImageCropper',
+];
 $config['csrf_secure_cookie'] = true;
 $config['csrf_httponly']      = false;
 $config['csrf_samesite']      = 'Strict';
@@ -53,7 +58,6 @@ $config['error_log_path'] = 'logs/error.log';
 $config['middleware'] = [
     'XMLHttpRequestMiddleware',
     'DynamicModalRequestMiddleware',
-    'CSRFMiddleware',
 ];
 
 /*

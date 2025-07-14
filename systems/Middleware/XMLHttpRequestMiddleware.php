@@ -32,7 +32,7 @@ class XMLHttpRequestMiddleware
             if ($controllersIndex !== false && isset($allParts[$controllersIndex + 1])) {
                 $controllers = $allParts[$controllersIndex];
                 $fileName = $allParts[$controllersIndex + 1];
-            } 
+            }
 
             if ($action !== 'modal' && $controllers === 'controllers' && in_array(request()->method(), ['POST', 'GET'])) {
                 $this->security();
@@ -43,6 +43,7 @@ class XMLHttpRequestMiddleware
 
     public function next($controllers, $action, $file)
     {
+        $fileNoExt = pathinfo($file, PATHINFO_FILENAME);
         $filePath = ROOT_DIR . $controllers . DIRECTORY_SEPARATOR . $file;
 
         if (file_exists($filePath)) {
@@ -52,6 +53,16 @@ class XMLHttpRequestMiddleware
             }
 
             if (hasData($action) && function_exists($action)) {
+                
+                // Check for the CSRF token
+                if (!csrf()->validate($fileNoExt . DIRECTORY_SEPARATOR . $action)) {
+                    jsonResponse([
+                        'code' => 422,
+                        'message' => 'CSRF token mismatch.'
+                    ], 422);
+                    return;
+                }
+
                 call_user_func($action, request()->unsafe()->all());
             } elseif (!hasData($action)) {
                 dd("Action is not defined in callApi.");

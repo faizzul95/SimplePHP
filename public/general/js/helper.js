@@ -1,3 +1,5 @@
+let csrf_token_name = 'csrf_token';
+let csrf_cookie_name = 'csrf_cookie';
 let localeMapCurrency = {
 	USD: {
 		symbol: '$',
@@ -1516,6 +1518,12 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 		try {
 			var frm = $('#' + formID);
 			const dataArr = new FormData(frm[0]);
+
+			// Check for meta tag 'secure_token' and append if exists and not empty
+			var secureTokenMeta = document.querySelector('meta[name="secure_token"]');
+			if (secureTokenMeta && secureTokenMeta.content) {
+				dataArr.append(csrf_token_name, secureTokenMeta.content);
+			}
 
 			return axios({
 				method: 'POST',

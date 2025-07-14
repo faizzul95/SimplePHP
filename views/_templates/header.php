@@ -32,6 +32,7 @@
     <base href="<?= BASE_URL ?>">
     <meta name="base_url" content="<?= BASE_URL ?>" />
     <meta name="description" content="" />
+    <meta name="secure_token" content="<?= csrf_value(); ?>" />
 
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="<?= asset('sneat/img/favicon/favicon.ico'); ?>" />

@@ -38,7 +38,7 @@ class CSRF
         'csrf_cookie_name' => 'csrf_cookie',
         'csrf_expire' => 7200,
         'csrf_regenerate' => true,
-        'csrf_exclude_uris' => [],
+        'csrf_include_uris' => [],
         'csrf_secure_cookie' => true,
         'csrf_httponly' => true,
         'csrf_samesite' => 'Strict'
@@ -98,8 +98,8 @@ class CSRF
             throw new InvalidArgumentException('csrf_regenerate must be a boolean');
         }
 
-        if (!is_array($merged['csrf_exclude_uris'])) {
-            throw new InvalidArgumentException('csrf_exclude_uris must be an array');
+        if (!is_array($merged['csrf_include_uris'])) {
+            throw new InvalidArgumentException('csrf_include_uris must be an array');
         }
 
         // Validate SameSite values
@@ -117,9 +117,11 @@ class CSRF
      * @return bool True if validation passes, false otherwise
      * @throws RuntimeException If validation fails due to system error
      */
-    public function validate(): bool
+    public function validate(?string $url): bool
     {
         try {
+            $this->currentUri = $url;
+
             // Only validate POST requests
             if (!$this->isPostRequest()) {
                 return true;
@@ -130,13 +132,13 @@ class CSRF
                 return true;
             }
 
-            // Check if current URI is excluded
-            if ($this->isExcludedUri()) {
-                return true;
+            // Only check CSRF if current URI is in include list (if set)
+            if ($this->isIncludedUri()) {
+                // Perform token validation
+                return $this->validateToken();
             }
 
-            // Perform token validation
-            return $this->validateToken();
+            return true;
         } catch (RuntimeException $e) {
             // Log error and fail securely
             error_log('CSRF validation error: ' . $e->getMessage());
@@ -241,17 +243,22 @@ class CSRF
     }
 
     /**
-     * Check if current URI is in exclusion list
+     * Check if current URI is in inclusion list
      * 
      * @return bool
      */
-    private function isExcludedUri(): bool
+    private function isIncludedUri(): bool
     {
         if (empty($this->currentUri)) {
             return false;
         }
 
-        return in_array($this->currentUri, $this->config['csrf_exclude_uris'], true);
+        $includeUris = $this->config['csrf_include_uris'];
+        if (empty($includeUris)) {
+            return false;
+        }
+
+        return in_array($this->currentUri, $includeUris, true);
     }
 
     /**

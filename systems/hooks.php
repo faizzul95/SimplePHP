@@ -194,3 +194,18 @@ if (!function_exists('csrf')) {
         return new \Components\CSRF($config);
     }
 }
+
+
+if (!function_exists('csrf_field')) {
+    function csrf_field()
+    {
+        return csrf()->field();
+    }
+}
+
+if (!function_exists('csrf_value')) {
+    function csrf_value()
+    {
+        return csrf()->regenerate();
+    }
+}
