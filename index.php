@@ -7,6 +7,14 @@ try {
     $page = request()->input('_p');
     $spage = request()->input('_sp');
 
+    if (empty($page)) {
+        if (!isLogin(false))
+            redirect('?_p=' . REDIRECT_LOGIN, true);
+        else
+            header('Location: ' . $redirectAuth, true, 301);
+        exit;
+    }
+
     // default value
     $configRoute = [
         'page' => null,
