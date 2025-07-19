@@ -14,8 +14,8 @@ require_once __DIR__ . '/systems/hooks.php';
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
 define('REDIRECT_LOGIN', 'login');
-define('REDIRECT_403', 'views/errors/general_error.php');
-define('REDIRECT_404', 'views/errors/404.php');
+define('REDIRECT_403', 'app/views/errors/general_error.php');
+define('REDIRECT_404', 'app/views/errors/404.php');
 
 /*
  *---------------------------------------------------------------
@@ -60,6 +60,7 @@ if (session_status() === PHP_SESSION_NONE) {
 define('BASE_URL', getProjectBaseUrl());
 define('APP_DIR', basename(BASE_URL));
 define('APP_ENV', ENVIRONMENT);
+define('TEMPLATE_DIR', __DIR__ . DIRECTORY_SEPARATOR);
 
 /*
 |--------------------------------------------------------------------------
@@ -80,7 +81,7 @@ $menuList = [
         'dashboard' => [
             'desc' => 'Dashboard',
             'url' => paramUrl(['_p' => "dashboard"], true),
-            'file' => 'views/dashboard/admin.php',
+            'file' => 'app/views/dashboard/admin.php',
             'icon' => 'tf-icons bx bx-home-smile',
             'permission' => null,
             'authenticate' => true,
@@ -90,7 +91,7 @@ $menuList = [
         'directory' => [
             'desc' => 'Directory',
             'url' => paramUrl(['_p' => "directory"], true),
-            'file' => 'views/directory/users.php',
+            'file' => 'app/views/directory/users.php',
             'icon' => 'tf-icons bx bx-user',
             'permission' => 'user-view',
             'authenticate' => true,
@@ -110,7 +111,7 @@ $menuList = [
                         ['_p' => "rbac", '_sp' => "roles"],
                         true
                     ),
-                    'file' => 'views/rbac/roles.php',
+                    'file' => 'app/views/rbac/roles.php',
                     'permission' => 'rbac-roles-view',
                     'active' => true,
                     'authenticate' => true,
@@ -121,7 +122,7 @@ $menuList = [
                         ['_p' => "rbac", '_sp' => "email"],
                         true
                     ),
-                    'file' => 'views/rbac/emailTemplate.php',
+                    'file' => 'app/views/rbac/emailTemplate.php',
                     'permission' => 'rbac-email-view',
                     'active' => true,
                     'authenticate' => true,
@@ -129,7 +130,7 @@ $menuList = [
                 // 'abilities' => [
                 //     'desc' => 'Abilities',
                 //     'url' => 'javascript:void(0);', // No specific page yet
-                //     'file' => 'views/rbac/abilities.php',
+                //     'file' => 'app/views/rbac/abilities.php',
                 //     'permission' => null,
                 //     'active' => false,
                 //     'authenticate' => true,

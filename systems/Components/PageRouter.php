@@ -87,7 +87,7 @@ class PageRouter
             return false;
         }
 
-        $filePath = "views/auth/{$page}.php";
+        $filePath = "app/views/auth/{$page}.php";
 
         if ($this->includeFile($filePath)) {
             return true;
@@ -263,7 +263,7 @@ class PageRouter
         $errorMessage = $message;
         $errorImage = $image;
 
-        $errorLayout = ROOT_DIR . 'views/errors/layouts/error.php';
+        $errorLayout = ROOT_DIR . 'app/views/errors/layouts/error.php';
 
         if (file_exists($errorLayout)) {
             include $errorLayout;

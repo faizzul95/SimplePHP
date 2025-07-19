@@ -1,5 +1,23 @@
 <?php
 
+if (!function_exists('runController')) {
+    function runController($fileName, $functionName, $params = [])
+    {
+        $controllerPath = __DIR__ . '/../../controllers/' . $fileName . '.php';
+        if (!file_exists($controllerPath) || !is_readable($controllerPath)) {
+            throw new RuntimeException("Controller file not found or not readable: $controllerPath");
+        }
+        
+        require_once $controllerPath;
+
+        if (!function_exists($functionName)) {
+            throw new RuntimeException("Function $functionName does not exist in controller $fileName.");
+        }
+
+        return call_user_func_array($functionName, $params);
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | VIEW RENDERING  

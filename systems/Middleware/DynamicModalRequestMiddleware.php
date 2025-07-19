@@ -20,6 +20,8 @@ class DynamicModalRequestMiddleware
         if (!empty($filePath)) {
             $data = hasData($_POST, 'dataArray', true);
 
+            $filePath = 'app' . DIRECTORY_SEPARATOR . $filePath;
+
             if (file_exists($filePath)) {
                 $opts = [
                     'http' => [

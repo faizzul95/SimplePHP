@@ -1,6 +1,4 @@
-<?php
-include_once __DIR__ . '/../_templates/header.php';
-?>
+<?php includeTemplate('header'); ?>
 
 <?php if (requirePagePermission()) : ?>
     <div class="container-fluid flex-grow-1 container-p-y">
@@ -96,4 +94,4 @@ include_once __DIR__ . '/../_templates/header.php';
     </script>
 <?php endif; ?>
 
-<?php include_once __DIR__ . '/../_templates/footer.php' ?>
+<?php includeTemplate('footer'); ?>

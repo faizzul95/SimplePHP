@@ -270,6 +270,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
     }
 
+    public function getPdo()
+    {
+        return $this->pdo[$this->connectionName];
+    }
+
     public function disconnect($connection = 'default', $remove = false)
     {
         if (!isset($this->pdo[$connection])) {
@@ -2250,7 +2255,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param mixed $value The value to set for the column (ignored if $column is array).
      * @return array|false The result of the update operation, or error array on failure.
      */
-    public function softDelete($column = 'deleted_at', $value = null) {
+    public function softDelete($column = 'deleted_at', $value = null)
+    {
         try {
             $columns_table = $this->getTableColumns();
             $updateData = [];
@@ -2316,7 +2322,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $columns = $this->getTableColumns();
             if (in_array('deleted_at', $columns)) {
                 return $this->softDelete(); // Use soft delete
-            } 
+            }
         }
 
         // Start profiler for performance measurement 

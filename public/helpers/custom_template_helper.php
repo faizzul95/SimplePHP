@@ -89,3 +89,19 @@ if (!function_exists('sidebarMenu')) {
         }
     }
 }
+
+if (!function_exists('includeTemplate')) {
+    function includeTemplate($filename = '', $folder = 'app' . DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR . '_templates')
+    {
+        // Only allow alphanumeric, dash, underscore, and dot in filename
+        if (!preg_match('/^[a-zA-Z0-9._-]+$/', $filename)) {
+            return false;
+        }
+
+        $filePath = rtrim(TEMPLATE_DIR, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . rtrim($folder, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename . '.php';
+
+        if (file_exists($filePath)) {
+            include_once $filePath;
+        }
+    }
+}
