@@ -93,7 +93,7 @@ interface BuilderCrudInterface
      * @param array|null $updateColumns Columns to update if a matching record exists. If null, all columns except the unique ones will be updated.
      * @return mixed The result of the upsert operation, depending on the database driver.
      */
-    public function upsert(array $values, string|array $uniqueBy = 'id', array $updateColumns = null);
+    public function upsert(array $values, string|array $uniqueBy = 'id', ?array $updateColumns = null);
 
     /**
      * Insert or update a record based on a primary or unique key condition.

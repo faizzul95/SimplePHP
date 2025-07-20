@@ -434,7 +434,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback A callback function to apply to the relationship.
      * @return $this
      */
-    public function with(string $aliasKey, string $table, string $foreignKey, string $localKey, \Closure $callback = null);
+    public function with(string $aliasKey, string $table, string $foreignKey, string $localKey, ?\Closure $callback = null);
 
     /**
      * Specifies a one-to-one relationship to load with the query.
@@ -446,7 +446,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback A callback function to apply to the relationship.
      * @return $this
      */
-    public function withOne(string $aliasKey, string $table, string $foreignKey, string $localKey, \Closure $callback = null);
+    public function withOne(string $aliasKey, string $table, string $foreignKey, string $localKey, ?\Closure $callback = null);
 
     /**
      * Adds a subquery count of a related one-to-many relationship, similar to Laravel's withCount().
@@ -461,7 +461,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before counting.
      * @return $this
      */
-    public function withCount($aliasKey, $table, $foreignKey, $localKey, \Closure $callback = null);
+    public function withCount($aliasKey, $table, $foreignKey, $localKey, ?\Closure $callback = null);
 
     /**
      * Adds a subquery sum of a related one-to-many relationship column.
@@ -477,7 +477,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before summing.
      * @return $this
      */
-    public function withSum($aliasKey, $table, $foreignKey, $localKey, $sumColumn, \Closure $callback = null);
+    public function withSum($aliasKey, $table, $foreignKey, $localKey, $sumColumn, ?\Closure $callback = null);
 
     /**
      * Adds a subquery average of a related one-to-many relationship column.
@@ -493,7 +493,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before averaging.
      * @return $this
      */
-    public function withAvg($aliasKey, $table, $foreignKey, $localKey, $avgColumn, \Closure $callback = null);
+    public function withAvg($aliasKey, $table, $foreignKey, $localKey, $avgColumn, ?\Closure $callback = null);
 
     /**
      * Adds a subquery minimum value of a related one-to-many relationship column.
@@ -509,7 +509,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before finding minimum.
      * @return $this
      */
-    public function withMin($aliasKey, $table, $foreignKey, $localKey, $minColumn, \Closure $callback = null);
+    public function withMin($aliasKey, $table, $foreignKey, $localKey, $minColumn, ?\Closure $callback = null);
 
     /**
      * Adds a subquery maximum value of a related one-to-many relationship column.
@@ -525,5 +525,5 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before finding maximum.
      * @return $this
      */
-    public function withMax($aliasKey, $table, $foreignKey, $localKey, $maxColumn, \Closure $callback = null);
+    public function withMax($aliasKey, $table, $foreignKey, $localKey, $maxColumn, ?\Closure $callback = null);
 }

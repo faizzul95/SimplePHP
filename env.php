@@ -25,22 +25,24 @@ $config['security'] = [
     'throttle_request'   => false,
     'xss_request'        => true,
     'permission_request' => false,
-];
 
-$config['csrf_protection']    = false;
-$config['csrf_token_name']    = 'csrf_token';
-$config['csrf_cookie_name']   = 'csrf_cookie';
-$config['csrf_expire']        = 7200;
-$config['csrf_regenerate']    = true;
-$config['csrf_include_uris']  = [
-    'UserController\save',
-    // 'RoleController\save',
-    // 'MasterEmailTemplateController\save',
-    // 'UploadController\uploadImageCropper',
+    'csrf' => [
+        'csrf_protection'    => true,
+        'csrf_token_name'    => 'csrf_token',
+        'csrf_cookie_name'   => 'csrf_cookie',
+        'csrf_expire'        => 7200,
+        'csrf_regenerate'    => true,
+        'csrf_include_uris'  => [
+            'UserController\save',
+            // 'RoleController\save',
+            // 'MasterEmailTemplateController\save',
+            // 'UploadController\uploadImageCropper',
+        ],
+        'csrf_secure_cookie' => true,
+        'csrf_httponly'      => false,
+        'csrf_samesite'      => 'Strict',
+    ],
 ];
-$config['csrf_secure_cookie'] = true;
-$config['csrf_httponly']      = false;
-$config['csrf_samesite']      = 'Strict';
 
 /*
 |--------------------------------------------------------------------------

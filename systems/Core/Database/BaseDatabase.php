@@ -1004,7 +1004,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     abstract public function limit($limit);
     abstract public function offset($offset);
 
-    public function with($alias, $table, $foreign_key, $local_key, \Closure $callback = null)
+    public function with($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
     {
         if (empty($alias) || empty($table) || empty($foreign_key) || empty($local_key)) {
             throw new \InvalidArgumentException('Missing required parameters for with()');
@@ -1018,7 +1018,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this;
     }
 
-    public function withOne($alias, $table, $foreign_key, $local_key, \Closure $callback = null)
+    public function withOne($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
     {
         if (empty($alias) || empty($table) || empty($foreign_key) || empty($local_key)) {
             throw new \InvalidArgumentException('Missing required parameters for withOne()');
@@ -1035,7 +1035,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a count subquery to the main query
      */
-    public function withCount($alias, $table, $foreign_key, $local_key, \Closure $callback = null)
+    public function withCount($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
     {
         return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'COUNT', null, $callback, ['count']);
     }
@@ -1043,7 +1043,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a sum subquery to the main query
      */
-    public function withSum($alias, $table, $foreign_key, $local_key, $sum_column, \Closure $callback = null)
+    public function withSum($alias, $table, $foreign_key, $local_key, $sum_column, ?\Closure $callback = null)
     {
         return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'SUM', $sum_column, $callback, ['sum']);
     }
@@ -1051,7 +1051,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add an average subquery to the main query
      */
-    public function withAvg($alias, $table, $foreign_key, $local_key, $avg_column, \Closure $callback = null)
+    public function withAvg($alias, $table, $foreign_key, $local_key, $avg_column, ?\Closure $callback = null)
     {
         return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'AVG', $avg_column, $callback, ['avg', 'average']);
     }
@@ -1059,7 +1059,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a minimum value subquery to the main query
      */
-    public function withMin($alias, $table, $foreign_key, $local_key, $min_column, \Closure $callback = null)
+    public function withMin($alias, $table, $foreign_key, $local_key, $min_column, ?\Closure $callback = null)
     {
         return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'MIN', $min_column, $callback, ['min', 'minimum']);
     }
@@ -1067,7 +1067,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a maximum value subquery to the main query
      */
-    public function withMax($alias, $table, $foreign_key, $local_key, $max_column, \Closure $callback = null)
+    public function withMax($alias, $table, $foreign_key, $local_key, $max_column, ?\Closure $callback = null)
     {
         return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'MAX', $max_column, $callback, ['max', 'maximum']);
     }
@@ -2685,7 +2685,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param string $alias The alias for the relationship.
      * @param Closure|null $callback An optional callback to customize the query.
      */
-    protected function _processEagerLoadingInBatches(&$data, $primaryKeys, $table, $fk_id, $pk_id, $connectionName, $method, $alias, \Closure $callback = null)
+    protected function _processEagerLoadingInBatches(&$data, $primaryKeys, $table, $fk_id, $pk_id, $connectionName, $method, $alias, ?\Closure $callback = null)
     {
         $connectionObj = $this->getInstance()->connect($connectionName);
 
@@ -2720,7 +2720,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param string $fk_id The foreign key column in the related table.
      * @return array The related records fetched for the chunk.
      */
-    protected function _processEagerByChunk($chunk, \Closure $callback = null, $connectionObj, $table, $fk_id)
+    protected function _processEagerByChunk($chunk, ?\Closure $callback, $connectionObj, $table, $fk_id)
     {
         $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $chunk);
 
@@ -3151,7 +3151,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param array $alias_keywords Keywords to check in alias
      * @return $this
      */
-    private function withAggregate($alias, $table, $foreign_key, $local_key, $aggregate_function, $column = null, \Closure $callback = null, array $alias_keywords = [])
+    private function withAggregate($alias, $table, $foreign_key, $local_key, $aggregate_function, $column = null, ?\Closure $callback = null, array $alias_keywords = [])
     {
         // Validate required parameters
         $required_params = [$alias, $table, $foreign_key, $local_key, $aggregate_function];

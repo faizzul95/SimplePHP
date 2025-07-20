@@ -103,6 +103,21 @@ class Api
     {
         $uri = $_SERVER['REQUEST_URI'] ?? '/';
         $uri = parse_url($uri, PHP_URL_PATH);
+
+        // Remove the folder name (script's directory) from the URI
+        $base = dirname($_SERVER['SCRIPT_NAME']);
+        if ($base !== '/' && strpos($uri, $base) === 0) {
+            $uri = substr($uri, strlen($base));
+        }
+
+        // Remove everything up to and including '/api/' so only the path after 'api/' remains
+        $apiPos = strpos($uri, '/api/');
+        if ($apiPos !== false) {
+            $uri = substr($uri, $apiPos + 5); // 5 = strlen('/api/')
+        } else {
+            $uri = '/';
+        }
+
         return rtrim($uri, '/') ?: '/';
     }
 
@@ -319,7 +334,7 @@ class Api
      */
     private function addRoute(string $method, string $uri, callable $callback): void
     {
-        $uri = rtrim($uri, '/') ?: '/';
+        $uri = trim($uri, '/') ?: '/';
         $this->routes[$method][$uri] = $callback;
     }
 
@@ -336,8 +351,10 @@ class Api
      */
     private function sendJsonResponse(array $data, int $statusCode = 200): void
     {
-        http_response_code($statusCode);
-        header('Content-Type: application/json');
+        if (!headers_sent()) {
+            http_response_code($statusCode);
+            header('Content-Type: application/json');
+        }
         echo json_encode($data, JSON_PRETTY_PRINT);
         exit;
     }

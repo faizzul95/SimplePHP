@@ -191,7 +191,7 @@ if (!function_exists('csrf')) {
     function csrf()
     {
         global $config;
-        return new \Components\CSRF($config);
+        return new \Components\CSRF($config['security']['csrf']);
     }
 }
 
