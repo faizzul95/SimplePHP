@@ -75,7 +75,7 @@ if (!function_exists('isLogin')) {
     {
         $isCurrentLogin = hasData($_SESSION, $param);
         if (!$isCurrentLogin && $redirect) {
-            $path = !empty($path) ? $path : REDIRECT_LOGIN;
+            $path = !empty($path) ? $path : '?_p=' . REDIRECT_LOGIN;
             redirect($path, true);
         }
 

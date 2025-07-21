@@ -69,6 +69,9 @@ if (isset($menuList) && is_array($menuList)) {
             ? $menuList[$page]['subpage'][$spage]['authenticate']
             : ($menuList[$page]['authenticate'] ?? false)
         ) : false,
+        'mainDesc' => !empty($spage) && isset($menuList[$page]['subpage'][$spage]) && isset($menuList[$page]['desc'])
+            ? $menuList[$page]['desc']
+            : null
     ];
 }
 

@@ -229,7 +229,7 @@ class PageRouter
         $permission = $this->config['permission'] ?? null;
 
         if (!empty($spage)) {
-            $titlePage = $this->config['desc'] ?? '';
+            $titlePage = $this->config['mainDesc'] ?? '';
             $titleSubPage = $this->config['desc'] ?? '';
         } else {
             $titlePage = $this->config['desc'] ?? '';

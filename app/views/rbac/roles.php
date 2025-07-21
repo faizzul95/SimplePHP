@@ -144,8 +144,11 @@
             })
         }
 
-        async function updateAbilities(id) {
-            alert('Function not ready to update abilities for ' + id);
+        async function permissionRecord(id, roleName) {
+            loadFileContent('views/rbac/_permissionForm.php', 'generalContent', '1000px', `Permission : ${roleName}`, {
+                'id': id,
+                'name': roleName,
+            }, 'offcanvas');
         }
     </script>
 <?php endif; ?>
