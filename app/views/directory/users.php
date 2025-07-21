@@ -17,7 +17,7 @@
                                 <i class='bx bx-refresh'></i>
                             </button>
 
-                            <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addUser()" title="Refresh">
+                            <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addUser()" title="Add New User">
                                 <i class='bx bx-plus'></i> Add New User
                             </button>
 

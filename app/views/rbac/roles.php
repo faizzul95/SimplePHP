@@ -16,8 +16,11 @@
                             <button type="button" class="btn btn-warning btn-sm float-end" onclick="getDataList()" title="Refresh">
                                 <i class='bx bx-refresh'></i>
                             </button>
-                            <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addRoles()" title="Refresh">
+                            <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addRoles()" title="Add New Role">
                                 <i class='bx bx-plus'></i> Add New Role
+                            </button>
+                            <button type="button" class="btn btn-primary btn-sm float-end me-2" onclick="showPermission()" title="List Permissions">
+                                <i class='bx bx-shield-quarter'></i> Abilities
                             </button>
                             <select id="filter_role_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All </option>
@@ -145,10 +148,14 @@
         }
 
         async function permissionRecord(id, roleName) {
-            loadFileContent('views/rbac/_permissionForm.php', 'generalContent', '1000px', `Permission : ${roleName}`, {
+            loadFileContent('views/rbac/_permissionAssignForm.php', 'generalContent', '1000px', `Permission Assignment : ${roleName}`, {
                 'id': id,
                 'name': roleName,
             }, 'offcanvas');
+        }
+
+        async function showPermission() {
+            loadFileContent('views/rbac/_permissionListView.php', 'generalContent', '1200px', 'List Abilities', [], 'offcanvas');
         }
     </script>
 <?php endif; ?>

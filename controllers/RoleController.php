@@ -50,7 +50,7 @@ function listRolesDatatable($request)
                             <i class='bx bx-trash me-1'></i> Delete {$delText}
                         </a>
                          <a href='javascript:void(0);' onclick='permissionRecord(\"{$id}\", \"{$row['role_name']}\")' class='dropdown-item'>
-                            <i class='bx bx-shield-quarter me-1'></i> Permissions
+                            <i class='bx bx-shield-quarter me-1'></i> Assign Permissions
                         </a>
                     </div>
                 </div>

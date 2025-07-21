@@ -5,11 +5,51 @@ require_once '../init.php';
 
 /*
 |--------------------------------------------------------------------------
-| LIST PERMISSION
+| LIST (SERVER-SIDE DATATABLE)  
 |--------------------------------------------------------------------------
 */
 
 function listPermissionDatatable($request)
+{
+    $db = db();
+    $result = $db->table('system_abilities')->select('id, abilities_name, abilities_slug, abilities_desc')
+        ->whereNull('deleted_at') // filter for records soft deleted
+        ->withCount('count', 'system_permission', 'abilities_id', 'id')
+        ->setPaginateFilterColumn(['abilities_name', 'abilities_slug'])
+        ->safeOutput() // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
+        ->paginate_ajax(request()->all());
+
+    // Alter/formatting the data return
+    $result['data'] = array_map(function ($row) {
+        $id = encodeID($row['id']);
+        $delAction = $row['count'] > 0 ? null : "onclick='deletePermRecord(\"{$id}\")'";
+
+        return [
+            'name' => $row['abilities_name'],
+            'slug' => $row['abilities_slug'],
+            'count' => number_format($row['count']),
+            'desc' => $row['abilities_desc'],
+            'action' => "
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editPermRecord(\"{$id}\")' title='Edit'></i>
+                </span>
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-trash' style='cursor: pointer;' {$delAction} title='Delete'></i>
+                </span>
+            "
+        ];
+    }, $result['data']);
+
+    jsonResponse($result);
+}
+
+/*
+|--------------------------------------------------------------------------
+| LIST PERMISSION (ASSIGN) DATATABLE
+|--------------------------------------------------------------------------
+*/
+
+function listPermissionAssignDatatable($request)
 {
     $roleID = decodeID(request()->input('id'));
 
@@ -76,11 +116,67 @@ function listPermissionDatatable($request)
 
 /*
 |--------------------------------------------------------------------------
+| SHOW OPERATION 
+|--------------------------------------------------------------------------
+*/
+
+function show($request)
+{
+    $id = decodeID(request()->input('id'));
+
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    $abilities = db()->table('system_abilities')->where('id', $id)->safeOutput()->fetch();
+
+    if (!$abilities) {
+        jsonResponse(['code' => 404, 'message' => 'Abilities not found']);
+    }
+
+    jsonResponse(['code' => 200, 'data' => $abilities]);
+}
+
+/*
+|--------------------------------------------------------------------------
+| INSERT/UPDATE OPERATION 
+|--------------------------------------------------------------------------
+*/
+
+function saveAbilities($request)
+{
+    $validation = validator(request()->all(), [
+        'abilities_name' => 'required|string|min_length:5|max_length:50|secure_value',
+        'abilities_slug' => 'required|string|min_length:5|max_length:100|secure_value',
+        'abilities_desc' => 'string|max_length:255|secure_value',
+        'id' => 'numeric',
+    ])->validate();
+
+    if (!$validation->passed()) {
+        jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
+    }
+
+    $result = db()->table('system_abilities')->insertOrUpdate(
+        [
+            'id' => request()->input('id')
+        ],
+        request()->all()
+    );
+
+    if (isError($result['code'])) {
+        jsonResponse(['code' => 422, 'message' => 'Failed to save abilities']);
+    }
+
+    jsonResponse(['code' => 200, 'message' => 'Abilities saved']);
+}
+
+/*
+|--------------------------------------------------------------------------
 | INSERT/REMOVED OPERATION 
 |--------------------------------------------------------------------------
 */
 
-function save($request)
+function saveAssignment($request)
 {
     $roleID = request()->input('role_id');
     $abilitiesID = request()->input('abilities_id');
@@ -123,4 +219,27 @@ function save($request)
     }
 
     jsonResponse(['code' => 200, 'message' => ucfirst($permission)]);
+}
+
+/*
+|--------------------------------------------------------------------------
+| DELETE OPERATION 
+|--------------------------------------------------------------------------
+*/
+
+function destroy($request)
+{
+    $id = decodeID(request()->input('id'));
+
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    $result = db()->table('system_abilities')->where('id', $id)->softDelete();
+
+    if (isError($result['code'])) {
+        jsonResponse(['code' => 422, 'message' => 'Failed to delete abilities']);
+    }
+
+    jsonResponse(['code' => 200, 'message' => 'Abilities deleted']);
 }

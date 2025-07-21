@@ -1,18 +1,18 @@
-<div id="listPermissionTable"></div>
+<div id="listPermissionAssignmentTable"></div>
 <input id='tempPermRoleID' type='hidden' readonly>
 <input id='tempPermRoleName' type='hidden' readonly>
 
 <script>
     async function getPassData(baseUrl, data) {
-        $('#listPermissionTable').html(nodata());
+        $('#listPermissionAssignmentTable').html(nodata());
         $('#tempPermRoleID').val(data.id);
         $('#tempPermRoleName').val(data.name);
-        await getListPermission();
+        await getListPermissionAssignment();
     }
 
-    async function getListPermission() {
+    async function getListPermissionAssignment() {
         const res = await callApi('post', "controllers/PermissionController.php", {
-            'action': 'listPermissionDatatable',
+            'action': 'listPermissionAssignDatatable',
             'id': $('#tempPermRoleID').val()
         });
 
@@ -41,10 +41,10 @@
             });
 
             table += `</tbody></table></div>`;
-            $('#listPermissionTable').empty();
-            $('#listPermissionTable').html(table);
+            $('#listPermissionAssignmentTable').empty();
+            $('#listPermissionAssignmentTable').html(table);
         } else {
-            $('#listPermissionTable').html(nodata());
+            $('#listPermissionAssignmentTable').html(nodata());
         }
     }
 
@@ -83,7 +83,7 @@
         }).then(async (result) => {
             if (result.isConfirmed) {
                 const res = await callApi('post', "controllers/PermissionController.php", {
-                    'action': 'save',
+                    'action': 'saveAssignment',
                     'role_id': roleID,
                     'abilities_id': abilitiesID,
                     'all_access': isAllAccess,
@@ -93,7 +93,7 @@
                 if (isSuccess(res)) {
                     const response = res.data;
                     noti(response.code, response.message);
-                    getListPermission();
+                    getListPermissionAssignment();
                 }
             } else {
                 // Reset checkbox to its original state if cancelled
