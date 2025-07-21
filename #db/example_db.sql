@@ -222,9 +222,7 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `name`, `user_preferred_name`, `email`, `user_gender`, `user_dob`, `user_contact_no`, `username`, `password`, `user_status`, `remember_token`, `email_verified_at`, `created_at`, `updated_at`, `deleted_at`) VALUES
-(1, 'Super Administrator', 'superadmin', 'superadmin@test.com', 1, '2001-11-09', '0139031145', 'superadmin', '$2a$12$BdUIhfMReSmmfacpPu0CNOMbM4QXx2FiEVkVPwTmIA5YLGa9MIVuO', 1, NULL, NULL, '2025-06-21 18:59:37', NULL, NULL),
-(2, 'TEST USER 01', 'TU01', 'testuser1@simplephp.com', 1, NULL, '0189031045', 'tu01', '$2y$10$IEjReykcSvPStjQLBhpRquRHgwvhRFniRxW2.A32bgAT6cyxrKAyS', 1, NULL, NULL, NULL, '2025-06-22 14:05:02', NULL),
-(3, 'TEST USER 02', 'TU02', 'testuser2@simplephp.com', 2, NULL, '0178596555', 'tu02', '$2y$10$6FHjFhbpu87t.oKtLtCcKObNH.CAms1pX8nzRX.e81IwB9qE24SPC', 0, NULL, NULL, NULL, '2025-06-22 10:35:09', NULL);
+(1, 'Super Administrator', 'superadmin', 'superadmin@test.com', 1, '2001-11-09', '0139031145', 'superadmin', '$2a$12$BdUIhfMReSmmfacpPu0CNOMbM4QXx2FiEVkVPwTmIA5YLGa9MIVuO', 1, NULL, NULL, '2025-06-21 18:59:37', NULL, NULL);
 
 -- --------------------------------------------------------
 
@@ -248,9 +246,7 @@ CREATE TABLE `user_profile` (
 --
 
 INSERT INTO `user_profile` (`id`, `user_id`, `role_id`, `is_main`, `profile_status`, `created_at`, `updated_at`, `deleted_at`) VALUES
-(1, 1, 1, 1, 1, '2025-06-21 19:01:59', NULL, NULL),
-(2, 2, 2, 1, 1, '2025-06-21 20:05:40', '2025-06-21 20:06:42', NULL),
-(3, 3, 2, 1, 1, '2025-06-22 10:07:16', '2025-06-22 10:35:09', NULL);
+(1, 1, 1, 1, 1, '2025-06-21 19:01:59', NULL, NULL);
 
 --
 -- Indexes for dumped tables
@@ -362,13 +358,13 @@ ALTER TABLE `system_permission`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `user_profile`
 --
 ALTER TABLE `user_profile`
-  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
