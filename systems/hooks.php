@@ -74,7 +74,7 @@ spl_autoload_register(function ($class) {
 if (!function_exists('loadHelperFiles')) {
     function loadHelperFiles()
     {
-        $helpersDir = __DIR__ . '/../public/helpers/'; // root of helper files
+        $helpersDir = __DIR__ . '/../app/helpers/'; // root of helper files
 
         // Get all PHP files in the General folder
         $helperFiles = glob($helpersDir . '*.php');
