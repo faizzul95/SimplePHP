@@ -232,8 +232,8 @@ INSERT INTO `users` (`id`, `name`, `user_preferred_name`, `email`, `user_gender`
 
 CREATE TABLE `user_profile` (
   `id` bigint UNSIGNED NOT NULL,
-  `user_id` bigint DEFAULT NULL COMMENT 'Refer table users',
-  `role_id` bigint DEFAULT NULL COMMENT 'Refer table master_roles',
+  `user_id` bigint UNSIGNED DEFAULT NULL COMMENT 'Refer table users',
+  `role_id` bigint UNSIGNED DEFAULT NULL COMMENT 'Refer table master_roles',
   `is_main` tinyint(1) DEFAULT NULL COMMENT '0-No, 1-Yes',
   `profile_status` tinyint(1) DEFAULT NULL COMMENT '0-Inactive, 1-Active',
   `created_at` timestamp NULL DEFAULT NULL,
