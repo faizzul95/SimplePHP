@@ -83,26 +83,21 @@ function listUserDatatable($request)
             if (!empty($row['deleted_at'])) {
                 $action = "<a href='javascript:void(0);' onclick='restoreRecord(\"{$id}\")' title='Restore users'> <i class='bx bx-refresh'></i> </a>";
             } else {
+                $updateAct = permission('user-update') ? "<span style='display: inline-block; vertical-align: middle;'><i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i> </span>" : '';
+                $deleteAct = permission('user-delete') ? "<a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'><i class='bx bx-trash me-1'></i> Delete </a>" : '';
                 $delResetAction = in_array($row['id'], $listSuperadmin) ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
                                 <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
                                     <i class='bx bx-dots-vertical-rounded'></i>
                                 </button>
                                 <div class='dropdown-menu'>
-                                    <a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'>
-                                        <i class='bx bx-trash me-1'></i> Delete
-                                    </a>
+                                    {$deleteAct}
                                     <a href='javascript:void(0);' onclick='resetPassword(\"{$id}\")' class='dropdown-item'>
                                         <i class='bx bx-key me-1'></i> Reset Password
                                     </a>
                                 </div>
                             </div>";
 
-                $action = "
-                <span style='display: inline-block; vertical-align: middle;'>
-                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
-                </span>
-               {$delResetAction}
-            ";
+                $action = "{$updateAct} {$delResetAction}";
             }
 
             return [
