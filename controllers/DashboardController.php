@@ -19,5 +19,9 @@ function countAdminDashboard($request)
         SUM(CASE WHEN user_status = '4' THEN 1 ELSE 0 END) as userNotVerify
     ")->fetch();
 
+    foreach ($data as $key => $value) {
+        $data[$key] = number_format($value);
+    }
+
     jsonResponse(['code' => 200, 'data' => $data]);
 }

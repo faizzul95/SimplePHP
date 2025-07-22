@@ -11,7 +11,7 @@
 
             <div class="row">
                 <div class="col-sm-6 col-lg-3 mb-4">
-                    <div class="card card-border-shadow-primary h-100">
+                    <div class="card card-border-shadow-primary h-100 loadingCard">
                         <div class="card-body">
                             <div class="d-flex align-items-center mb-2">
                                 <div class="avatar me-4">
@@ -24,7 +24,7 @@
                     </div>
                 </div>
                 <div class="col-sm-6 col-lg-3 mb-4">
-                    <div class="card card-border-shadow-warning h-100">
+                    <div class="card card-border-shadow-warning h-100 loadingCard">
                         <div class="card-body">
                             <div class="d-flex align-items-center mb-2">
                                 <div class="avatar me-4">
@@ -37,7 +37,7 @@
                     </div>
                 </div>
                 <div class="col-sm-6 col-lg-3 mb-4">
-                    <div class="card card-border-shadow-danger h-100">
+                    <div class="card card-border-shadow-danger h-100 loadingCard">
                         <div class="card-body">
                             <div class="d-flex align-items-center mb-2">
                                 <div class="avatar me-4">
@@ -50,7 +50,7 @@
                     </div>
                 </div>
                 <div class="col-sm-6 col-lg-3 mb-4">
-                    <div class="card card-border-shadow-info h-100">
+                    <div class="card card-border-shadow-info h-100 loadingCard">
                         <div class="card-body">
                             <div class="d-flex align-items-center mb-2">
                                 <div class="avatar me-4">
@@ -75,10 +75,14 @@
 
     <script type="text/javascript">
         $(document).ready(async function() {
+            loading('.loadingCard', true);
             await getDashboardData();
+            loading('.loadingCard', false);
+
         });
 
         async function getDashboardData() {
+
             const res = await callApi('post', "controllers/DashboardController.php", {
                 'action': 'countAdminDashboard'
             });

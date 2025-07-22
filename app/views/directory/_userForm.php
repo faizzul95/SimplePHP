@@ -86,7 +86,11 @@
         if (empty(data)) {
             $('#passwordDiv').show();
         } else {
-            $('#role_id').val(data.profile.role_id ?? 2);
+            if (!isset(data.profile.role_id)) {
+                $('#role_id').val('');
+            } else {
+                $('#role_id').val(data.profile.role_id);
+            }
             $('#passwordDiv').hide();
         }
     }

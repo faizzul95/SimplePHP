@@ -27,7 +27,11 @@ function listUserDatatable($request)
             $query->where('user_status', $statusF);
         })
         ->when($profileF == 0 || !empty($profileF), function ($query) use ($profileF) {
-            $query->whereRaw('EXISTS (SELECT 1 FROM user_profile WHERE user_id = users.id AND role_id = ?)', [$profileF]);
+            if ($profileF == 'N/A') {
+                $query->whereRaw('NOT EXISTS (SELECT 1 FROM user_profile WHERE user_id = users.id)');
+            } else {
+                $query->whereRaw('EXISTS (SELECT 1 FROM user_profile WHERE user_id = users.id AND role_id = ?)', [$profileF]);
+            }
         });
 
     if ($onlyTrashed) {
@@ -38,6 +42,12 @@ function listUserDatatable($request)
 
     // Return with safe value using safeOutput() method to prevent from XSS attack being show in table
     $result = $db->setPaginateFilterColumn(['name', 'email', 'user_contact_no'])
+        ->with('profile', 'user_profile', 'user_id', 'id', function ($db) {
+            $db->select('id, user_id, role_id')
+                ->withOne('roles', 'master_roles', 'id', 'role_id', function ($db) {
+                    $db->select('id,role_name')->where('role_status', 1);
+                });
+        })
         ->withOne('avatar', 'entity_files', 'entity_id', 'id', function ($db) {
             $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
                 ->where('entity_file_type', 'USER_PROFILE');
@@ -100,7 +110,14 @@ function listUserDatatable($request)
                             <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '" onerror="this.onerror=null;this.src=\'' . asset('upload/default.jpg') . '\';">
                            ' . $uploadAction . '
                         </div>',
-                'name' => $row['name'],
+                // 'name' => $row['name'],
+                'name' => $row['name'] . (
+                    !empty($row['profile']) && is_array($row['profile'])
+                    ? ' <span class="text-muted">(' . implode(', ', array_map(function ($p) {
+                        return isset($p['roles']['role_name']) ? $p['roles']['role_name'] : '';
+                    }, $row['profile'])) . ')</span>'
+                    : ''
+                ),
                 'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
                 'gender' => $row['user_gender'] == 1 ? 'Male' : 'Female',
                 'status' => $statusUser,

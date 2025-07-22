@@ -93,6 +93,7 @@
 
                 if (includeAll) {
                     $("#" + id).append('<option value=""> All Profiles </option>');
+                    $("#" + id).append('<option value="N/A"> <i> (No Profile) </i> </option>');
                 } else {
                     $("#" + id).append('<option value=""> - Select - </option>');
                 }
