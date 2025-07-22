@@ -108,9 +108,9 @@ function listUserDatatable($request)
                 // 'name' => $row['name'],
                 'name' => $row['name'] . (
                     !empty($row['profile']) && is_array($row['profile'])
-                    ? ' <span class="text-muted">(' . implode(', ', array_map(function ($p) {
+                    ? ' <span class="text-muted"><i><small>(' . implode(', ', array_map(function ($p) {
                         return isset($p['roles']['role_name']) ? $p['roles']['role_name'] : '';
-                    }, $row['profile'])) . ')</span>'
+                    }, $row['profile'])) . ')</i></small></span>'
                     : ''
                 ),
                 'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
