@@ -93,12 +93,12 @@ function show($request)
 
 function save($request)
 {
-    $validation = validator(request()->all(), [
+    $validation = request()->validate([
         'role_name' => 'required|string|min_length:3|max_length:64|secure_value',
         'role_rank' => 'required|numeric|min:1|max_length:5',
         'role_status' => 'required|integer|min:0|max_length:1',
         'id' => 'numeric',
-    ])->validate();
+    ]);
 
     if (!$validation->passed()) {
         jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);

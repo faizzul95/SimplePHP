@@ -145,12 +145,12 @@ function show($request)
 
 function saveAbilities($request)
 {
-    $validation = validator(request()->all(), [
+    $validation = request()->validate([
         'abilities_name' => 'required|string|min_length:5|max_length:50|secure_value',
         'abilities_slug' => 'required|string|min_length:5|max_length:100|secure_value',
         'abilities_desc' => 'string|max_length:255|secure_value',
-        'id' => 'numeric',
-    ])->validate();
+        'id' => 'numeric'
+    ]);
 
     if (!$validation->passed()) {
         jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);

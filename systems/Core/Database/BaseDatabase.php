@@ -1565,6 +1565,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     // Override function logic based on driver
     abstract public function count($table = null);
+    abstract public function exists($table = null);
 
     public function chunk($size, callable $callback)
     {

@@ -1066,4 +1066,53 @@ class Request
         
         return false;
     }
+
+    public function validate($rules, $customMessage = null)
+    {
+        if (empty($rules) || !is_array($rules)) {
+            throw new \InvalidArgumentException('Validation rules must be a non-empty array.');
+        }
+
+        $keys = array_keys($rules);
+        $allData = array_merge(
+            $_GET,
+            $_POST,
+            $this->getInputStreamData()
+        );
+
+        // Prepare data based on rule keys
+        $data = [];
+        foreach ($keys as $key) {
+            // Handle dot notation for nested arrays
+            if (strpos($key, '.') !== false) {
+                $segments = explode('.', $key);
+                $value = $allData;
+                foreach ($segments as $segment) {
+                    if (isset($value[$segment])) {
+                        $value = $value[$segment];
+                    } else {
+                        $value = null;
+                        break;
+                    }
+                }
+                $data[$key] = $value;
+            } else {
+                // Handle regular keys
+                $data[$key] = $allData[$key] ?? null;
+            }
+        }
+
+        $validator = new \Components\Validation();
+        $validator->setRules($rules);
+
+        if (!empty($data)) {
+            $validator->setData($data);
+        }
+
+        if (!empty($customMessage)) {
+            $validator->setMessages($customMessage);
+        }
+
+        return $validator->validate();
+    }
 }

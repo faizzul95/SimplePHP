@@ -7,18 +7,21 @@ function uploadImageCropper($request)
 {
     $response = ['code' => 400, 'message' => 'Invalid request'];
 
-    $validation = validator(request()->all(), [
-        // 'change_image' => 'required|file|mimes:jpg,jpeg,png|max_file_size:8192', // 8MB (8192 KB)
-        'entity_type' => 'required|string|max_length:255|secure_value',
-        'entity_file_type' => 'required|string|max_length:255|secure_value',
-        'entity_id' => 'required|string', // use string instead of numeric/integer since the id is encode
-        'id' => 'string',  // use string instead of numeric/integer since the id is encode
-    ], [
-        // 'change_image.required' => 'File upload is required',
-        // 'change_image.file' => 'File upload must be a valid file',
-        // 'change_image.mimes' => 'File upload must be a valid image file (jpg, jpeg, png)',
-        // 'change_image.max_file_size' => 'File upload must not exceed 8MB',
-    ])->validate();
+    $validation = request()->validate(
+        [
+            // 'change_image' => 'required|file|mimes:jpg,jpeg,png|max_file_size:8192', // 8MB (8192 KB)
+            'entity_type' => 'required|string|max_length:255|secure_value',
+            'entity_file_type' => 'required|string|max_length:255|secure_value',
+            'entity_id' => 'required|string', // use string instead of numeric/integer since the id is encode
+            'id' => 'string',  // use string instead of numeric/integer since the id is encode
+        ],
+        [
+            // 'change_image.required' => 'File upload is required',
+            // 'change_image.file' => 'File upload must be a valid file',
+            // 'change_image.mimes' => 'File upload must be a valid image file (jpg, jpeg, png)',
+            // 'change_image.max_file_size' => 'File upload must not exceed 8MB',
+        ]
+    );
 
     if (!$validation->passed()) {
         jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);

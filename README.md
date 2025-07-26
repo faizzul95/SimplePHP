@@ -105,6 +105,12 @@ $user = db()->table('users')
     ->where('status', 1)
     ->count();
 
+// Check if the records is exist or not
+$userExists = db()->table('users')
+    ->where('email', 'test@gmail.com')
+    ->whereNull('deleted_at')
+    ->exists();
+
 // Process records in batches using cursor (memory efficient)
 $cursor = db()->table('users')
     ->where('status', 1)
@@ -618,17 +624,38 @@ return [
 
 ```
 simplephp/
-├── controllers/              # Controller functions
-│   ├── AuthController.php   # Authentication functions
-│   ├── RoleController.php   # Role management functions
-│   └── UserController.php   # User management functions
-├── systems/                 # Core system files
-│   ├── Components/          # System components
+├── app/                           
+│   ├── routes/                     # Menu Routes
+│   ├── helpers/                    # PHP Function helpers
+│   │    ├── custom_api_helper.php
+│   │    ├── custom_array_helper.php
+│   │    ├── custom_date_time_helper.php
+│   │    ├── custom_debug_helper.php
+│   │    ├── custom_general_helper.php
+│   │    ├── custom_mailer_helper.php
+│   │    ├── custom_project_helper.php
+│   │    ├── custom_session_helper.php
+│   │    ├── custom_template_helper.php
+│   │    └── custom_upload_helper.php
+│   └── views/                      # View templates
+|        ├── _templates/            # Template files
+│        └── auth/                  # Authentication views
+│             └── login.php
+├── controllers/                    # Controller functions
+│   ├── AuthController.php          # Authentication functions
+│   ├── RoleController.php          # Role management functions
+│   └── UserController.php          # User management functions
+├── systems/                        # Core system files
+│   ├── Components/                 # System components
 │   │   ├── Debug.php
 │   │   ├── Logger.php
-│   │   └── PageRouter.php
-│   │   └── Request.php
-│   │   └── Validation.php
+│   │   ├── PageRouter.php
+│   │   ├── Request.php
+│   │   ├── Validation.php
+│   │   ├── Input.php
+│   │   ├── CSRF.php
+│   │   ├── Files.php
+│   │   └── HTML.php
 │   ├── Core/               # Core functionality
 │   │    ├── Database/       # Database drivers and helpers
 │   │    │   ├── Drivers/
@@ -645,22 +672,7 @@ simplephp/
 │   │        ├── SecurityHeadersTrait.php
 │   │        └── XssProtectionTrait.php
 │   └── app.php
-├── views/                  # View templates
-│   ├── _templates/         # Template files
-│   └── auth/               # Authentication views
-│       └── login.php
 ├── public/                # Public web files
-│   └── helpers/           # PHP Function helpers
-│       ├── custom_api_helper.php
-│       ├── custom_array_helper.php
-│       ├── custom_date_time_helper.php
-│       ├── custom_debug_helper.php
-│       ├── custom_general_helper.php
-│       ├── custom_mailer_helper.php
-│       ├── custom_project_helper.php
-│       ├── custom_session_helper.php
-│       ├── custom_template_helper.php
-│       └── custom_upload_helper.php
 ├── logs/                  # Application logs
 ├── env.php                # Environment configuration
 └── init.php              
@@ -735,6 +747,7 @@ SimplePHP includes various helper functions organized by category:
 | `get()`                 | Executes the built SELECT query and returns all results.                                                    |
 | `fetch()`               | Executes the built SELECT query and returns the first result.                                               |
 | `count()`               | Abstract. Returns the count of records (must be implemented in child class).                                |
+| `exists()`              | Abstract. Returns boolean true if records exist, false otherwise.(must be implemented in child class)       |
 | `chunk()`               | Processes results in chunks for large datasets.                                                             |
 | `cursor()`              | Returns a generator for iterating results in chunks.                                                        |
 | `lazy()`                | Returns a lazy collection for large result sets.                                                            |
@@ -761,7 +774,7 @@ SimplePHP includes various helper functions organized by category:
 
 ## Requirements
 
-- PHP 7.4 or higher
+- PHP 8.0 or higher
 - MySQL 5.7 or higher
 
 ## Contributing

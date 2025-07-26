@@ -405,6 +405,57 @@ class MariaDBDriver extends BaseDatabase
         }
     }
 
+    public function exists($table = null)
+    {
+        try {
+            if (!empty($table)) {
+                $this->table = $table;
+            }
+
+            // Start profiler for performance measurement
+            $this->_startProfiler(__FUNCTION__);
+
+            // Check if query is empty then generate it first.
+            if (empty($this->_query)) {
+                $this->_buildSelectQuery();
+            }
+
+            // Extract only WHERE conditions from the query for better performance
+            if (preg_match('/\bWHERE\b(.*?)(?:\s+(?:GROUP|ORDER|LIMIT|HAVING)\s+BY|$)/is', $this->_query, $matches)) {
+                $whereClause = $matches[1];
+                $existsSql = "SELECT EXISTS(SELECT 1 FROM {$this->table} WHERE {$whereClause} LIMIT 1) AS row_exists";
+            } else {
+                // If no WHERE clause exists, just check if table has any rows
+                $existsSql = "SELECT EXISTS(SELECT 1 FROM {$this->table} LIMIT 1) AS row_exists";
+            }
+
+            $stmt = $this->pdo[$this->connectionName]->prepare($existsSql);
+
+            // Bind parameters if any
+            if (!empty($this->_binds)) {
+                $this->_bindParams($stmt, $this->_binds);
+            }
+
+            // Log the query for debugging 
+            $this->_profiler['profiling'][__FUNCTION__]['query'] = $existsSql;
+
+            // Generate the full query string with bound values 
+            $this->_generateFullQuery($existsSql, $this->_binds);
+
+            $stmt->execute();
+            $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+            // Stop profiler
+            $this->_stopProfiler();
+
+            return $result !== false;
+        } catch (\PDOException $e) {
+            // Log database errors
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e; // Re-throw the exception
+        }
+    }
+
     public function _getLimitOffsetPaginate($query, $limit, $offset)
     {
         // Try to cast the input to an integer

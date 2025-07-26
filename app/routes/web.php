@@ -1,5 +1,6 @@
 <?php
 
+$menuType = request()->input('_mt', 'main');
 $page = request()->input('_p');
 $spage = request()->input('_sp');
 
@@ -26,51 +27,52 @@ $configRoute = [
 
 // Handle for main menu list config from init.php
 if (isset($menuList) && is_array($menuList)) {
-    $menuList = $menuList['main'];
+
+    $configList = $menuList[$menuType] ?? [];
     $configRoute = [
         'page' => $page ?? null,
         'subpage' => $spage ?? null,
         'desc' => !empty($page) ? (
-            !empty($spage) && isset($menuList[$page]['subpage'][$spage]['desc'])
-            ? $menuList[$page]['subpage'][$spage]['desc']
-            : ($menuList[$page]['desc'] ?? null)
+            !empty($spage) && isset($configList[$page]['subpage'][$spage]['desc'])
+            ? $configList[$page]['subpage'][$spage]['desc']
+            : ($configList[$page]['desc'] ?? null)
         ) : null,
         'url' => !empty($page) ? (
-            !empty($spage) && isset($menuList[$page]['subpage'][$spage]['url'])
-            ? $menuList[$page]['subpage'][$spage]['url']
-            : ($menuList[$page]['url'] ?? null)
+            !empty($spage) && isset($configList[$page]['subpage'][$spage]['url'])
+            ? $configList[$page]['subpage'][$spage]['url']
+            : ($configList[$page]['url'] ?? null)
         ) : null,
         'file' => !empty($page) ? (
-            !empty($spage) && isset($menuList[$page]['subpage'][$spage]['file'])
-            ? $menuList[$page]['subpage'][$spage]['file']
-            : ($menuList[$page]['file'] ?? null)
+            !empty($spage) && isset($configList[$page]['subpage'][$spage]['file'])
+            ? $configList[$page]['subpage'][$spage]['file']
+            : ($configList[$page]['file'] ?? null)
         ) : null,
         'icon' => !empty($page) ? (
-            !empty($spage) && isset($menuList[$page]['subpage'][$spage]['icon'])
-            ? $menuList[$page]['subpage'][$spage]['icon']
-            : ($menuList[$page]['icon'] ?? null)
+            !empty($spage) && isset($configList[$page]['subpage'][$spage]['icon'])
+            ? $configList[$page]['subpage'][$spage]['icon']
+            : ($configList[$page]['icon'] ?? null)
         ) : null,
         'permission' => !empty($page) ? (
-            !empty($spage) && isset($menuList[$page]['subpage'][$spage]['permission'])
-            ? $menuList[$page]['subpage'][$spage]['permission']
-            : ($menuList[$page]['permission'] ?? null)
+            !empty($spage) && isset($configList[$page]['subpage'][$spage]['permission'])
+            ? $configList[$page]['subpage'][$spage]['permission']
+            : ($configList[$page]['permission'] ?? null)
         ) : null,
         'active' => !empty($page) ? (
             // First check if main page is active
-            ($menuList[$page]['active'] ?? false) ? (
+            ($configList[$page]['active'] ?? false) ? (
                 // If main page is active, then check subpage if it exists
-                !empty($spage) && isset($menuList[$page]['subpage'][$spage]['active'])
-                ? $menuList[$page]['subpage'][$spage]['active']
+                !empty($spage) && isset($configList[$page]['subpage'][$spage]['active'])
+                ? $configList[$page]['subpage'][$spage]['active']
                 : true
             ) : false // If main page is not active, force all to false
         ) : false,
         'authenticate' => !empty($page) ? (
-            !empty($spage) && isset($menuList[$page]['subpage'][$spage]['authenticate'])
-            ? $menuList[$page]['subpage'][$spage]['authenticate']
-            : ($menuList[$page]['authenticate'] ?? false)
+            !empty($spage) && isset($configList[$page]['subpage'][$spage]['authenticate'])
+            ? $configList[$page]['subpage'][$spage]['authenticate']
+            : ($configList[$page]['authenticate'] ?? false)
         ) : false,
-        'mainDesc' => !empty($spage) && isset($menuList[$page]['subpage'][$spage]) && isset($menuList[$page]['desc'])
-            ? $menuList[$page]['desc']
+        'mainDesc' => !empty($spage) && isset($configList[$page]['subpage'][$spage]) && isset($configList[$page]['desc'])
+            ? $configList[$page]['desc']
             : null
     ];
 }

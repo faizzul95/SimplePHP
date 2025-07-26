@@ -172,9 +172,7 @@ function show($request)
 
 function save($request)
 {
-    $data = request()->all();
-
-    $validation = validator($data, [
+    $validation = request()->validate([
         'name' => 'required|string|min_length:3|max_length:255|secure_value',
         'user_preferred_name' => 'required|string|min_length:3|max_length:255|secure_value',
         'email' => 'required|email|max_length:255|secure_value',
@@ -182,13 +180,86 @@ function save($request)
         'role_id' => 'required|integer|min:1',
         'user_status' => 'required|integer|min:0|max_length:2',
         'id' => 'numeric',
-    ])->validate();
+    ]);
 
     if (!$validation->passed()) {
         jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
     }
 
+    $data = request()->all();
+
     if (isset($data['id'])) {
+
+        // If ID is provided and not empty, then check for unique values
+        if (!empty($data['id'])) {
+            // Define unique columns to check
+            $uniqueColumm = [
+                'email' => 'Email',
+                'username' => 'Username',
+                'user_contact_no' => 'Contact number'
+            ];
+
+            $users = db()->table('users')
+                ->select(array_keys($uniqueColumm))
+                ->where('id', $data['id'])
+                ->whereNull('deleted_at')
+                ->safeOutput()
+                ->fetch();
+
+            // Do a basic check if user exists
+            if (!$users) {
+                jsonResponse(['code' => 404, 'message' => 'User not found']);
+            }
+
+            $conditions = [];
+
+            // Build conditions array with column values
+            foreach ($uniqueColumm as $column => $label) {
+                if (isset($data[$column]) && isset($users[$column]) && ($data[$column] != $users[$column])) {
+                    $conditions[$column] = $data[$column];  // Store only if it differs from the existing value
+                }
+            }
+
+            if (!empty($conditions)) {
+                // Check for duplicates in the database
+                $duplicates = db()->table('users')
+                    ->select(array_keys($conditions))
+                    ->where('id', '!=', $data['id'])
+                    ->where(function ($q) use ($conditions) {
+                        $first = true;
+                        foreach ($conditions as $column => $value) {
+                            if ($first) {
+                                $q->where($column, $value);
+                                $first = false;
+                            } else {
+                                $q->orWhere($column, $value);
+                            }
+                        }
+                    })
+                    ->limit(5)
+                    ->get();
+
+                if (!empty($duplicates)) {
+                    $duplicateFields = [];
+
+                    foreach ($duplicates as $duplicate) {
+                        foreach ($conditions as $column => $value) {
+                            if ($duplicate[$column] === $value) {
+                                $duplicateFields[] = $uniqueColumm[$column];
+                            }
+                        }
+                    }
+
+                    if (!empty($duplicateFields)) {
+                        jsonResponse([
+                            'code' => 422,
+                            'message' => implode(', ', $duplicateFields) . ' already exist'
+                        ]);
+                    }
+                }
+            }
+        }
+
         unset($data['id']); // Remove ID from data if exists, 
     }
 

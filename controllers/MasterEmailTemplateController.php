@@ -89,12 +89,12 @@ function show($request)
 
 function save($request)
 {
-    $validation = validator($request, [
+    $validation = request()->validate([
         'email_subject' => 'required|string|min_length:3|max_length:255|secure_value',
         'email_type' => 'required|string|min_length:3|max_length:255|secure_value',
         'email_body' => 'required|string',
         'id' => 'numeric',
-    ])->validate();
+    ]);
 
     if (!$validation->passed()) {
         jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);

@@ -87,6 +87,14 @@ interface QueryInterface
     public function count(?string $table);
 
     /**
+     * Checks if any record exists for the current query.
+     *
+     * @param string|null $table The name of the table.
+     * @return bool True if at least one record exists, false otherwise.
+     */
+    public function exists(?string $table);
+
+    /**
      * Processes the query in chunks and applies a callback function to each chunk.
      *
      * @param int $size The size of each chunk.

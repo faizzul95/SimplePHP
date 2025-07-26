@@ -29,11 +29,11 @@ if (!function_exists('showPageTitle')) {
 }
 
 if (!function_exists('sidebarMenu')) {
-    function sidebarMenu()
+    function sidebarMenu($type = 'main')
     {
         global $currentPage, $currentSubPage, $menuList;
 
-        foreach ($menuList as $pageKey => $menu) {
+        foreach ($menuList[$type] as $pageKey => $menu) {
             $currentActive = $currentPage == $pageKey ? 'active' : '';
 
             if (permission($menu['permission'] ?? null) === false) {
