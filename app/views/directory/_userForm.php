@@ -59,11 +59,11 @@
     <div class="row" id="passwordDiv" style="display: none;">
         <div class="col-6 mt-3">
             <label class="form-label"> Username <span class="text-danger">*</span> </label>
-            <input type="text" id="username" name="username" class="form-control" autocomplete="off" maxlength="15" required>
+            <input type="text" id="username" name="username" class="form-control" autocomplete="off" maxlength="15">
         </div>
         <div class="col-6 mt-3">
             <label class="form-label"> password <span class="text-danger">*</span> </label>
-            <input type="password" id="password" name="password" class="form-control" autocomplete="off" maxlength="15" required>
+            <input type="password" id="password" name="password" class="form-control" autocomplete="off" maxlength="15">
         </div>
     </div>
 
@@ -98,10 +98,9 @@
     $("#userForm").submit(function(event) {
         event.preventDefault();
 
-        if (validateDataUser()) {
+        if (validateDataUser(this)) {
 
             const form = $(this);
-            const url = form.attr('action');
 
             Swal.fire({
                 title: 'Are you sure?',
@@ -118,17 +117,11 @@
             }).then(
                 async (result) => {
                     if (result.isConfirmed) {
-                        const res = await submitApi(url, form.serializeArray(), 'userForm');
-                        if (isSuccess(res)) {
-
-                            if (isSuccess(res.data.code)) {
-                                noti(res.status, res.data.message);
-                                getDataList();
-                            } else {
-                                noti(400, res.data.message)
-                            }
-
-                        }
+                        const res = await submitApi(form.attr('action'), form.serializeArray(), 'userForm');
+                        if (isSuccess(res.data.code ?? res)) {
+                            noti(res.data.code ?? res.status, res.data.message);
+                            getDataList();
+                        } 
                     }
                 })
 
@@ -137,28 +130,50 @@
         }
     });
 
-    function validateDataUser() {
+    function validateDataUser(formObj) {
 
         const rules = {
-            'name': 'required|min:3|max:255',
-            'user_preferred_name': 'required|min:3|max:255',
+            'name': 'required|min_length:3|max_length:255',
+            'user_preferred_name': 'required|min_length:3|max_length:255',
             'email': 'required|email|max_length:255',
             'user_contact_no': 'required|integer|min_length:10|max_length:15',
             'role_id': 'required|integer|min:1',
-            'user_status': 'required|integer|min:0',
+            'user_gender': 'required|integer|in:1,2',
+            'user_status': 'required|integer|min:0|in:0,1,2',
+            'username': 'required_if:id,empty|min_length:3|max_length:15',
+            'password': 'required_if:id,empty|min_length:8',
             'id': 'integer',
         };
 
         const message = {
-            'name': 'Full Name',
-            'user_preferred_name': 'Preffered Name',
-            'email': 'Email',
-            'user_contact_no': 'Contact No',
-            'role_id': 'Role',
-            'user_status': 'Status',
-            'id': 'ID',
+            'name': {
+                label: 'Full Name'
+            },
+            'user_preferred_name': {
+                label: 'Preferred Name'
+            },
+            'user_contact_no': {
+                label: 'Contact No'
+            },
+            'role_id': {
+                label: 'Role/Profile'
+            },
+            'user_gender': {
+                label: 'Gender',
+                in: 'The :label should be either Male or Female.',
+            },
+            'user_status': {
+                label: 'Status',
+                in: 'The :label should be as provided.',
+            },
+            'username': {
+                required_if: 'The :label field is required.',
+            },
+            'password': {
+                required_if: 'The :label field is required.',
+            }
         };
 
-        return validationJs(rules, message);
+        return validationJs(formObj, rules, message);
     }
 </script>

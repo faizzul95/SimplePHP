@@ -1,7 +1,7 @@
 <div class="row">
 	<form id="changePictureUpload" method="POST" action="controllers/UploadController.php">
 		<div class="col-12">
-			<input id="image" type="file" name="change_image" class="form-control mb-4" accept="image/x-png,image/jpeg,image/jpg">
+			<input id="change_image" type="file" name="change_image" class="form-control mb-4" accept="image/x-png,image/jpeg,image/jpg">
 
 			<div style="position: relative; display:inline-block;">
 				<div id="resizer" class="mt-2"></div>
@@ -106,7 +106,7 @@
 				$("#uploadBtn").attr('disabled', false);
 				$('#undoBtn').show();
 				$('#redoBtn').show();
-			}, 100);
+			}, 50);
 		}
 	}
 
@@ -195,7 +195,7 @@
 			}
 		}
 
-		$("#image").on("change", function(event) {
+		$("#change_image").on("change", function(event) {
 			if (validateUploadData()) {
 				$('#filename').val(this.files[0].name); // this will clear the input val.
 				$('#undoBtn').show();
@@ -205,9 +205,10 @@
 				$.getImage(event.target, croppie);
 				$("#uploadBtn").attr('disabled', false);
 			} else {
+				destroyCropper();
 				validationJsError('toastr', 'single'); // single or multi
 				$("#uploadBtn").attr('disabled', true);
-				$('#image').val(''); // this will clear the input val.
+				$('#change_image').val(''); // this will clear the input val.
 				$('#resizer').empty();
 				$("#uploadBtn").attr('disabled', true);
 				$('#undoBtn').hide();
@@ -235,8 +236,8 @@
 			// This function will call immediately after model close
 			// To ensure that old croppie instance is destroyed on every model close
 			setTimeout(function() {
-				croppie.destroy();
-			}, 100);
+				destroyCropper();
+			}, 80);
 		});
 
 		$("#changePictureUpload").submit(function(event) {
@@ -300,16 +301,19 @@
 	}
 
 	function validateUploadData() {
+
 		const rules = {
-			'change_image': 'required|file|size:8|mimes:jpg,jpeg,png',
+			'change_image': 'required|file|image|size:8|mimes:jpg,jpeg,png',
 			// 'change_image': 'required_if:image,=,""|file|size:8|mimes:jpg,jpeg,png',
 		};
-
+		
 		const message = {
-			'change_image': 'Upload File',
-		};
+            'change_image': {
+                label: 'Upload File'
+            }
+        };
 
-		return validationJs(rules, message);
+		return validationJs('changePictureUpload', rules, message);
 	}
 
 	function removeFilesUpload(id) {

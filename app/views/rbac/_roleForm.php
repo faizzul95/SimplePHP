@@ -3,14 +3,14 @@
     <div class="row">
         <div class="col-12">
             <label class="form-label"> Name <span class="text-danger">*</span> </label>
-            <input type="text" id="role_name" name="role_name" class="form-control" onkeyup="this.value = this.value.toUpperCase();" autocomplete="off" required>
+            <input type="text" id="role_name" name="role_name" class="form-control" onkeyup="this.value = this.value.toUpperCase();" maxlength="64" autocomplete="off" required>
         </div>
     </div>
 
     <div class="row mt-3">
         <div class="col-12">
             <label class="form-label"> Rank <span class="text-danger">*</span> </label>
-            <input type="text" id="role_rank" name="role_rank" class="form-control" autocomplete="off" required>
+            <input type="number" id="role_rank" name="role_rank" class="form-control" min="0" step="1" autocomplete="off" required>
         </div>
     </div>
 
@@ -44,10 +44,9 @@
     $("#rolesForm").submit(function(event) {
         event.preventDefault();
 
-        if (validateDataRole()) {
+        if (validateDataRole(this)) {
 
             const form = $(this);
-            const url = form.attr('action');
 
             Swal.fire({
                 title: 'Are you sure?',
@@ -64,16 +63,10 @@
             }).then(
                 async (result) => {
                     if (result.isConfirmed) {
-                        const res = await submitApi(url, form.serializeArray(), 'rolesForm');
-                        if (isSuccess(res)) {
-
-                            if (isSuccess(res.data.code)) {
-                                noti(res.status, res.data.message);
-                                getDataList();
-                            } else {
-                                noti(400, res.data.message)
-                            }
-
+                        const res = await submitApi(form.attr('action'), form.serializeArray(), 'rolesForm');
+                        if (isSuccess(res.data.code ?? res)) {
+                            noti(res.data.code ?? res.status, res.data.message);
+                            getDataList();
                         }
                     }
                 })
@@ -83,20 +76,28 @@
         }
     });
 
-    function validateDataRole() {
+    function validateDataRole(formObj) {
 
         const rules = {
             'role_name': 'required|min_length:3|max_length:64',
             'role_rank': 'required|integer|min:1',
+            'role_status': 'required|integer|in:0,1',
             'id': 'integer',
         };
 
         const message = {
-            'role_name': 'Role Name',
-            'role_rank': 'Role Rank',
-            'id': 'ID',
+            'role_name': {
+                label: 'Name'
+            },
+            'role_rank': {
+                label: 'Rank'
+            },
+            'role_status': {
+                label: 'Status',
+                in: 'The :label should be either Active or Inactive.',
+            }
         };
 
-        return validationJs(rules, message);
+        return validationJs(formObj, rules, message);
     }
 </script>

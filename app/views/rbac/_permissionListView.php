@@ -162,7 +162,7 @@
     $("#permissionForm").submit(function(event) {
         event.preventDefault();
 
-        if (validateDataPerm()) {
+        if (validateDataPerm(this)) {
 
             const form = $(this);
             const url = form.attr('action');
@@ -207,20 +207,27 @@
         }
     });
 
-    function validateDataPerm() {
+    function validateDataPerm(formObj) {
 
         const rules = {
-            'abilities_name': 'required|min_length:5|max_length:50',
-            'abilities_slug': 'required|min_length:5|max_length:100',
+            'abilities_name' : 'required|min_length:5|max_length:50',
+            'abilities_slug' : 'required|min_length:1|max_length:100',
+            'abilities_desc' : 'max_length:255',
             'id': 'integer',
         };
 
         const message = {
-            'abilities_name': 'Name',
-            'abilities_slug': 'Slug',
-            'id': 'ID',
+            'abilities_name': {
+                label: 'Name'
+            },
+            'abilities_slug': {
+                label: 'Slug'
+            },
+            'abilities_desc': {
+                label: 'Description'
+            }
         };
 
-        return validationJs(rules, message);
+        return validationJs(formObj, rules, message);
     }
 </script>

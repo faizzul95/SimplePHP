@@ -187,13 +187,12 @@
             if (!$('#templateEditor').hasClass('note-editable')) {
                 initializeSummernote();
             }
-        }, 250);
 
-        $('#templateEditor').summernote('code', '');
+            $('#templateEditor').summernote('code', '');
+        }, 80);
 
         if (!empty(data)) {
             // Populate form fields
-            $('#email_body').val(data['email_body'] || '');
             $('#email_type').val(data['email_type'] || '');
             $('#email_subject').val(data['email_subject'] || '');
             $('#email_footer').val(data['email_footer'] || '');
@@ -201,12 +200,14 @@
             $('#email_bcc').val(data['email_bcc'] || '');
             $('#email_status').val(data['email_status']);
             $('#id').val(data['email_id'] || data['id'] || '');
+            $('#email_body').val(data['email_body'] || '');
 
-            // Set Summernote content
-            $('#templateEditor').summernote('code', data['email_body'] || '');
-
-            // Update preview
-            refreshPreview();
+            setTimeout(function() {
+                // Set Summernote content
+                $('#templateEditor').summernote('code', data['email_body'] || '');
+                // Update preview
+                refreshPreview();
+            }, 150);
         } else {
             // Clear form and show no data message
             clearForm();
@@ -277,7 +278,7 @@
         let editorContent = $('#templateEditor').summernote('code');
         $('#email_body').val(editorContent);
 
-        if (validateDataTemplate()) {
+        if (validateDataTemplate(this)) {
             const form = $(this);
             const url = form.attr('action');
 
@@ -313,30 +314,30 @@
         }
     });
 
-    function validateDataTemplate() {
+    function validateDataTemplate(formObj) {
 
         const rules = {
-            'email_type': 'required|min:5|max:255',
-            'email_subject': 'required|min:5|max:255',
-            'email_body': 'required|min:5',
-            'email_footer': 'max:255',
-            'email_cc': 'email|min:5|max:255',
-            'email_bcc': 'email|min:5|max:255',
-            'email_status': 'required|integer',
+            'email_type': 'required|min_length:5|max_length:255',
+            'email_subject': 'required|min_length:5|max_length:255',
+            'email_body': 'required|min_length:5',
+            'email_footer': 'max_length:255',
+            'email_cc': 'min_length:5|max_length:255',
+            'email_bcc': 'min_length:5|max_length:255',
+            'email_status': 'required|integer|in:0,1',
             'id': 'required|integer',
         };
-
+        
         const message = {
-            'email_type': 'Type',
-            'email_subject': 'Subject',
-            'email_body': 'Description',
-            'email_footer': 'Footer',
-            'email_cc': 'CC',
-            'email_bcc': 'BCC',
-            'email_status': 'Status',
-            'id': 'Email ID',
+            'email_type': { label: 'Type' },
+            'email_subject': { label: 'Subject' },
+            'email_body': { label: 'Description' },
+            'email_footer': { label: 'Footer' },
+            'email_cc': { label: 'CC' },
+            'email_bcc': { label: 'BCC' },
+            'email_status': { label: 'Status' },
+            'id': { label: 'Template ID' }
         };
 
-        return validationJs(rules, message);
+        return validationJs(formObj, rules, message);
     }
 </script>

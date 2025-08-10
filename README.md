@@ -74,6 +74,126 @@ $config['mail'] = [
 ];
 ```
 
+## Usage
+
+### Controller Actions
+
+SimplePHP uses an action-based routing system. Controllers are invoked by specifying an `action` parameter that corresponds to the function name in the controller.
+
+### Form Submissions
+
+All forms must include a hidden input field with the `action` parameter to specify which controller function to invoke:
+
+```html
+<form method="POST" action="controllers/ExampleController.php">
+    
+    <!-- Your form fields here -->
+    <input type="text" name="name" required>
+    <input type="email" name="email" required>
+    
+    <!-- Required to have this hidden action -->
+    <input type="hidden" name="action" value="save" readonly>
+    <button type="submit">Submit</button>
+</form>
+```
+
+### API Calls with callApi Wrapper
+
+When using the `callApi` wrapper function, include the `action` parameter to specify which controller function to call:
+
+```javascript
+// Example: Calling the 'show' function in ExampleController
+const res = await callApi('post', "controllers/ExampleController.php", {
+    'action': 'show',
+    'id': id
+});
+
+// Example: Calling the 'save' function
+const saveRes = await callApi('post', "controllers/UserController.php", {
+    'action': 'save',
+    'name': 'John Doe',
+    'email': 'john@example.com'
+});
+
+// Example: Calling the 'delete' function
+const deleteRes = await callApi('post', "controllers/UserController.php", {
+    'action': 'delete',
+    'id': userId
+});
+```
+
+### Controller Structure
+
+Controllers should be structured with functions that correspond to different actions:
+
+```php
+<?php
+// controllers/ExampleController.php
+
+function save($request) {
+    // Handle save logic
+    $validation = request()->validate([
+        'name' => 'required|string|min_length:3|max_length:255|secure_value',
+        'email' => 'required|email|max_length:255|secure_value',
+        'id' => 'numeric',
+    ]);
+
+    if (!$validation->passed()) {
+        jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
+    }
+
+    $result = db()->table('users')->insertOrUpdate(
+        [
+            'id' => request()->input('id') // Similar as $_POST['id'] or $request['id']
+        ],
+        request()->all()
+    );
+
+    if (isError($result['code'])) {
+        jsonResponse(['code' => 422, 'message' => 'Failed to save user']);
+    }
+
+    jsonResponse(['code' => 200, 'message' => 'User saved']);
+}
+
+function show($request) {
+    // Handle show logic
+    $id = request()->input('id'); // Similar as $_POST['id'] or $request['id']
+    
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    $data = db()->table('users')->where('id', $id)->safeOutput()->fetch();
+    // $data = db()->where('id', $id)->safeOutput()->fetch('users'); // without using table()
+
+    if (!$data) {
+        jsonResponse(['code' => 404, 'message' => 'User not found']);
+    }
+    
+    jsonResponse(['code' => 200, 'data' => $data]);
+}
+
+function delete($request) {
+    // Handle delete logic
+    $id = request()->input('id'); // Similar as $_POST['id'] or $request['id']
+    
+    if (empty($id)) {
+        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+    }
+
+    // $result = db()->table('users')->where('id', $id)->delete();
+    $result = db()->table('users')->where('id', $id)->softDelete();
+
+    if (isError($result['code'])) {
+        jsonResponse(['code' => 422, 'message' => 'Failed to delete data']);
+    }
+
+    jsonResponse(['code' => 200, 'message' => 'Data deleted']);
+}
+?>
+```
+
 ## Database Usage
 
 SimplePHP provides an elegant query builder for database operations:

@@ -74,7 +74,7 @@
     <script src="<?= asset('general/js/helper.js'); ?>"></script>
     <script src="<?= asset('general/js/toastr.min.js'); ?>"></script>
     <script src="<?= asset('general/js/block-ui.js'); ?>"></script>
-    <script src="<?= asset('general/js/validationJS.js'); ?>"></script>
+    <script src="<?= asset('general/js/validation.js'); ?>"></script>
 
     <!-- Sweetalert 2 -->
 	  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>

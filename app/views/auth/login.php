@@ -71,7 +71,7 @@
     <script src="<?= asset('general/js/helper.js'); ?>"></script>
     <script src="<?= asset('general/js/toastr.min.js'); ?>"></script>
     <script src="<?= asset('general/js/block-ui.js'); ?>"></script>
-    <script src="<?= asset('general/js/validationJS.js'); ?>"></script>
+    <script src="<?= asset('general/js/validation.js'); ?>"></script>
 </head>
 
 <body>
@@ -101,6 +101,7 @@
                                     id="username"
                                     name="username"
                                     placeholder="Enter your email or username"
+                                    autocomplete="off"
                                     autofocus />
                             </div>
                             <div class="mb-3 form-password-toggle">
@@ -160,8 +161,9 @@
             var password = $('#password').val();
             var response = $('#captcha-response').val();
 
-            if (validateData()) {
-
+            const rules = { 'username': 'required|min_length:3|max_length:20', 'password': 'required|min_length:5' };
+           
+            if (validationJs(this, rules)) {
                 const res = await loginApi('controllers/AuthController.php', 'formAuthentication');
 
                 if (isSuccess(res)) {
@@ -172,7 +174,7 @@
                     if (isSuccess(resCode)) {
                         setTimeout(function() {
                             window.location.href = data.redirectUrl;
-                        }, 400);
+                        }, 350);
                     }
                 }
 
@@ -180,16 +182,6 @@
                 validationJsError('toastr', 'multi'); // single or multi
             }
         });
-
-        function validateData() {
-
-            const rules = {
-                'password': 'required',
-                'username': 'required',
-            };
-
-            return validationJs(rules);
-        }
     </script>
 </body>
 
