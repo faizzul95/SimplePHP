@@ -15,7 +15,7 @@ function validationJs(formElement, rules, messages = {}, attributeType = 'name')
     validationErrors = {};
 
     // Define classes for validation (Bootstrap classes)
-    const validationSuccessClass = 'is-valid';
+    const validationSuccessClass = 'valid'; // 'is-valid' for Bootstrap 4/5
     const validationErrorClass = 'is-invalid';
     
     try {

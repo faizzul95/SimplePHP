@@ -126,15 +126,7 @@ $menuList = [
                     'permission' => 'rbac-email-view',
                     'active' => true,
                     'authenticate' => true,
-                ],
-                // 'abilities' => [
-                //     'desc' => 'Abilities',
-                //     'url' => 'javascript:void(0);', // No specific page yet
-                //     'file' => 'app/views/rbac/abilities.php',
-                //     'permission' => null,
-                //     'active' => false,
-                //     'authenticate' => true,
-                // ]
+                ]
             ],
         ],
     ]
