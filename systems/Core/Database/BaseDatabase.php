@@ -455,7 +455,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                     $this->_buildWhereClause($column, $val, $operator, 'AND');
                 }
             } else {
-                $this->_buildWhereClause($columnName, $value, $operator, 'AND');
+                $this->_buildWhereClause("`{$this->table}`.`$columnName`", $value, $operator, 'AND');
             }
 
             return $this;
