@@ -101,6 +101,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $where = null;
 
     /**
+     * @var bool The flag to put the distinct in query.
+     */
+    protected $distinct = false;
+
+    /**
      * @var string|null The join clauses.
      */
     protected $joins = null;
@@ -175,6 +180,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @var string An string to store current active profiler
      */
     protected $_profilerActive = 'main';
+
+    /**
+     * @var array Store the registered macro functions
+     */
+    protected static $_macros = [];
 
     /**
      * @var array The list of database support.
@@ -307,6 +317,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->orderBy = null;
         $this->groupBy = null;
         $this->where = null;
+        $this->distinct = false;
         $this->joins = null;
         $this->_error = [];
         $this->_secureInput = false;
@@ -325,6 +336,16 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function table($table)
     {
         $this->table = trim($table);
+        return $this;
+    }
+
+    public function distinct($columns = null)
+    {
+        if (!empty($columns)) {
+            $this->select($columns);
+        }
+
+        $this->distinct = true;
         return $this;
     }
 
@@ -394,12 +415,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             if (is_callable($columnName)) {
                 $db = clone $this; // Clone current query builder instance
                 $db->reset(); // reset all variable
+                $db->table = $this->table; // set current table
                 $columnName($db); // Pass the current object to the closure
 
                 if (!empty($db->where) && is_string($db->where)) {
                     // Check if variable contains a full SQL statement
                     $this->_forbidRawQuery($db->where, 'Full/Sub SQL statements are not allowed in where(). Please use query() function.');
-
                     $this->whereRaw($db->where, $db->_binds, 'AND');
                 } else {
                     throw new \InvalidArgumentException('Callable must return a valid SQL clause string.');
@@ -454,6 +475,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             if (is_callable($columnName)) {
                 $db = clone $this; // Clone current query builder instance
                 $db->reset(); // reset all variable
+                $db->table = $this->table; // set current table
                 $columnName($db); // Pass the current object to the closure
 
                 if (!empty($db->where) && is_string($db->where)) {
@@ -834,7 +856,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         // Build the join clause
-        $this->joins .= " $joinType JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey`";
+        $this->joins .= " $joinType JOIN `$table` ON `$table`.`$foreignKey` = $localKey";
 
         return $this;
     }
@@ -849,9 +871,26 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($foreignKey, 'Foreign Key');
         $this->validateColumn($localKey, 'Local Key');
 
-        // Build the join clause
-        $this->joins .= " LEFT JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
+        // Build the base join clause
+        $joinClause = " LEFT JOIN `$table` ON `$table`.`$foreignKey` = $localKey";
 
+        // Handle additional conditions
+        if ($conditions instanceof \Closure) {
+            $db = clone $this;
+            $db->reset();
+            $db->table = $table;
+
+            $conditions($db);
+            
+            if (!empty($db->where)) {
+                $joinClause .= " AND " . ltrim($db->where, 'AND ');
+                $this->_binds = array_merge($this->_binds, $db->_binds);
+            }
+        } elseif (is_string($conditions) && !empty($conditions)) {
+            $joinClause .= " " . $conditions;
+        }
+
+        $this->joins .= $joinClause;
         return $this;
     }
 
@@ -865,9 +904,26 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($foreignKey, 'Foreign Key');
         $this->validateColumn($localKey, 'Local Key');
 
-        // Build the join clause
-        $this->joins .= " RIGHT JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
+        // Build the base join clause
+        $joinClause = " RIGHT JOIN `$table` ON `$table`.`$foreignKey` = $localKey";
 
+        // Handle additional conditions
+        if ($conditions instanceof \Closure) {
+            $db = clone $this;
+            $db->reset();
+            $db->table = $table;
+            
+            $conditions($db);
+            
+            if (!empty($db->where)) {
+                $joinClause .= " AND " . ltrim($db->where, 'AND ');
+                $this->_binds = array_merge($this->_binds, $db->_binds);
+            }
+        } elseif (is_string($conditions) && !empty($conditions)) {
+            $joinClause .= " " . $conditions;
+        }
+
+        $this->joins .= $joinClause;
         return $this;
     }
 
@@ -881,9 +937,26 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($foreignKey, 'Foreign Key');
         $this->validateColumn($localKey, 'Local Key');
 
-        // Build the join clause
-        $this->joins .= " INNER JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
+        // Build the base join clause
+        $joinClause = " INNER JOIN `$table` ON `$table`.`$foreignKey` = $localKey";
 
+        // Handle additional conditions
+        if ($conditions instanceof \Closure) {
+            $db = clone $this;
+            $db->reset();
+            $db->table = $table;
+
+            $conditions($db);
+            
+            if (!empty($db->where)) {
+                $joinClause .= " AND " . ltrim($db->where, 'AND ');
+                $this->_binds = array_merge($this->_binds, $db->_binds);
+            }
+        } elseif (is_string($conditions) && !empty($conditions)) {
+            $joinClause .= " " . $conditions;
+        }
+
+        $this->joins .= $joinClause;
         return $this;
     }
 
@@ -897,9 +970,26 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($foreignKey, 'Foreign Key');
         $this->validateColumn($localKey, 'Local Key');
 
-        // Build the join clause
-        $this->joins .= " FULL OUTER JOIN `$table` ON `$table`.`$foreignKey` = `{$this->table}`.`$localKey` $conditions";
+        // Build the base join clause
+        $joinClause = " FULL OUTER JOIN `$table` ON `$table`.`$foreignKey` = $localKey";
 
+        // Handle additional conditions
+        if ($conditions instanceof \Closure) {
+            $db = clone $this;
+            $db->reset();
+            $db->table = $table;
+
+            $conditions($db);
+            
+            if (!empty($db->where)) {
+                $joinClause .= " AND " . ltrim($db->where, 'AND ');
+                $this->_binds = array_merge($this->_binds, $db->_binds);
+            }
+        } elseif (is_string($conditions) && !empty($conditions)) {
+            $joinClause .= " " . $conditions;
+        }
+
+        $this->joins .= $joinClause;
         return $this;
     }
 
@@ -1100,6 +1190,14 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         $placeholder = '?'; // Use a single placeholder for all conditions
 
+        // if (
+        //     in_array($operator, ['=', '!=', '<>', 'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL'])
+        //     && !empty($this->table)
+        //     && strpos($columnName, '.') === false
+        // ) {
+        //     $columnName = "`{$this->table}`.`$columnName`";
+        // }
+
         switch ($operator) {
             case 'IN':
             case 'NOT IN':
@@ -1126,7 +1224,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $this->where .= "($columnName)";
                 break;
             default:
-                $this->where .= "$columnName $operator $placeholder";
+                if ($value === '' && ($operator == '=' || $operator == '!=')) {
+                    $this->where .= "$columnName $operator ''";
+                } else {
+                    $this->where .= "$columnName $operator $placeholder";   
+                }
                 break;
         }
 
@@ -1162,7 +1264,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         // Build the basic SELECT clause with fields
-        $this->_query = "SELECT " . ($this->column === '*' ? '*' : $this->column) . " FROM ";
+        $this->_query = "SELECT " . ($this->distinct ? "DISTINCT " : "") . ($this->column === '*' ? '*' : $this->column) . " FROM ";
 
         // Append table name with schema (if provided)
         if (empty($this->schema)) {
@@ -3312,5 +3414,120 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         } catch (\Exception $e) {
             throw new \Exception('Database error occurred.', 0, $e);
         }
+    }
+
+    /**
+     * Add a where exists clause for a related table with support for nested conditions
+     *
+     * @param string $relationTable The related table to query against
+     * @param string $foreignKey The foreign key on the related table
+     * @param string $localKey The local key on the main table
+     * @param \Closure|null $callback Optional callback for additional conditions
+     * @param string $operator The boolean operator (AND/OR)
+     * @param string $comparison The comparison operator (EXISTS/NOT EXISTS)
+     * @return $this
+     */
+    private function _buildWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null, string $operator = 'AND', string $comparison = 'EXISTS') 
+    {
+        // Create a new query builder instance for the subquery
+        $subQueryBuilder = clone $this;
+        $subQueryBuilder->reset(); // Reset all properties
+        $subQueryBuilder->table = $relationTable;
+
+        // Build the base exists clause
+        $subquery = "SELECT 1 FROM `{$relationTable}` WHERE `{$relationTable}`.`{$foreignKey}` = `{$this->table}`.`{$localKey}`";
+
+        // If a callback is provided, apply additional conditions
+        if ($callback !== null && $callback instanceof \Closure) {
+            // Execute the callback with the subquery builder
+            $callback($subQueryBuilder);
+
+            // Add WHERE conditions from the subquery builder if any exist
+            if (!empty($subQueryBuilder->where)) {
+                $whereClause = $subQueryBuilder->where;
+                if (stripos($whereClause, 'WHERE') === 0) {
+                    $whereClause = substr($whereClause, 5); // Remove 'WHERE'
+                }
+                $subquery .= " AND " . trim($whereClause);
+            }
+
+            // Add any joins that were added in the callback
+            if (!empty($subQueryBuilder->joins)) {
+                $subquery = str_replace("SELECT 1 FROM", "SELECT 1 FROM " . trim($subQueryBuilder->joins) . " ", $subquery);
+            }
+        }
+
+        // Close the EXISTS clause and add to the main query
+        $fullQuery = "{$comparison} ({$subquery})";
+        $this->whereRaw($fullQuery, $subQueryBuilder->_binds ?? [], $operator);
+
+        return $this;
+    }
+
+    public function whereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
+    {
+        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'AND', 'EXISTS');
+    }
+
+    public function orWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null) 
+    {
+        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'OR', 'EXISTS');
+    }
+
+    public function whereDoesntHave($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
+    {
+        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'AND', 'NOT EXISTS');
+    }
+
+    public function orWhereDoesntHave($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
+    {
+        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'OR', 'NOT EXISTS');
+    }
+
+    /**
+     * Register a custom macro function
+     *
+     * @param string   $name     The name of the macro
+     * @param \Closure $callback The macro implementation
+     * @return void
+     */
+    public function macro($name, \Closure $callback)
+    {
+        static::$_macros[get_class($this)][$name] = $callback;
+    }
+
+    /**
+     * Checks if a macro is registered
+     *
+     * @param string $name The name of the macro
+     * @return bool
+     */
+    public function hasMacro($name)
+    {
+        return isset(static::$_macros[get_class($this)][$name]);
+    }
+
+    /**
+     * Dynamically handle calls to custom macros
+     *
+     * @param string $method
+     * @param array  $parameters
+     * @return mixed
+     * @throws \BadMethodCallException
+     */
+    public function __call($method, $parameters)
+    {
+        if ($this->hasMacro($method)) {
+            $macro = static::$_macros[get_class($this)][$method];
+            
+            // Bind the macro to the current instance
+            if ($macro instanceof \Closure) {
+                return call_user_func_array($macro->bindTo($this, static::class), $parameters);
+            }
+        }
+
+        throw new \BadMethodCallException(sprintf(
+            'Method %s::%s does not exist.', static::class, $method
+        ));
     }
 }

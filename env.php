@@ -27,7 +27,7 @@ $config['security'] = [
     'permission_request' => false,
 
     'csrf' => [
-        'csrf_protection'    => true,
+        'csrf_protection'    => false,
         'csrf_token_name'    => 'csrf_token',
         'csrf_cookie_name'   => 'csrf_cookie',
         'csrf_expire'        => 7200,
@@ -180,4 +180,23 @@ $config['mail'] = [
     'from_email' => '',
     'from_name'  => APP_NAME,
     'debug'      => false,
+];
+
+/*
+|--------------------------------------------------------------------------
+| Credentials (API KEY, Secret Key, etc)
+|--------------------------------------------------------------------------
+*/
+$config['credentials'] = [
+   'google_auth' => [
+        'client_id' => '',
+        'client_secret' => '',
+        'cookie_policy' => 'single_host_origin',
+        'redirect_uri' => '', // paramUrl(['_p' => REDIRECT_LOGIN], true)
+   ],
+   'recaptcha' => [
+        'enable' => false,
+        'site_key' => '',
+        'secret_key' => '',
+    ],
 ];

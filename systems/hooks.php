@@ -45,6 +45,35 @@ if (!function_exists('getProjectBaseUrl')) {
 
 /*
 |--------------------------------------------------------------------------
+| GET CONFIGURATION VALUE
+|--------------------------------------------------------------------------
+*/
+if (!function_exists('config')) {
+    function config($key)
+    {
+        global $config;
+        
+        if (empty($key)) {
+            return $config;
+        }
+
+        $keys = explode('.', $key);
+        $value = $config;
+
+        foreach ($keys as $segment) {
+            if (is_array($value) && array_key_exists($segment, $value)) {
+                $value = $value[$segment];
+            } else {
+                return null;
+            }
+        }
+
+        return $value;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
 | LOAD ALL COMPONENTS SYSTEMS
 |--------------------------------------------------------------------------
 */

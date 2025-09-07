@@ -5,6 +5,10 @@ ob_start();
 define('ROOT_DIR', realpath(__DIR__) . DIRECTORY_SEPARATOR);
 define('APP_NAME', "SimplePHP");
 
+define('REDIRECT_LOGIN', 'login');
+define('REDIRECT_403', 'app/views/errors/general_error.php');
+define('REDIRECT_404', 'app/views/errors/404.php');
+
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require_once __DIR__ . '/vendor/autoload.php';
 }
@@ -13,9 +17,6 @@ require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/systems/hooks.php';
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
-define('REDIRECT_LOGIN', 'login');
-define('REDIRECT_403', 'app/views/errors/general_error.php');
-define('REDIRECT_404', 'app/views/errors/404.php');
 
 /*
  *---------------------------------------------------------------

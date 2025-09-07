@@ -42,7 +42,15 @@ interface BuilderStatementInterface
      * @param string|array $columns The columns to select, default is '*'.
      * @return $this
      */
-    public function select($columns = '*');
+    public function select(string|array $columns = '*');
+
+    /**
+     * Sets the DISTINCT flag for the query.
+     *
+     * @param string|null $column Optional column to apply DISTINCT on.
+     * @return $this
+     */
+    public function distinct(string|null $column = null);
 
     /**
      * Adds a raw where clause to the query.
@@ -62,7 +70,7 @@ interface BuilderStatementInterface
      * @param string $operator The comparison operator, default is '='.
      * @return $this
      */
-    public function where(string|array|callable $column, ?string $value = null, string $operator = '=');
+    public function where(string|array|\Closure $column, mixed $value = null, string $operator = '=');
 
     /**
      * Adds an OR where clause to the query.
@@ -72,7 +80,7 @@ interface BuilderStatementInterface
      * @param string $operator The comparison operator, default is '='.
      * @return $this
      */
-    public function orWhere(string|array|callable $column, ?string $value = null, string $operator = '=');
+    public function orWhere(string|array|\Closure $column, mixed $value = null, string $operator = '=');
 
     /**
      * Adds a whereIn clause to the query.
@@ -99,7 +107,7 @@ interface BuilderStatementInterface
      * @param array $value The array of values to compare.
      * @return $this
      */
-    public function whereNotIn(string $column, $value = []);
+    public function whereNotIn(string $column, array $value = []);
 
     /**
      * Adds an OR whereNotIn clause to the query.
@@ -118,7 +126,7 @@ interface BuilderStatementInterface
      * @param mixed $end The end value.
      * @return $this
      */
-    public function whereBetween(string $column, string $start, string $end);
+    public function whereBetween(string $column, mixed $start, mixed $end);
 
     /**
      * Adds an OR whereBetween clause to the query.
@@ -128,7 +136,7 @@ interface BuilderStatementInterface
      * @param mixed $end The end value.
      * @return $this
      */
-    public function orWhereBetween(string $column, string $start, string $end);
+    public function orWhereBetween(string $column, mixed $start, mixed $end);
 
     /**
      * Adds a whereNotBetween clause to the query.
@@ -290,7 +298,7 @@ interface BuilderStatementInterface
      * @param mixed $value The value to search for.
      * @return $this
      */
-    public function whereJsonContains($columnName, $jsonPath, $value);
+    public function whereJsonContains(string $columnName, string $jsonPath, $value);
 
     /**
      * Conditionally adds query constraints if the given conditions are true.
@@ -303,11 +311,11 @@ interface BuilderStatementInterface
      *       $query->where('status', 'active');
      *   });
      *
-     * @param mixed $conditions The condition(s) to evaluate (bool, value, or closure).
+     * @param mixed $conditions The condition(s) to evaluate (value, or closure).
      * @param callable $callback The callback to execute if the condition is true. Receives the builder instance.
      * @return $this
      */
-    public function when($conditions, $callback);
+    public function when(mixed $conditions, callable $callback);
 
     /**
      * Adds a join clause to the query.
@@ -318,7 +326,7 @@ interface BuilderStatementInterface
      * @param string $joinType The join type that only support 'INNER', 'LEFT', 'RIGHT', 'OUTER', 'LEFT OUTER', 'RIGHT OUTER'.
      * @return $this
      */
-    public function join($table, $foreignKey, $localKey, $joinType = 'LEFT');
+    public function join(string $table, string $foreignKey, string $localKey, string $joinType = 'LEFT');
 
     /**
      * Adds a left join clause to the query.
@@ -326,10 +334,11 @@ interface BuilderStatementInterface
      * @param string $table The table to join.
      * @param string $foreignKey The foreign key column.
      * @param string $localKey The local key column.
-     * @param string|null $conditions Additional conditions for the join.
+     * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
+     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
-    public function leftJoin($table, $foreignKey, $localKey, $conditions = null);
+    public function leftJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
      * Adds a right join clause to the query.
@@ -337,10 +346,11 @@ interface BuilderStatementInterface
      * @param string $table The table to join.
      * @param string $foreignKey The foreign key column.
      * @param string $localKey The local key column.
-     * @param string|null $conditions Additional conditions for the join.
+     * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
+     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
-    public function rightJoin($table, $foreignKey, $localKey, $conditions = null);
+    public function rightJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
      * Adds an inner join clause to the query.
@@ -348,10 +358,11 @@ interface BuilderStatementInterface
      * @param string $table The table to join.
      * @param string $foreignKey The foreign key column.
      * @param string $localKey The local key column.
-     * @param string|null $conditions Additional conditions for the join.
+     * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
+     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
-    public function innerJoin(string $table, string $foreignKey, string $localKey, ?string $conditions = null);
+    public function innerJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
      * Adds an outer join clause to the query.
@@ -359,10 +370,11 @@ interface BuilderStatementInterface
      * @param string $table The table to join.
      * @param string $foreignKey The foreign key column.
      * @param string $localKey The local key column.
-     * @param string|null $conditions Additional conditions for the join.
+     * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
+     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
-    public function outerJoin(string $table, string $foreignKey, string $localKey, ?string $conditions = null);
+    public function outerJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
      * Adds an order by clause to the query.
@@ -461,7 +473,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before counting.
      * @return $this
      */
-    public function withCount($aliasKey, $table, $foreignKey, $localKey, ?\Closure $callback = null);
+    public function withCount(string $aliasKey, string $table, string $foreignKey, string $localKey, ?\Closure $callback = null);
 
     /**
      * Adds a subquery sum of a related one-to-many relationship column.
@@ -477,7 +489,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before summing.
      * @return $this
      */
-    public function withSum($aliasKey, $table, $foreignKey, $localKey, $sumColumn, ?\Closure $callback = null);
+    public function withSum(string $aliasKey, string $table, string $foreignKey, string $localKey, string $sumColumn, ?\Closure $callback = null);
 
     /**
      * Adds a subquery average of a related one-to-many relationship column.
@@ -493,7 +505,7 @@ interface BuilderStatementInterface
      * @param \Closure|null $callback Optional query customization for filtering the related records before averaging.
      * @return $this
      */
-    public function withAvg($aliasKey, $table, $foreignKey, $localKey, $avgColumn, ?\Closure $callback = null);
+    public function withAvg(string $aliasKey, string $table, string $foreignKey, string $localKey, string $avgColumn, ?\Closure $callback = null);
 
     /**
      * Adds a subquery minimum value of a related one-to-many relationship column.
@@ -526,4 +538,48 @@ interface BuilderStatementInterface
      * @return $this
      */
     public function withMax($aliasKey, $table, $foreignKey, $localKey, $maxColumn, ?\Closure $callback = null);
+
+    /**
+     * Add a whereHas condition to the query with a conditional subquery.
+     *
+     * @param string $relationTable The related table to query against
+     * @param string $foreignKey The foreign key on the related table
+     * @param string $localKey The local key on the main table
+     * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
+     * @return $this
+     */
+    public function whereHas(string $relationTable, string $foreignKey, string $localKey, ?\Closure $callback = null);
+
+    /**
+     * Add an orWhereHas clause to the query.
+     *
+     * @param string $relationTable The related table to query against
+     * @param string $foreignKey The foreign key on the related table
+     * @param string $localKey The local key on the main table
+     * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
+     * @return $this
+     */
+    public function orWhereHas(string $relationTable, string $foreignKey, string $localKey, ?\Closure $callback = null);
+
+    /**
+     * Add a whereDoesntHave clause to the query.
+     *
+     * @param string $relationTable The related table to query against
+     * @param string $foreignKey The foreign key on the related table
+     * @param string $localKey The local key on the main table
+     * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
+     * @return $this
+     */
+    public function whereDoesntHave(string $relationTable, string $foreignKey, string $localKey, ?\Closure $callback = null);
+
+    /**
+     * Add a orWhereDoesntHave clause to the query.
+     *
+     * @param string $relationTable The related table to query against
+     * @param string $foreignKey The foreign key on the related table
+     * @param string $localKey The local key on the main table
+     * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
+     * @return $this
+     */
+    public function orWhereDoesntHave(string $relationTable, string $foreignKey, string $localKey, ?\Closure $callback = null);
 }

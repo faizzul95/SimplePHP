@@ -6,7 +6,7 @@ class Request
 {
     protected static $data;
     protected static $files;
-    protected $secureInput = true;
+    protected $secureRequest = true;
 
     /**
      * Constructor
@@ -56,7 +56,7 @@ class Request
      */
     public function unsafe()
     {
-        $this->secureInput = false;
+        $this->secureRequest = false;
         self::$data = array_merge(
             $_GET,
             $_POST,
@@ -73,7 +73,7 @@ class Request
      */
     private function sanitizeInput($input)
     {
-        if (!$this->secureInput) {
+        if (!$this->secureRequest) {
             return $input;
         }
 
@@ -313,6 +313,92 @@ class Request
         }
 
         return $data ?? $default;
+    }
+
+     /**
+     * Get a specific input item from $_POST
+     * 
+     * @param string $key The key of the input item
+     * @param mixed $default The default value if the key doesn't exist
+     * @param bool $secure Whether to sanitize the input (default: true)
+     * @return mixed The value of the input item or the default value
+     */
+    public function post($key, $default = null, $secure = true)
+    {
+        // Set the request security mode
+        $this->secureRequest = $secure;
+
+        // If no segments provided, just check if the data contains the key directly
+        if (strpos($key, '.') === false) {
+            return $this->sanitizeInput($_POST[$key] ?? $default);
+        }
+
+        // Split the key by dots to handle nested arrays
+        $segments = explode('.', $key);
+        $data = $_POST;
+
+        foreach ($segments as $segment) {
+            // If the segment is an asterisk, replace it with a regex wildcard
+            if ($segment === '*') {
+                $wildcardData = [];
+                foreach ($data as $item) {
+                    if (is_array($item)) {
+                        $wildcardData = array_merge($wildcardData, $item);
+                    }
+                }
+                $data = $wildcardData;
+            } else if (isset($data[$segment])) {
+                $data = $data[$segment]; // If the segment exists, go deeper
+            } else {
+                // If the segment doesn't exist, return the default value
+                return $default;
+            }
+        }
+
+        return $this->sanitizeInput($data ?? $default);
+    }
+
+    /**
+     * Get a specific input item from $_GET
+     * 
+     * @param string $key The key of the input item
+     * @param mixed $default The default value if the key doesn't exist
+     * @param bool $secure Whether to sanitize the input (default: true)
+     * @return mixed The value of the input item or the default value
+     */
+    public function get($key, $default = null, $secure = true)
+    {
+        // Set the request security mode
+        $this->secureRequest = $secure;
+
+        // If no segments provided, just check if the data contains the key directly
+        if (strpos($key, '.') === false) {
+            return $this->sanitizeInput($_GET[$key] ?? $default);
+        }
+
+        // Split the key by dots to handle nested arrays
+        $segments = explode('.', $key);
+        $data = $_GET;
+
+        foreach ($segments as $segment) {
+            // If the segment is an asterisk, replace it with a regex wildcard
+            if ($segment === '*') {
+                $wildcardData = [];
+                foreach ($data as $item) {
+                    if (is_array($item)) {
+                        $wildcardData = array_merge($wildcardData, $item);
+                    }
+                }
+                $data = $wildcardData;
+            } else if (isset($data[$segment])) {
+                $data = $data[$segment]; // If the segment exists, go deeper
+            } else {
+                // If the segment doesn't exist, return the default value
+                return $default;
+            }
+        }
+
+        return $this->sanitizeInput($data ?? $default);
     }
 
     /**
