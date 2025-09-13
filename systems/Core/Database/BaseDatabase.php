@@ -20,14 +20,19 @@ use Core\LazyCollection;
 use Core\Database\Interface\ConnectionInterface;
 use Core\Database\Interface\BuilderCrudInterface;
 use Core\Database\Interface\BuilderStatementInterface;
-
 use Core\Database\Interface\QueryInterface;
 use Core\Database\Interface\ResultInterface;
+
+use Core\Database\Traits\Macroable;
+use Core\Database\Traits\Scopeable;
+use Core\Database\Traits\ValidationTrait;
 
 use Components\Logger;
 
 abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterface, BuilderStatementInterface, QueryInterface, BuilderCrudInterface, ResultInterface
 {
+    use Macroable, Scopeable, ValidationTrait;
+
     /**
      * Static instance of self
      *
@@ -180,11 +185,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @var string An string to store current active profiler
      */
     protected $_profilerActive = 'main';
-
-    /**
-     * @var array Store the registered macro functions
-     */
-    protected static $_macros = [];
 
     /**
      * @var array The list of database support.
@@ -1864,9 +1864,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $total = $this->count();
             $this->_setProfilerIdentifier(); // reset back to paginate profiler
 
-            // Calculate total pages
-            $totalPages = ceil($total / $limit);
-
             // Add LIMIT and OFFSET clauses to the main query
             $this->_query = $this->_getLimitOffsetPaginate($this->_query, $limit, $start);
 
@@ -1895,7 +1892,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'recordsTotal' => $total ?? 0,
                 'recordsFiltered' => $total ?? 0,
                 'data' => $this->_safeOutputSanitize($result) ?? null,
-                'last_page' => $totalPages
             ];
         } catch (\PDOException $e) {
             // Log database errors
@@ -3482,52 +3478,5 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function orWhereDoesntHave($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
     {
         return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'OR', 'NOT EXISTS');
-    }
-
-    /**
-     * Register a custom macro function
-     *
-     * @param string   $name     The name of the macro
-     * @param \Closure $callback The macro implementation
-     * @return void
-     */
-    public function macro($name, \Closure $callback)
-    {
-        static::$_macros[get_class($this)][$name] = $callback;
-    }
-
-    /**
-     * Checks if a macro is registered
-     *
-     * @param string $name The name of the macro
-     * @return bool
-     */
-    public function hasMacro($name)
-    {
-        return isset(static::$_macros[get_class($this)][$name]);
-    }
-
-    /**
-     * Dynamically handle calls to custom macros
-     *
-     * @param string $method
-     * @param array  $parameters
-     * @return mixed
-     * @throws \BadMethodCallException
-     */
-    public function __call($method, $parameters)
-    {
-        if ($this->hasMacro($method)) {
-            $macro = static::$_macros[get_class($this)][$method];
-            
-            // Bind the macro to the current instance
-            if ($macro instanceof \Closure) {
-                return call_user_func_array($macro->bindTo($this, static::class), $parameters);
-            }
-        }
-
-        throw new \BadMethodCallException(sprintf(
-            'Method %s::%s does not exist.', static::class, $method
-        ));
     }
 }
