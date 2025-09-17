@@ -204,33 +204,46 @@ SimplePHP provides an elegant query builder for database operations with Laravel
 
 SimplePHP provides Laravel-style query scopes and macros to help you reuse common query patterns:
 
-#### Query Scopes
+#### Built-in Query Scopes
 
-Scopes allow you to reuse common query constraints across your application:
+Here are the built-in scopes available in SimplePHP:
+
+1. **Soft Delete Scopes**:
+```php
+// Include soft-deleted records
+$users = db()->table('users')->withTrashed()->get();
+
+// Get only soft-deleted records
+$users = db()->table('users')->onlyTrashed()->get();
+```
+
+2. **Date-based Scopes**:
+```php
+// Order by created_at DESC
+$users = db()->table('users')->latest()->get();
+
+// Get records from last 7 days
+$users = db()->table('users')->recent(7)->get();
+```
+
+You can combine multiple scopes for complex queries:
 
 ```php
-// Available scopes
-$users = db()->table('users')
-    ->withTrashed() // Include soft-deleted records
-    ->onlyTrashed() // Only get soft-deleted records
-    ->latest() // Order by created_at DESC
-    ->recent(7) // Get records from last 7 days
-    ->get();
-
-// You can combine multiple scopes
+// Example: Get recently deleted users from the last 30 days
 $recentDeletedUsers = db()->table('users')
     ->onlyTrashed()
     ->recent(30)
+    ->latest()
     ->get();
 ```
 
-### Configuring Query Scopes
+### Registering Query Scopes
 
-Query scopes in SimplePHP can be configured in multiple ways:
+SimplePHP offers multiple ways to register and configure query scopes. Here are the different approaches:
 
-#### 1. Global Configuration
+#### 1. Global Scope Registration
 
-In your `app.php`, the scopes are loaded automatically when initializing the database connection:
+In your `app.php`, scopes are loaded automatically when initializing the database connection:
 
 ```php
 if (!empty($conn_db)) {
@@ -244,12 +257,152 @@ if (!empty($conn_db)) {
 }
 ```
 
+#### 2. Direct Scope Registration
+
+You can register scopes directly using the `scopes/scopes` method:
+
+```php
+// Register single scope, structure : scope($callback, $functionName)
+db()->scope(function() { return $this->where('status', 1); }, 'active');
+
+// Register multiple scopes
+db()->scopes([
+    'active' => function() {
+        return $this->where('status', 1);
+    },
+    'featured' => function() {
+        return $this->where('is_featured', 1);
+    }
+]);
+```
+
+#### 3. File-based Scope Registration
+
+Create your scopes in `controllers/ScopeMacroQuery/Scope.php`:
+
+```php
+// Scope.php
+function scopeQuery($db)
+{
+    $listOfScope = [
+        'withTrashed' => function ($table = null) {
+            return $this->whereNull(empty($table) ? 'deleted_at' : "{$table}.deleted_at");
+        },
+        'active' => function() {
+            return $this->where('status', 1);
+        }
+    ];
+
+    // Register scopes
+    if (!empty($listOfScope)) {
+        $db->scopes($listOfScope);
+    }
+}
+```
+
+#### 4. Dynamic Scope Registration
+
+You can register scopes dynamically based on conditions:
+
+```php
+// Register scopes based on configuration
+$config = [
+    'enable_soft_deletes' => true,
+    'enable_status_scopes' => true
+];
+
+$scopes = [];
+
+if ($config['enable_soft_deletes']) {
+    $scopes['withTrashed'] = function() {
+        return $this->whereNull('deleted_at');
+    };
+}
+
+if ($config['enable_status_scopes']) {
+    $scopes['active'] = function() {
+        return $this->where('status', 1);
+    };
+}
+
+db()->scopes($scopes);
+```
+
+#### 5. Module-based Scope Registration
+
+For larger applications, you can organize scopes by modules:
+
+```php
+// scopes/UserScopes.php
+$userScopes = [
+    'active' => function() {
+        return $this->where('status', 1);
+    },
+    'verified' => function() {
+        return $this->whereNotNull('email_verified_at');
+    }
+];
+
+// scopes/OrderScopes.php
+$orderScopes = [
+    'paid' => function() {
+        return $this->where('payment_status', 'paid');
+    },
+    'pending' => function() {
+        return $this->where('status', 'pending');
+    }
+];
+
+// Register module scopes
+db()->scopes(array_merge($userScopes, $orderScopes));
+```
+
+#### Best Practices for Scope Registration
+
+1. **Namespace Your Scopes**: Use clear, descriptive names that indicate the scope's purpose
+```php
+$scopes = [
+    'userActive' => function() { ... },
+    'userVerified' => function() { ... },
+    'orderPaid' => function() { ... }
+];
+```
+
+2. **Group Related Scopes**: Keep related scopes together
+```php
+$scopes = [
+    // Status scopes
+    'active' => function() { ... },
+    'inactive' => function() { ... },
+    
+    // Date scopes
+    'recent' => function($days = 7) { ... },
+    'thisMonth' => function() { ... },
+    
+    // Role scopes
+    'isAdmin' => function() { ... },
+    'isUser' => function() { ... }
+];
+```
+
+3. **Document Your Scopes**: Add comments to explain complex scopes
+```php
+$scopes = [
+    // Checks if user has completed all required profile fields
+    'profileComplete' => function() {
+        return $query->whereNotNull('email')
+        ->whereNotNull('phone')
+        ->whereNotNull('address');
+    }
+];
+```
+
 #### 2. Scope Definition Structure
 
 Create your scopes in `controllers/ScopeMacroQuery/Scope.php`:
 
 ```php
-function scopeQuery($db, $includeOnly = ['*'])
+function scopeQuery($db)
 {
     try {
         // Define all available scopes
@@ -313,18 +466,7 @@ function scopeQuery($db, $includeOnly = ['*'])
                 return $this->where('role', '!=', 'admin');
             }
         ];
-
-        // Filter scopes if needed
-        if (!in_array('*', $includeOnly) && !empty($includeOnly)) {
-            $tempScopeArr = [];
-            foreach ($includeOnly as $scope) {
-                if (isset($listOfScope[$scope])) {
-                    $tempScopeArr[$scope] = $listOfScope[$scope];
-                }
-            }
-            $listOfScope = $tempScopeArr;
-        }
-
+        
         // Register scopes
         if (!empty($listOfScope)) {
             $db->scopes($listOfScope);
@@ -423,7 +565,7 @@ $users = db()->table('users')
 Create a new file in `controllers/ScopeMacroQuery/Scope.php` for scopes:
 
 ```php
-function scopeQuery($db, $includeOnly = ['*'])
+function scopeQuery($db)
 {
     $listOfScope = [
         'withTrashed' => function ($table = null) {
@@ -450,7 +592,7 @@ function scopeQuery($db, $includeOnly = ['*'])
 Create a new file in `controllers/ScopeMacroQuery/Macro.php` for macros:
 
 ```php
-function macroQuery($db, $includeOnly = ['*'])
+function macroQuery($db)
 {
     $listOfMacros = [
         'whereLike' => function ($column, $value) {

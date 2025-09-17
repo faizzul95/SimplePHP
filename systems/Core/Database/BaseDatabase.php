@@ -1907,7 +1907,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 }
             }
 
-            // Add LIMIT and OFFSET clauses to the main query
+             // Add LIMIT and OFFSET clauses to the main query
             $this->_query = $this->_getLimitOffsetPaginate($this->_query, $limit, $start);
 
             // Execute the main query

@@ -28,17 +28,13 @@ trait Scopeable
     /**
      * Register a query scope
      *
-     * @param string $name The name of the scope
      * @param callable $callback The scope implementation
+     * @param string|null $name Optional name for the scope. If not provided, will be auto-detected from caller
      * @return void
-     * @throws InvalidArgumentException If name is empty or callback is not callable
+     * @throws InvalidArgumentException If callback is not callable or name cannot be determined
      */
-    public static function scope(string $name, callable $callback): void
+    public static function scope(callable $callback, ?string $name = null): void
     {
-        if (empty($name)) {
-            throw new InvalidArgumentException('Scope name cannot be empty');
-        }
-
         if (!is_callable($callback)) {
             throw new InvalidArgumentException('Scope callback must be callable');
         }
@@ -47,6 +43,29 @@ trait Scopeable
         if (!($callback instanceof Closure)) {
             throw new InvalidArgumentException('Scope callback must be a Closure for proper binding');
         }
+
+        // Get debug backtrace to find the caller and auto-detect name if not provided
+        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+        $caller = $backtrace[1] ?? [];
+        
+        // If name is not provided, try to extract it from the caller function
+        if ($name === null) {
+            $callerFunction = $caller['function'] ?? '';
+            if (str_starts_with($callerFunction, 'scope')) {
+                // Remove 'scope' prefix and convert to camelCase
+                $name = lcfirst(substr($callerFunction, 5));
+            } else {
+                throw new InvalidArgumentException('Scope name could not be auto-detected. Please provide a name explicitly.');
+            }
+        }
+
+        if (empty($name)) {
+            throw new InvalidArgumentException('Scope name cannot be empty');
+        }
+
+        // Get debug backtrace to find the caller
+        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+        $caller = $backtrace[1] ?? [];
 
         static::$_scopes[static::class][$name] = $callback;
     }
@@ -61,7 +80,7 @@ trait Scopeable
     public static function scopes(array $scopes): void
     {
         foreach ($scopes as $name => $callback) {
-            static::scope($name, $callback);
+            static::scope($callback, $name);
         }
     }
 
