@@ -205,6 +205,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     protected $_paginateColumn = [];
 
+    /**
+     * @var string The list of column for pagination
+     */
+    protected $_paginateFilterValue = null;
+
     # Implement ConnectionInterface logic
 
     /**
@@ -881,7 +886,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $db->table = $table;
 
             $conditions($db);
-            
+
             if (!empty($db->where)) {
                 $joinClause .= " AND " . ltrim($db->where, 'AND ');
                 $this->_binds = array_merge($this->_binds, $db->_binds);
@@ -912,9 +917,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $db = clone $this;
             $db->reset();
             $db->table = $table;
-            
+
             $conditions($db);
-            
+
             if (!empty($db->where)) {
                 $joinClause .= " AND " . ltrim($db->where, 'AND ');
                 $this->_binds = array_merge($this->_binds, $db->_binds);
@@ -947,7 +952,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $db->table = $table;
 
             $conditions($db);
-            
+
             if (!empty($db->where)) {
                 $joinClause .= " AND " . ltrim($db->where, 'AND ');
                 $this->_binds = array_merge($this->_binds, $db->_binds);
@@ -980,7 +985,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $db->table = $table;
 
             $conditions($db);
-            
+
             if (!empty($db->where)) {
                 $joinClause .= " AND " . ltrim($db->where, 'AND ');
                 $this->_binds = array_merge($this->_binds, $db->_binds);
@@ -1227,7 +1232,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 if ($value === '' && ($operator == '=' || $operator == '!=')) {
                     $this->where .= "$columnName $operator ''";
                 } else {
-                    $this->where .= "$columnName $operator $placeholder";   
+                    $this->where .= "$columnName $operator $placeholder";
                 }
                 break;
         }
@@ -1291,7 +1296,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Add HAVING clause if specified
         if ($this->having) {
             $having = implode(' AND ', $this->having);
-            $this->_query .= " HAVING " . $this->having;
+            $this->_query .= " HAVING " . $having;
         }
 
         // Add ORDER BY clause if specified
@@ -1842,6 +1847,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     public function paginate($start = 0, $limit = 10, $draw = 1)
     {
+        $totalRecords = 0;
+        $totalFiltered = 0;
+
         if ($start < 0) {
             $start = 0;
         }
@@ -1849,20 +1857,55 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Reset the offset & limit to ensure the $this->_query not generate with that when call _buildSelectQuery() function
         $this->offset = $this->limit = null;
 
-        if (!$this->_isRawQuery) {
-            // Build the final SELECT query string
-            $this->_buildSelectQuery();
-        }
-
         // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
 
         try {
 
-            // Get total count
-            $this->_setProfilerIdentifier('count'); // set new profiler
-            $total = $this->count();
+            // Count total rows before filter
+            $this->_setProfilerIdentifier('count_all'); // set new profiler
+            $totalRecords = $totalFiltered = !$this->_isRawQuery ? (clone $this)->_buildSelectQuery()->count() : (clone $this)->count();
             $this->_setProfilerIdentifier(); // reset back to paginate profiler
+
+            // Apply custom filter (advanced search)
+            if (!empty($this->_paginateFilterValue)) {
+                $columns = $this->_paginateColumn;
+                if (empty($columns)) {
+                    // Query to get all columns from the table based on database type
+                    $columns = $this->getTableColumns();
+                }
+
+                // Build search conditions with OR logic
+                $searchConditions = [];
+                foreach ($columns as $column) {
+                    $searchConditions[] = trim($column);
+                }
+
+                if (!empty($searchConditions)) {
+                    $searchValue = $this->_paginateFilterValue;
+                    $this->where(function ($query) use ($searchConditions, $searchValue) {
+                        foreach ($searchConditions as $index => $column) {
+                            if ($index === 0) {
+                                $query->where($column, 'LIKE', '%' . $searchValue . '%');
+                            } else {
+                                $query->orWhere($column, 'LIKE', '%' . $searchValue . '%');
+                            }
+                        }
+                    });
+                }
+            }
+
+            if (!$this->_isRawQuery) {
+                // Build the final SELECT query string
+                $this->_buildSelectQuery();
+
+                // Count total rows after filter
+                if (!empty($this->_paginateFilterValue)) {
+                    $this->_setProfilerIdentifier('count_filtered'); // set new profiler
+                    $totalFiltered = $this->count();
+                    $this->_setProfilerIdentifier(); // reset back to paginate profiler
+                }
+            }
 
             // Add LIMIT and OFFSET clauses to the main query
             $this->_query = $this->_getLimitOffsetPaginate($this->_query, $limit, $start);
@@ -1889,8 +1932,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             $paginate = [
                 'draw' => $draw,
-                'recordsTotal' => $total ?? 0,
-                'recordsFiltered' => $total ?? 0,
+                'recordsTotal' => $totalRecords ?? 0,
+                'recordsFiltered' => $totalFiltered ?? 0,
                 'data' => $this->_safeOutputSanitize($result) ?? null,
             ];
         } catch (\PDOException $e) {
@@ -1939,38 +1982,17 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $draw = trim($dataPost['draw']);
         $start = trim($dataPost['start']);
         $limit = trim($dataPost['length']);
-        $searchValue = !empty($dataPost['search']['value']) ? trim($dataPost['search']['value']) : '';
+        $this->_paginateFilterValue = !empty($dataPost['search']['value']) ? trim($dataPost['search']['value']) : '';
         $orderBy = !empty($dataPost['order'][0]) ? $dataPost['order'][0] : false;
 
-        $columns = $this->_paginateColumn;
-        if (!empty($searchValue)) {
-
-            if (empty($columns)) {
-                // Query to get all columns from the table based on database type
-                $columns = $this->getTableColumns();
-            }
-
-            // Build search conditions with OR logic
-            $searchConditions = [];
-            foreach ($columns as $column) {
-                $searchConditions[] = trim($column);
-            }
-
-            if (!empty($searchConditions)) {
-                $this->where(function ($query) use ($searchConditions, $searchValue) {
-                    foreach ($searchConditions as $index => $column) {
-                        if ($index === 0) {
-                            $query->where($column, 'LIKE', '%' . $searchValue . '%');
-                        } else {
-                            $query->orWhere($column, 'LIKE', '%' . $searchValue . '%');
-                        }
-                    }
-                });
-            }
+        if (empty($this->_paginateColumn)) {
+            // Query to get all columns from the table based on database type
+            $this->_paginateColumn = $this->getTableColumns();
         }
 
-        if ($orderBy && !empty($columns)) {
-            $this->orderBy($columns[$orderBy['column']] ?? $columns[0], $orderBy['dir']);
+        if ($orderBy && !empty($this->_paginateColumn)) {
+            // $this->orderBy = null; // reset orderBy
+            $this->orderBy($this->_paginateColumn[$orderBy['column']] ?? $this->_paginateColumn[0], strtoupper($orderBy['dir']));
         }
 
         return $this->paginate($start, $limit, $draw);
@@ -3382,33 +3404,167 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Logs database errors and throws an exception.
+     * This function handles various types of database errors by logging comprehensive
+     * error information and throwing appropriate exceptions with proper error context.
      *
-     * This function handles database errors by logging the error message and code,
-     * and then throws a new exception with the details.
-     *
-     * @param \Exception $e The exception object representing the database error.
-     * @param string $function (optional) The name of the function where the error occurred.
-     * @param string $customMessage (optional) The description of error.
-     * @throws \Exception A new exception with details from the database error.
+     * @param \Throwable $e The throwable object (Exception, Error, PDOException, etc.)
+     * @param string $function The name of the function where the error occurred
+     * @param string $customMessage Custom error description prefix
+     * @param array $context Additional context data for logging
+     * @param bool $rethrow Whether to rethrow the exception (default: true)
+     * @throws \Exception|\PDOException The appropriate exception based on the original error type
      */
-    protected function db_error_log(\Exception $e, $function = '', $customMessage = 'Error executing')
-    {
+    protected function db_error_log(
+        \Throwable $e,
+        string $function = '',
+        string $customMessage = 'Database error occurred',
+        array $context = [],
+        bool $rethrow = true
+    ) {
         try {
-            // Log the error message and code
+            // Normalize error code to ensure it's an integer
+            $errorCode = is_numeric($e->getCode()) ? (int) $e->getCode() : crc32((string) $e->getCode());
+
+            // Format error message consistently
+            $functionPart = $function ? "'{$function}()'" : 'unknown function';
+            $formattedMessage = "{$customMessage} in {$functionPart}: " . $e->getMessage();
+
+            // Extract PDO specific information if available
+            $pdoErrorInfo = null;
+            if ($e instanceof \PDOException && isset($e->errorInfo)) {
+                $pdoErrorInfo = [
+                    'sqlstate' => $e->errorInfo[0] ?? null,
+                    'driver_code' => $e->errorInfo[1] ?? null,
+                    'driver_message' => $e->errorInfo[2] ?? null,
+                ];
+            }
+
+            // Get formatted stack trace with limited depth
+            $trace = $e->getTrace();
+            $formattedTrace = [];
+            foreach (array_slice($trace, 0, 5) as $index => $frame) {
+                $formattedTrace[] = [
+                    'step' => $index + 1,
+                    'file' => $frame['file'] ?? 'unknown',
+                    'line' => $frame['line'] ?? 'unknown',
+                    'function' => $frame['function'] ?? 'unknown',
+                    'class' => $frame['class'] ?? null,
+                ];
+            }
+
+            // Build comprehensive error information
             $this->_error = [
-                'code' => (int) $e->getCode(),
-                'message' => "$customMessage '{$function}()': " . $e->getMessage(),
+                'timestamp' => date('Y-m-d H:i:s'),
+                'type' => get_class($e),
+                'code' => $errorCode,
+                'message' => $formattedMessage,
+                'original_message' => $e->getMessage(),
+                'function' => $function,
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $formattedTrace,
+                'context' => $context,
             ];
 
-            // log_message('error', "db->{$function}() : " . $e->getMessage());
-            $logger = new Logger(__DIR__ . '/../../../logs/database/error.log');
-            $logger->log_error('Database error occurred.' . json_encode($this->_error, JSON_PRETTY_PRINT));
+            // Add PDO specific information if available
+            if ($pdoErrorInfo) {
+                $this->_error['pdo_error_info'] = $pdoErrorInfo;
+            }
 
-            // Throw a new exception with formatted message and code
-            throw new \Exception("$customMessage '{$function}()': " . $e->getMessage(), (int) $e->getCode());
-        } catch (\Exception $e) {
-            throw new \Exception('Database error occurred.', 0, $e);
+            // Determine log level based on exception type
+            $logLevel = match (true) {
+                $e instanceof \PDOException => 'CRITICAL',
+                $e instanceof \Error => 'FATAL',
+                $e instanceof \InvalidArgumentException => 'WARNING',
+                default => 'ERROR'
+            };
+
+            // Check if error should be considered critical
+            $isCritical = $e instanceof \PDOException ||
+                $e instanceof \Error ||
+                stripos($e->getMessage(), 'connection') !== false ||
+                stripos($e->getMessage(), 'timeout') !== false;
+
+            // Log the error with comprehensive details
+            try {
+                $logger = new Logger(__DIR__ . '/../../../logs/database/error.log');
+
+                $logData = [
+                    'level' => $logLevel,
+                    'error_details' => $this->_error,
+                    'server_info' => [
+                        'php_version' => PHP_VERSION,
+                        'memory_usage' => memory_get_usage(true),
+                        'request_uri' => $_SERVER['REQUEST_URI'] ?? 'CLI',
+                        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
+                    ],
+                ];
+
+                $logMessage = sprintf(
+                    "[%s] %s - %s\nDetails: %s",
+                    $this->_error['type'],
+                    $this->_error['message'],
+                    $this->_error['file'] . ':' . $this->_error['line'],
+                    json_encode($logData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+                );
+
+                $logger->log_error($logMessage);
+
+                // Also log to system error log for critical errors
+                if ($isCritical) {
+                    $errorLogPath = __DIR__ . '/../../../logs/database/error.log';
+                    error_log("Critical Database Error: " . $this->_error['message'] . PHP_EOL, 3, $errorLogPath);
+                }
+            } catch (\Throwable $logException) {
+                // Fallback to system error log if custom logger fails - use same file
+                $errorLogPath = __DIR__ . '/../../../logs/database/error.log';
+                error_log("Database error logging failed: " . $logException->getMessage() . PHP_EOL, 3, $errorLogPath);
+                error_log("Original error: " . $e->getMessage() . PHP_EOL, 3, $errorLogPath);
+            }
+
+            // Optionally rethrow the exception with appropriate type
+            if ($rethrow) {
+                // Preserve original exception type when possible
+                switch (true) {
+                    case $e instanceof \PDOException:
+                        throw new \PDOException($formattedMessage, $errorCode, $e);
+
+                    case $e instanceof \InvalidArgumentException:
+                        throw new \InvalidArgumentException($formattedMessage, $errorCode, $e);
+
+                    case $e instanceof \RuntimeException:
+                        throw new \RuntimeException($formattedMessage, $errorCode, $e);
+
+                    case $e instanceof \Error:
+                        throw new \Exception($formattedMessage, $errorCode, $e);
+
+                    default:
+                        throw new \Exception($formattedMessage, $errorCode, $e);
+                }
+            }
+        } catch (\Throwable $loggingError) {
+            // Fallback error handling if main processing fails
+            $this->_error = [
+                'timestamp' => date('Y-m-d H:i:s'),
+                'type' => get_class($e),
+                'code' => is_numeric($e->getCode()) ? (int) $e->getCode() : 0,
+                'message' => 'Database error occurred (processing failed): ' . $e->getMessage(),
+                'processing_error' => $loggingError->getMessage(),
+            ];
+
+            // Fallback to system error log
+            $errorLogPath = __DIR__ . '/../../../logs/database/error.log';
+            error_log("Database error processing failed: " . $loggingError->getMessage() . PHP_EOL, 3, $errorLogPath);
+            error_log("Original database error: " . $e->getMessage() . PHP_EOL, 3, $errorLogPath);
+
+            // Still throw the original exception if rethrowing is enabled
+            if ($rethrow) {
+                throw new \Exception(
+                    'Database error occurred (processing failed): ' . $e->getMessage(),
+                    is_numeric($e->getCode()) ? (int) $e->getCode() : 0,
+                    $e
+                );
+            }
         }
     }
 
@@ -3423,7 +3579,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param string $comparison The comparison operator (EXISTS/NOT EXISTS)
      * @return $this
      */
-    private function _buildWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null, string $operator = 'AND', string $comparison = 'EXISTS') 
+    private function _buildWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null, string $operator = 'AND', string $comparison = 'EXISTS')
     {
         // Create a new query builder instance for the subquery
         $subQueryBuilder = clone $this;
@@ -3465,7 +3621,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'AND', 'EXISTS');
     }
 
-    public function orWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null) 
+    public function orWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
     {
         return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'OR', 'EXISTS');
     }

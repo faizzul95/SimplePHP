@@ -351,7 +351,6 @@ class MySQLDriver extends BaseDatabase
     public function count($table = null)
     {
         try {
-
             if (!empty($table)) {
                 $this->table = $table;
             }
@@ -359,26 +358,63 @@ class MySQLDriver extends BaseDatabase
             // Start profiler for performance measurement
             $this->_startProfiler(__FUNCTION__);
 
-            // Check if query is empty then generate it first.
+            // Check if query is empty then generate it first
             if (empty($this->_query)) {
                 $this->_buildSelectQuery();
             }
 
+            // Extract FROM clause (avoiding subqueries in SELECT)
             if (preg_match('/^(.*?)\bFROM\b(?![^(]*\))/i', $this->_query, $matches, PREG_OFFSET_CAPTURE)) {
                 $mainFromPos = $matches[1][1] + strlen($matches[1][0]);
                 $fromClause = substr($this->_query, $mainFromPos);
 
+                // Clean the FROM clause by removing ORDER BY, LIMIT, OFFSET
                 $cleanFromClause = preg_replace(
                     '/\s+(?:ORDER\s+BY\s+[^;]*?(?=\s*(?:LIMIT|OFFSET|;|$))|LIMIT\s+\d+(?:\s+OFFSET\s+\d+)?|OFFSET\s+\d+)(?=\s*(?:;|$))/i',
                     '',
                     $fromClause
                 );
 
-                $sqlTotal = 'SELECT COUNT(*) as count ' . trim($cleanFromClause);
+                // Check if query contains GROUP BY or HAVING clauses
+                $hasGroupBy = stripos($cleanFromClause, 'GROUP BY') !== false;
+                $hasHaving = stripos($cleanFromClause, 'HAVING') !== false;
+
+                if ($hasGroupBy || $hasHaving) {
+                    // For GROUP BY/HAVING queries, wrap original query as subquery
+                    // Remove ORDER BY from original query first
+                    $originalQueryClean = preg_replace(
+                        '/\s+ORDER\s+BY\s+[^;]*?(?=\s*(?:LIMIT|OFFSET|;|$))/i',
+                        '',
+                        $this->_query
+                    );
+
+                    // Remove LIMIT/OFFSET from original query
+                    $originalQueryClean = preg_replace(
+                        '/\s+(?:LIMIT\s+\d+(?:\s+OFFSET\s+\d+)?|OFFSET\s+\d+)(?=\s*(?:;|$))/i',
+                        '',
+                        $originalQueryClean
+                    );
+
+                    $sqlTotal = 'SELECT COUNT(*) as count FROM (' . trim($originalQueryClean) . ') AS count_subquery';
+                } else {
+                    // For simple queries without GROUP BY/HAVING
+                    $sqlTotal = 'SELECT COUNT(*) as count ' . trim($cleanFromClause);
+                }
+            } else {
+                throw new \InvalidArgumentException('Invalid query: FROM clause not found');
+            }
+
+            // Validate generated SQL
+            if (empty(trim($sqlTotal))) {
+                throw new \RuntimeException('Generated count query is empty');
             }
 
             // Execute the total count query
             $stmtTotal = $this->pdo[$this->connectionName]->prepare($sqlTotal);
+
+            if ($stmtTotal === false) {
+                throw new \RuntimeException('Failed to prepare count query');
+            }
 
             // Bind parameters if any
             if (!empty($this->_binds)) {
@@ -391,17 +427,49 @@ class MySQLDriver extends BaseDatabase
             // Generate the full query string with bound values 
             $this->_generateFullQuery($sqlTotal, $this->_binds);
 
-            $stmtTotal->execute();
+            // Execute with error handling
+            if (!$stmtTotal->execute()) {
+                $errorInfo = $stmtTotal->errorInfo();
+                throw new \RuntimeException('Query execution failed: ' . $errorInfo[2]);
+            }
+
             $totalResult = $stmtTotal->fetch(\PDO::FETCH_ASSOC);
+
+            if ($totalResult === false) {
+                throw new \RuntimeException('Failed to fetch count result');
+            }
 
             // Stop profiler
             $this->_stopProfiler();
 
-            return $totalResult['count'] ?? 0;
+            return (int)($totalResult['count'] ?? 0);
         } catch (\PDOException $e) {
-            // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e; // Re-throw the exception
+            // Enhanced error logging
+            $context = [
+                'method' => __FUNCTION__,
+                'table' => $this->table ?? 'unknown',
+                'original_query' => $this->_query ?? 'not_available',
+                'generated_count_query' => $sqlTotal ?? 'not_generated',
+                'binds' => $this->_binds ?? [],
+                'has_group_by' => isset($hasGroupBy) ? $hasGroupBy : 'unknown',
+                'has_having' => isset($hasHaving) ? $hasHaving : 'unknown'
+            ];
+
+            $this->db_error_log($e, __FUNCTION__, $context);
+
+            // Stop profiler on error
+            if (method_exists($this, '_stopProfiler')) {
+                $this->_stopProfiler();
+            }
+
+            throw new \RuntimeException('Database error in count(): ' . $e->getMessage(), 0, $e);
+        } catch (\Exception $e) {
+            // Stop profiler on error
+            if (method_exists($this, '_stopProfiler')) {
+                $this->_stopProfiler();
+            }
+
+            throw new \RuntimeException('Unexpected error in count(): ' . $e->getMessage(), 0, $e);
         }
     }
 

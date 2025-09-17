@@ -53,7 +53,7 @@ if (!function_exists('db')) {
         $conn_db = null;
 
         if (!isset($dbObject) || empty($dbObject)) {
-            $logger->log('Connection : Database object is not initialized.', Logger::LOG_LEVEL_ERROR);
+            $logger->log_error('Connection : Database object is not initialized.');
             return null;
         }
 
@@ -62,6 +62,17 @@ if (!function_exists('db')) {
             $conn_db = $dbObject[$connectionName]->connect($connectionName);
         } catch (Exception $e) {
             $logger->logException($e);
+        }
+
+        if (!empty($conn_db)) {
+            // This use to load the scope/macro db
+            loadScopeMacroDBFunctions(
+                $conn_db,
+                [], // Put the file name here, Eg : ScopeQueryController.php
+                ['ScopeMacroQuery'], // put the folder name here
+                '../controllers/', // Base Path for the files or folder will be load. 
+                false // The error log message
+            );
         }
 
         return $conn_db;

@@ -196,7 +196,283 @@ function delete($request) {
 
 ## Database Usage
 
-SimplePHP provides an elegant query builder for database operations:
+SimplePHP provides an elegant query builder for database operations with Laravel-style Query Scopes and Macros:
+
+### Basic Queries
+
+### Query Scopes and Macros
+
+SimplePHP provides Laravel-style query scopes and macros to help you reuse common query patterns:
+
+#### Query Scopes
+
+Scopes allow you to reuse common query constraints across your application:
+
+```php
+// Available scopes
+$users = db()->table('users')
+    ->withTrashed() // Include soft-deleted records
+    ->onlyTrashed() // Only get soft-deleted records
+    ->latest() // Order by created_at DESC
+    ->recent(7) // Get records from last 7 days
+    ->get();
+
+// You can combine multiple scopes
+$recentDeletedUsers = db()->table('users')
+    ->onlyTrashed()
+    ->recent(30)
+    ->get();
+```
+
+### Configuring Query Scopes
+
+Query scopes in SimplePHP can be configured in multiple ways:
+
+#### 1. Global Configuration
+
+In your `app.php`, the scopes are loaded automatically when initializing the database connection:
+
+```php
+if (!empty($conn_db)) {
+    loadScopeMacroDBFunctions(
+        $conn_db,
+        [], // Individual scope files
+        ['ScopeMacroQuery'], // Folder containing scope definitions
+        '../controllers/', 
+        false
+    );
+}
+```
+
+#### 2. Scope Definition Structure
+
+Create your scopes in `controllers/ScopeMacroQuery/Scope.php`:
+
+```php
+function scopeQuery($db, $includeOnly = ['*'])
+{
+    try {
+        // Define all available scopes
+        $listOfScope = [
+            // Soft Delete Scopes
+            'withTrashed' => function ($table = null) {
+                return $this->whereNull(empty($table) ? 'deleted_at' : "{$table}.deleted_at");
+            },
+            'onlyTrashed' => function ($table = null) {
+                return $this->whereNotNull(empty($table) ? 'deleted_at' : "{$table}.deleted_at");
+            },
+            
+            // Date-based Scopes
+            'latest' => function ($column = 'created_at') {
+                return $this->orderBy($column, 'DESC');
+            },
+            'oldest' => function ($column = 'created_at') {
+                return $this->orderBy($column, 'ASC');
+            },
+            'recent' => function (int $days = 7) {
+                $date = date('Y-m-d', strtotime("-{$days} days"));
+                return $this->whereDate('created_at', '>=', $date);
+            },
+            
+            // Status Scopes
+            'active' => function ($column = 'status') {
+                return $this->where($column, 1);
+            },
+            'inactive' => function ($column = 'status') {
+                return $this->where($column, 0);
+            },
+            
+            // Time-based Scopes
+            'thisWeek' => function ($column = 'created_at') {
+                return $this->whereBetween($column, [
+                    date('Y-m-d', strtotime('monday this week')),
+                    date('Y-m-d', strtotime('sunday this week'))
+                ]);
+            },
+            'thisMonth' => function ($column = 'created_at') {
+                return $this->whereMonth($column, date('m'))
+                           ->whereYear($column, date('Y'));
+            },
+            'thisYear' => function ($column = 'created_at') {
+                return $this->whereYear($column, date('Y'));
+            },
+            
+            // Verification Scopes
+            'verified' => function ($column = 'email_verified_at') {
+                return $this->whereNotNull($column);
+            },
+            'unverified' => function ($column = 'email_verified_at') {
+                return $this->whereNull($column);
+            },
+            
+            // Role-based Scopes
+            'admin' => function () {
+                return $this->where('role', 'admin');
+            },
+            'notAdmin' => function () {
+                return $this->where('role', '!=', 'admin');
+            }
+        ];
+
+        // Filter scopes if needed
+        if (!in_array('*', $includeOnly) && !empty($includeOnly)) {
+            $tempScopeArr = [];
+            foreach ($includeOnly as $scope) {
+                if (isset($listOfScope[$scope])) {
+                    $tempScopeArr[$scope] = $listOfScope[$scope];
+                }
+            }
+            $listOfScope = $tempScopeArr;
+        }
+
+        // Register scopes
+        if (!empty($listOfScope)) {
+            $db->scopes($listOfScope);
+        }
+    } catch (Exception $e) {
+        logger()->logException($e);
+    }
+}
+```
+
+### Using Query Scopes
+
+Here are comprehensive examples of using scopes in your queries:
+
+```php
+// Basic Usage Examples
+
+// Get all active users
+$activeUsers = db()->table('users')
+    ->active()
+    ->get();
+
+// Get recently deleted users from last 14 days
+$recentlyDeleted = db()->table('users')
+    ->onlyTrashed()
+    ->recent(14)
+    ->get();
+
+// Get verified users registered this month
+$newVerifiedUsers = db()->table('users')
+    ->verified()
+    ->thisMonth()
+    ->get();
+
+// Complex Examples
+
+// Get active admins who registered this week
+$newAdmins = db()->table('users')
+    ->active()
+    ->admin()
+    ->thisWeek()
+    ->get();
+
+// Get unverified users who registered last 30 days
+$unverifiedUsers = db()->table('users')
+    ->unverified()
+    ->recent(30)
+    ->orderBy('created_at', 'DESC')
+    ->get();
+
+// Get inactive non-admin users
+$inactiveRegularUsers = db()->table('users')
+    ->inactive()
+    ->notAdmin()
+    ->get();
+
+// Scopes with Relationships
+$activeUsersWithPosts = db()->table('users')
+    ->active()
+    ->with('posts', 'posts', 'user_id', 'id', function($query) {
+        $query->latest() // Using scope in relationship
+              ->withTrashed(); // Including soft-deleted posts
+    })
+    ->get();
+
+// Scopes with Parameters
+$customDateRange = db()->table('orders')
+    ->latest('order_date') // Using custom column
+    ->recent(90) // Last 90 days
+    ->get();
+
+// Combining Multiple Scopes with Regular Query Builder Methods
+$result = db()->table('users')
+    ->select('id', 'name', 'email', 'created_at')
+    ->active()
+    ->verified()
+    ->thisMonth()
+    ->where('subscription_status', 'premium')
+    ->latest()
+    ->paginate(20);
+```
+
+#### Query Macros
+
+Macros let you define custom query methods:
+
+```php
+// Using the whereLike macro for easier LIKE queries
+$users = db()->table('users')
+    ->whereLike('name', 'john') // Equivalent to ->where('name', 'LIKE', '%john%')
+    ->get();
+```
+
+### How to Define Custom Scopes and Macros
+
+Create a new file in `controllers/ScopeMacroQuery/Scope.php` for scopes:
+
+```php
+function scopeQuery($db, $includeOnly = ['*'])
+{
+    $listOfScope = [
+        'withTrashed' => function ($table = null) {
+            return $this->whereNull(empty($table) ? 'deleted_at' : "{$table}.deleted_at");
+        },
+        'onlyTrashed' => function ($table = null) {
+            return $this->whereNotNull(empty($table) ? 'deleted_at' : "{$table}.deleted_at");
+        },
+        'active' => function () {
+            return $this->where('status', 1);
+        },
+        'inactive' => function () {
+            return $this->where('status', 0);
+        }
+    ];
+
+    // Register scopes
+    if (!empty($listOfScope)) {
+        $db->scopes($listOfScope);
+    }
+}
+```
+
+Create a new file in `controllers/ScopeMacroQuery/Macro.php` for macros:
+
+```php
+function macroQuery($db, $includeOnly = ['*'])
+{
+    $listOfMacros = [
+        'whereLike' => function ($column, $value) {
+            return $this->where($column, 'LIKE', "%{$value}%");
+        },
+        'whereNotLike' => function ($column, $value) {
+            return $this->where($column, 'NOT LIKE', "%{$value}%");
+        },
+        'whereStartsWith' => function ($column, $value) {
+            return $this->where($column, 'LIKE', "{$value}%");
+        },
+        'whereEndsWith' => function ($column, $value) {
+            return $this->where($column, 'LIKE', "%{$value}");
+        }
+    ];
+
+    // Register macros
+    if (!empty($listOfMacros)) {
+        $db->macros($listOfMacros);
+    }
+}
+```
 
 ### Basic Queries (Builder)
 

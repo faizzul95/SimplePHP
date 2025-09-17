@@ -229,7 +229,12 @@ class PageRouter
         $permission = $this->config['permission'] ?? null;
 
         if (!empty($spage)) {
-            $titlePage = $this->config['mainDesc'] ?? '';
+            $formattedPage = $currentPage;
+            if (strpos($currentPage, '_') !== false) {
+                $words = array_map('ucfirst', explode('_', $currentPage));
+                $formattedPage = implode(' ', $words);
+            }
+            $titlePage = $this->config['mainDesc'] ?? $formattedPage;
             $titleSubPage = $this->config['desc'] ?? '';
         } else {
             $titlePage = $this->config['desc'] ?? '';
