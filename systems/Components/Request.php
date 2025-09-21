@@ -7,6 +7,7 @@ class Request
     protected static $data;
     protected static $files;
     protected $secureRequest = true;
+    protected $dataValidate = [];
 
     /**
      * Constructor
@@ -1153,6 +1154,21 @@ class Request
         return false;
     }
 
+    public function setData($data)
+    {
+        if (empty($data)) {
+            throw new \InvalidArgumentException('Input data cannot be empty.');
+        }
+
+        if (!is_array($data)) {
+            throw new \InvalidArgumentException('Input data must be an array.');
+        }
+
+        $this->dataValidate = $data;
+
+        return $this;
+    }
+
     public function validate($rules, $customMessage = null)
     {
         if (empty($rules) || !is_array($rules)) {
@@ -1160,11 +1176,13 @@ class Request
         }
 
         $keys = array_keys($rules);
-        $allData = array_merge(
-            $_GET,
-            $_POST,
-            $this->getInputStreamData()
-        );
+        $allData = !empty($this->dataValidate)
+            ? $this->dataValidate
+            : array_merge(
+                $_GET,
+                $_POST,
+                $this->getInputStreamData()
+            );
 
         // Prepare data based on rule keys
         $data = [];

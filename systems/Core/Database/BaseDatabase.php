@@ -2134,7 +2134,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $response = [
                 'code' => $success ? 201 : 422,
                 'id' => $lastInsertId,
-                'message' => $success ? 'Data inserted successfully' : 'Failed to insert data',
+                'message' => $success ? 'Data inserted' : 'Failed to insert data',
                 'data' => $this->_safeOutputSanitize($sanitizeData),
                 'action' => 'create'
             ];
@@ -2306,7 +2306,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $response = [
                 'code' => $success ? 200 : 422,
                 'affected_rows' => $affectedRows,
-                'message' => $success ? 'Data updated successfully' : 'Failed to update data',
+                'message' => $success ? 'Data updated' : 'Failed to update data',
                 'data' => $this->_safeOutputSanitize($sanitizeData),
                 'action' => 'update'
             ];
@@ -2482,7 +2482,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $response = [
                 'code' => $success ? 200 : 422,
                 'affected_rows' => $affectedRows,
-                'message' => $success ? 'Data deleted successfully' : 'Failed to delete data',
+                'message' => $success ? 'Data deleted' : 'Failed to delete data',
                 'action' => 'delete'
             ];
 
