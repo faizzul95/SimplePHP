@@ -1684,6 +1684,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             'connectionName' => $this->connectionName,
             'table' => $this->table,
             'column' => $this->column,
+            'distinct' => $this->distinct,
             'orderBy' => $this->orderBy,
             'groupBy' => $this->groupBy,
             'where' => $this->where,
@@ -1693,7 +1694,19 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             'secureOutput' => $this->_secureOutput,
             'returnType' => $this->returnType,
             'isRawQuery' => $this->_isRawQuery,
+            'limit' => $this->limit,
+            'offset' => $this->offset,
         ];
+
+        // Check if a limit was set before chunking
+        $maxLimit = null;
+        if (!empty($originalState['limit'])) {
+            // Extract the numeric limit value from the limit string
+            preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
+            $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
+        }
+
+        $totalFetched = 0;
 
         while (true) {
             // Restore the original query state
@@ -1701,6 +1714,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->connectionName = $originalState['connectionName'];
             $this->table = $originalState['table'];
             $this->column = $originalState['column'];
+            $this->distinct = $originalState['distinct'];
             $this->orderBy = $originalState['orderBy'];
             $this->groupBy = $originalState['groupBy'];
             $this->where = $originalState['where'];
@@ -1713,8 +1727,18 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             $this->_setProfilerIdentifier('chunk_size' . $size . '_offset' . $offset);
 
+            // Calculate the chunk size based on max limit if set
+            $currentChunkSize = $size;
+            if ($maxLimit !== null) {
+                $remaining = $maxLimit - $totalFetched;
+                if ($remaining <= 0) {
+                    break; // Reached the limit
+                }
+                $currentChunkSize = min($size, $remaining);
+            }
+
             // Apply limit and offset
-            $this->limit($size)->offset($offset);
+            $this->limit($currentChunkSize)->offset($offset);
 
             // Get results 
             $results = $this->get();
@@ -1723,11 +1747,18 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 break;
             }
 
+            $totalFetched += count($results);
+
             if (call_user_func($callback, $results) === false) {
                 break;
             }
 
-            $offset += $size;
+            // If we've fetched less than the chunk size or reached max limit, we're done
+            if (count($results) < $currentChunkSize || ($maxLimit !== null && $totalFetched >= $maxLimit)) {
+                break;
+            }
+
+            $offset += $currentChunkSize;
 
             // Clear the results to free memory
             unset($results);
@@ -1752,6 +1783,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             'connectionName' => $this->connectionName,
             'table' => $this->table,
             'column' => $this->column,
+            'distinct' => $this->distinct,
             'orderBy' => $this->orderBy,
             'groupBy' => $this->groupBy,
             'where' => $this->where,
@@ -1761,7 +1793,19 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             'secureOutput' => $this->_secureOutput,
             'returnType' => $this->returnType,
             'isRawQuery' => $this->_isRawQuery,
+            'limit' => $this->limit,
+            'offset' => $this->offset,
         ];
+
+        // Check if a limit was set before chunking
+        $maxLimit = null;
+        if (!empty($originalState['limit'])) {
+            // Extract the numeric limit value from the limit string
+            preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
+            $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
+        }
+
+        $totalFetched = 0;
 
         while (true) {
             // Restore the original query state
@@ -1769,6 +1813,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->connectionName = $originalState['connectionName'];
             $this->table = $originalState['table'];
             $this->column = $originalState['column'];
+            $this->distinct = $originalState['distinct'];
             $this->orderBy = $originalState['orderBy'];
             $this->groupBy = $originalState['groupBy'];
             $this->where = $originalState['where'];
@@ -1781,8 +1826,18 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             $this->_setProfilerIdentifier('cursor_size' . $chunkSize . '_offset' . $offset);
 
+            // Calculate the chunk size based on max limit if set
+            $currentChunkSize = $chunkSize;
+            if ($maxLimit !== null) {
+                $remaining = $maxLimit - $totalFetched;
+                if ($remaining <= 0) {
+                    break; // Reached the limit
+                }
+                $currentChunkSize = min($chunkSize, $remaining);
+            }
+
             // Apply limit and offset
-            $this->limit($chunkSize)->offset($offset);
+            $this->limit($currentChunkSize)->offset($offset);
 
             // Get results 
             $results = $this->get();
@@ -1793,9 +1848,20 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             foreach ($results as $row) {
                 yield $row;
+                $totalFetched++;
+                
+                // Stop yielding if we've reached the max limit
+                if ($maxLimit !== null && $totalFetched >= $maxLimit) {
+                    break 2; // Break out of both foreach and while
+                }
             }
 
-            $offset += $chunkSize;
+            // If we've fetched less than the chunk size, we're done
+            if (count($results) < $currentChunkSize) {
+                break;
+            }
+
+            $offset += $currentChunkSize;
 
             // Clear the results to free memory
             unset($results);
@@ -1814,20 +1880,73 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function lazy($chunkSize = 1000)
     {
         try {
+            // Store the original query state before lazy loading
+            $originalState = [
+                'driver' => $this->driver,
+                'connectionName' => $this->connectionName,
+                'table' => $this->table,
+                'column' => $this->column,
+                'distinct' => $this->distinct,
+                'orderBy' => $this->orderBy,
+                'groupBy' => $this->groupBy,
+                'where' => $this->where,
+                'joins' => $this->joins,
+                'binds' => $this->_binds,
+                'relations' => $this->relations,
+                'secureOutput' => $this->_secureOutput,
+                'returnType' => $this->returnType,
+                'isRawQuery' => $this->_isRawQuery,
+                'limit' => $this->limit,
+                'offset' => $this->offset,
+            ];
 
-            $obj = $this;
+            // Store the original limit if set
+            $maxLimit = null;
+            if (!empty($originalState['limit'])) {
+                // Extract the numeric limit value from the limit string
+                preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
+                $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
+            }
+
+            $totalFetched = 0;
 
             // Data source function
-            $source = function ($size, $offset) use ($obj) {
-                $db = clone $obj;
+            $source = function ($size, $offset) use ($originalState, $maxLimit, &$totalFetched) {
+                // Restore the original query state
+                $this->driver = $originalState['driver'];
+                $this->connectionName = $originalState['connectionName'];
+                $this->table = $originalState['table'];
+                $this->column = $originalState['column'];
+                $this->distinct = $originalState['distinct'];
+                $this->orderBy = $originalState['orderBy'];
+                $this->groupBy = $originalState['groupBy'];
+                $this->where = $originalState['where'];
+                $this->joins = $originalState['joins'];
+                $this->_binds = $originalState['binds'];
+                $this->relations = $originalState['relations'];
+                $this->_secureOutput = $originalState['secureOutput'];
+                $this->returnType = $originalState['returnType'];
+                $this->_isRawQuery = $originalState['isRawQuery'];
 
-                // Choose pagination strategy
-                $db->limit($size)->offset($offset);
+                // Calculate the chunk size based on max limit if set
+                $currentChunkSize = $size;
+                if ($maxLimit !== null) {
+                    $remaining = $maxLimit - $totalFetched;
+                    if ($remaining <= 0) {
+                        return []; // No more data to fetch
+                    }
+                    $currentChunkSize = min($size, $remaining);
+                }
+
+                // Apply limit and offset
+                $this->limit($currentChunkSize)->offset($offset);
 
                 // Execute the query
-                $results = $db->get();
+                $results = $this->get();
 
                 if (empty($results)) return [];
+
+                $totalFetched += count($results);
 
                 return is_array($results) ? $results : [$results];
             };
@@ -1907,7 +2026,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 }
             }
 
-             // Add LIMIT and OFFSET clauses to the main query
+            // Add LIMIT and OFFSET clauses to the main query
             $this->_query = $this->_getLimitOffsetPaginate($this->_query, $limit, $start);
 
             // Execute the main query
@@ -1998,20 +2117,115 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->paginate($start, $limit, $draw);
     }
 
+    /**
+     * Extract a single column's values from the query results.
+     * Supports dot notation for nested relationships and array access.
+     * 
+     * @param string $column The column to pluck (supports dot notation)
+     * @param string|null $keyColumn Optional column to use as keys (supports dot notation)
+     * @return array An array of values, optionally keyed by $keyColumn
+     */
     public function pluck($column, $keyColumn = null)
     {
         $result = [];
 
-        $this->select($keyColumn ? [$keyColumn, $column] : [$column])
-            ->chunk(1000, function ($rows) use (&$result, $column, $keyColumn) {
+        // Check if dot notation is used
+        $hasDotNotation = strpos($column, '.') !== false || ($keyColumn && strpos($keyColumn, '.') !== false);
+
+        if ($hasDotNotation) {
+            // Process with eager loading support
+            $this->chunk(1000, function ($rows) use (&$result, $column, $keyColumn) {
                 foreach ($rows as $row) {
-                    if ($keyColumn !== null && isset($row[$keyColumn])) {
-                        $result[$row[$keyColumn]] = $row[$column];
+                    // Get nested value inline
+                    $value = $row;
+                    if (strpos($column, '.') !== false) {
+                        $segments = explode('.', $column);
+                        foreach ($segments as $segmentIndex => $segment) {
+                            if (is_array($value)) {
+                                if (array_key_exists($segment, $value)) {
+                                    $value = $value[$segment];
+                                    
+                                    // If this is an array of items (from with() relationship) and not the last segment
+                                    // Get the first item to continue traversal
+                                    if (is_array($value) && !empty($value) && $segmentIndex < count($segments) - 1) {
+                                        $firstKey = array_key_first($value);
+                                        // Check if it's a numeric array (list of items)
+                                        if (is_numeric($firstKey)) {
+                                            $value = $value[$firstKey] ?? null;
+                                        }
+                                    }
+                                } else {
+                                    $value = null;
+                                    break;
+                                }
+                            } elseif (is_object($value)) {
+                                $value = $value->$segment ?? null;
+                            } else {
+                                $value = null;
+                                break;
+                            }
+                        }
                     } else {
-                        $result[] = $row[$column];
+                        $value = is_array($value) && array_key_exists($column, $value) 
+                            ? $value[$column] 
+                            : (is_object($value) && isset($value->$column) ? $value->$column : null);
+                    }
+
+                    if ($keyColumn !== null) {
+                        // Get nested key inline
+                        $key = $row;
+                        if (strpos($keyColumn, '.') !== false) {
+                            $segments = explode('.', $keyColumn);
+                            foreach ($segments as $segmentIndex => $segment) {
+                                if (is_array($key)) {
+                                    if (array_key_exists($segment, $key)) {
+                                        $key = $key[$segment];
+                                        
+                                        // If this is an array of items and not the last segment
+                                        if (is_array($key) && !empty($key) && $segmentIndex < count($segments) - 1) {
+                                            $firstKey = array_key_first($key);
+                                            if (is_numeric($firstKey)) {
+                                                $key = $key[$firstKey] ?? null;
+                                            }
+                                        }
+                                    } else {
+                                        $key = null;
+                                        break;
+                                    }
+                                } elseif (is_object($key)) {
+                                    $key = $key->$segment ?? null;
+                                } else {
+                                    $key = null;
+                                    break;
+                                }
+                            }
+                        } else {
+                            $key = is_array($key) && array_key_exists($keyColumn, $key) 
+                                ? $key[$keyColumn] 
+                                : (is_object($key) && isset($key->$keyColumn) ? $key->$keyColumn : null);
+                        }
+                        
+                        if ($key !== null) {
+                            $result[$key] = $value;
+                        }
+                    } else {
+                        $result[] = $value;
                     }
                 }
             });
+        } else {
+            // Original optimized implementation for simple columns
+            $this->select($keyColumn ? [$keyColumn, $column] : [$column])
+                ->chunk(1000, function ($rows) use (&$result, $column, $keyColumn) {
+                    foreach ($rows as $row) {
+                        if ($keyColumn !== null && isset($row[$keyColumn])) {
+                            $result[$row[$keyColumn]] = $row[$column] ?? null;
+                        } else {
+                            $result[] = $row[$column] ?? null;
+                        }
+                    }
+                });
+        }
 
         return $result;
     }
@@ -3234,7 +3448,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     {
         $columns = [];
         try {
-            $stmt = $this->pdo[$this->connectionName]->prepare("DESCRIBE {$this->schema}.{$this->table}");
+            $stmt = $this->pdo[$this->connectionName]->prepare("DESCRIBE `{$this->schema}`.`{$this->table}`");
             $stmt->execute();
             $columns = $stmt->fetchAll(\PDO::FETCH_COLUMN);
         } catch (\PDOException $e) {

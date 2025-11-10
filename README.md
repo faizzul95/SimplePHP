@@ -679,6 +679,52 @@ foreach ($users as $user) {
     echo $user['name'] . "\n";
 }
 
+// Extract single column values using pluck
+// Simple pluck - returns array of values
+$names = db()->table('users')->pluck('name');
+// Result: ['John', 'Jane', 'Mike', ...]
+
+// Pluck with key - returns associative array
+$userEmails = db()->table('users')->pluck('email', 'id');
+// Result: [1 => 'john@example.com', 2 => 'jane@example.com', ...]
+
+// Pluck with nested relationships using dot notation
+$schoolNames = db()->table('users')
+    ->withOne('school_user', 'school_users', 'user_id', 'id', function ($q) {
+        $q->withOne('school_info', 'schools', 'id', 'school_id');
+    })
+    ->pluck('school_user.school_info.name');
+// Result: ['School A', 'School B', 'School C', ...]
+
+// Pluck with multiple levels and custom keys
+$profilesBySchool = db()->table('users')
+    ->withOne('school_user', 'school_users', 'user_id', 'id', function ($q) {
+        $q->withOne('school_info', 'schools', 'id', 'school_id')
+          ->withOne('profile_info', 'school_profiles', 'id', 'school_profile_id');
+    })
+    ->pluck('school_user.profile_info.display_name', 'school_user.school_info.name');
+// Result: ['School A' => 'Admin Profile', 'School B' => 'Teacher Profile', ...]
+
+// Pluck works with array relationships (automatically takes first item)
+$firstSchoolNames = db()->table('users')
+    ->with('school_users', 'school_users', 'user_id', 'id', function ($q) {
+        $q->withOne('school_info', 'schools', 'id', 'school_id');
+    })
+    ->pluck('school_users.school_info.name');
+// Result: Gets school name from first school_user relationship
+
+// Pluck with filtering and limits
+$activeUserNames = db()->table('users')
+    ->where('status', 1)
+    ->limit(50)
+    ->pluck('name', 'id');
+
+// Use pluck with lazy loading for memory efficiency
+$allEmails = db()->table('users')
+    ->lazy(500) // Process in chunks of 500
+    ->pluck('email')
+    ->all(); // Convert lazy collection to array
+
 // Basic where
 $users = db()->table('users')->where('status', 1)->fetch();
 

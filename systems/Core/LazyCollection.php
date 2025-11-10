@@ -33,8 +33,7 @@ class LazyCollection implements \Iterator, \Countable
      * 
      * @return mixed
      */
-    #[\ReturnTypeWillChange]
-    public function current()
+    public function current(): mixed
     {
         if (!$this->itemLoaded) {
             $this->loadCurrentItem();
@@ -48,8 +47,7 @@ class LazyCollection implements \Iterator, \Countable
      * 
      * @return int
      */
-    #[\ReturnTypeWillChange]
-    public function key()
+    public function key(): mixed
     {
         return $this->position;
     }
@@ -57,8 +55,7 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Move to the next item
      */
-    #[\ReturnTypeWillChange]
-    public function next()
+    public function next(): void
     {
         $this->position++;
         $this->itemLoaded = false;
@@ -68,8 +65,7 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Rewind the collection to the beginning
      */
-    #[\ReturnTypeWillChange]
-    public function rewind()
+    public function rewind(): void
     {
         $this->position = 0;
         $this->chunkPosition = 0;
@@ -84,8 +80,7 @@ class LazyCollection implements \Iterator, \Countable
      * 
      * @return bool
      */
-    #[\ReturnTypeWillChange]
-    public function valid()
+    public function valid(): bool
     {
         if ($this->exhausted) {
             return false;
@@ -151,8 +146,7 @@ class LazyCollection implements \Iterator, \Countable
      * 
      * @return int
      */
-    #[\ReturnTypeWillChange]
-    public function count()
+    public function count(): int
     {
         if ($this->totalCount === null) {
             // We need to iterate through all items to get an accurate count for lazy collections
@@ -284,7 +278,7 @@ class LazyCollection implements \Iterator, \Countable
      * @param mixed $default
      * @return mixed
      */
-    public function first(callable $callback = null, $default = null)
+    public function first(?callable $callback = null, mixed $default = null): mixed
     {
         $this->rewind();
 
@@ -327,14 +321,145 @@ class LazyCollection implements \Iterator, \Countable
 
     /**
      * Get a value from all items by key
+     * Supports dot notation for nested values with eager loading (e.g., 'user.profile.name')
+     * Automatically handles array relationships by taking the first item
      * 
      * @param string $key
-     * @return LazyCollection
+     * @param string|null $valueKey Optional key to use as array keys
+     * @return LazyCollection|array
      */
-    public function pluck($key)
+    public function pluck($key, $valueKey = null)
     {
+        if ($valueKey !== null) {
+            // Return an associative array keyed by $valueKey
+            $result = [];
+            
+            foreach ($this as $item) {
+                // Get the key value with dot notation support
+                $keyValue = $item;
+                if (strpos($valueKey, '.') !== false) {
+                    $segments = explode('.', $valueKey);
+                    foreach ($segments as $segment) {
+                        if ($keyValue === null) {
+                            break;
+                        }
+                        
+                        if (is_array($keyValue)) {
+                            // Check if this is a numeric array (list of items from with())
+                            if (isset($keyValue[0]) && array_keys($keyValue) === range(0, count($keyValue) - 1)) {
+                                // This is a numeric array, get the first item
+                                $keyValue = $keyValue[0];
+                                
+                                // Now access the segment from the first item
+                                if (is_array($keyValue)) {
+                                    $keyValue = $keyValue[$segment] ?? null;
+                                } elseif (is_object($keyValue)) {
+                                    $keyValue = $keyValue->$segment ?? null;
+                                } else {
+                                    $keyValue = null;
+                                }
+                            } else {
+                                // This is an associative array, access normally
+                                $keyValue = $keyValue[$segment] ?? null;
+                            }
+                        } elseif (is_object($keyValue)) {
+                            $keyValue = $keyValue->$segment ?? null;
+                        } else {
+                            $keyValue = null;
+                        }
+                    }
+                } else {
+                    $keyValue = is_array($item) ? ($item[$valueKey] ?? null) : (is_object($item) ? ($item->$valueKey ?? null) : null);
+                }
+                
+                // Get the value with dot notation support
+                $value = $item;
+                if (strpos($key, '.') !== false) {
+                    $segments = explode('.', $key);
+                    foreach ($segments as $segment) {
+                        if ($value === null) {
+                            break;
+                        }
+                        
+                        if (is_array($value)) {
+                            // Check if this is a numeric array (list of items from with())
+                            if (isset($value[0]) && array_keys($value) === range(0, count($value) - 1)) {
+                                // This is a numeric array, get the first item
+                                $value = $value[0];
+                                
+                                // Now access the segment from the first item
+                                if (is_array($value)) {
+                                    $value = $value[$segment] ?? null;
+                                } elseif (is_object($value)) {
+                                    $value = $value->$segment ?? null;
+                                } else {
+                                    $value = null;
+                                }
+                            } else {
+                                // This is an associative array, access normally
+                                $value = $value[$segment] ?? null;
+                            }
+                        } elseif (is_object($value)) {
+                            $value = $value->$segment ?? null;
+                        } else {
+                            $value = null;
+                        }
+                    }
+                } else {
+                    $value = is_array($item) ? ($item[$key] ?? null) : (is_object($item) ? ($item->$key ?? null) : null);
+                }
+                
+                if ($keyValue !== null) {
+                    $result[$keyValue] = $value;
+                }
+            }
+            
+            return $result;
+        }
+        
+        // Return a LazyCollection with mapped values
         return $this->map(function ($item) use ($key) {
-            return is_array($item) ? ($item[$key] ?? null) : (is_object($item) ? ($item->$key ?? null) : null);
+            if (strpos($key, '.') === false) {
+                // Simple key access
+                return is_array($item) ? ($item[$key] ?? null) : (is_object($item) ? ($item->$key ?? null) : null);
+            }
+
+            // Handle dot notation
+            $segments = explode('.', $key);
+            $value = $item;
+            
+            foreach ($segments as $segment) {
+                if ($value === null) {
+                    return null;
+                }
+
+                // Handle array access
+                if (is_array($value)) {
+                    // Check if this is a numeric array (list of items from with())
+                    if (isset($value[0]) && array_keys($value) === range(0, count($value) - 1)) {
+                        // This is a numeric array, get the first item
+                        $value = $value[0];
+                        
+                        // Now access the segment from the first item
+                        if (is_array($value)) {
+                            $value = $value[$segment] ?? null;
+                        } elseif (is_object($value)) {
+                            $value = $value->$segment ?? null;
+                        } else {
+                            $value = null;
+                        }
+                    } else {
+                        // This is an associative array, access normally
+                        $value = $value[$segment] ?? null;
+                    }
+                } elseif (is_object($value)) {
+                    $value = $value->$segment ?? null;
+                } else {
+                    return null;
+                }
+            }
+            
+            return $value;
         });
     }
 
