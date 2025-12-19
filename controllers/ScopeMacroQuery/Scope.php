@@ -10,8 +10,9 @@
 if (!function_exists('scopeWithTrashed')) {
     function scopeWithTrashed($query)
     {
-        $query->scope(function ($column = 'deleted_at') {
-            return $this->whereNull($column);
+        $query->scope(function () {
+            $this->softDelete = false;
+            return $this;
         });
     }
 }
@@ -20,7 +21,9 @@ if (!function_exists('scopeOnlyTrashed')) {
     function scopeOnlyTrashed($query)
     {
         $query->scope(function ($column = 'deleted_at') {
-            return $this->whereNotNull($column);
+            $this->softDelete = true;
+            $this->softDeleteColumn = $column;
+            return $this;
         });
     }
 }

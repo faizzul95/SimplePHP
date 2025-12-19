@@ -210,6 +210,16 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     protected $_paginateFilterValue = null;
 
+    /**
+     * @var bool The flag to enable soft delete feature
+     */
+    protected $softDelete = false;
+
+    /**
+     * @var string The soft delete column name
+     */
+    protected $softDeleteColumn = 'deleted_at';
+
     # Implement ConnectionInterface logic
 
     /**
@@ -334,6 +344,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->_profilerActive = 'main';
         $this->returnType = 'array';
         $this->_isRawQuery = false;
+        $this->softDelete = false;
+        $this->softDeleteColumn = 'deleted_at';
 
         return $this;
     }
@@ -1195,14 +1207,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         $placeholder = '?'; // Use a single placeholder for all conditions
 
-        // if (
-        //     in_array($operator, ['=', '!=', '<>', 'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL'])
-        //     && !empty($this->table)
-        //     && strpos($columnName, '.') === false
-        // ) {
-        //     $columnName = "`{$this->table}`.`$columnName`";
-        // }
-
         switch ($operator) {
             case 'IN':
             case 'NOT IN':
@@ -1266,6 +1270,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Check if table name is empty
         if (empty($this->table)) {
             throw new \InvalidArgumentException('Please specify the table.');
+        }
+
+        // Handle soft delete condition
+        if ($this->softDelete) {
+            $this->whereNotNull($this->softDeleteColumn);
         }
 
         // Build the basic SELECT clause with fields
@@ -1867,7 +1876,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             unset($results);
             if (function_exists('gc_collect_cycles')) gc_collect_cycles();
 
-            usleep(1000);
+            usleep(500);
         }
 
         // Unset the variables to free memory
@@ -2573,6 +2582,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Add WHERE clause if conditions exist
         if ($this->where) {
+            // Handle soft delete condition
+            if ($this->softDelete) {
+                $this->whereNotNull($this->softDeleteColumn);
+            }
+
             $this->_query .= " WHERE " . $this->where;
         }
 
@@ -2650,7 +2664,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         if (!$this->_isRawQuery) {
             // Build to get all the data before delete
             $newDb = clone $this;
-            $deletedData = $newDb->get();
+            $deletedData = $newDb->limit(1000)->get(); // limit to avoid large data fetch
             unset($newDb); // remove to free memory
 
             // Check for soft delete columns
@@ -2732,14 +2746,28 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Append table name with schema (if provided)
         if (empty($this->schema)) {
-            $this->_query .= "`$this->table`";
+            $this->_query .= "`{$this->table}`";
         } else {
-            $this->_query .= "`$this->schema`.`$this->table`";
+            $this->_query .= "`{$this->schema}`.`{$this->table}`";
+        }
+
+        // Handle soft delete condition
+        if ($this->softDelete) {
+            $this->whereNotNull($this->softDeleteColumn);
         }
 
         // Add WHERE clause if conditions exist
         if ($this->where) {
             $this->_query .= " WHERE " . $this->where;
+        }
+
+        // Add LIMIT clause if specified
+        if ($this->limit) {
+            if (!isset($this->listDatabaseDriverSupport[$this->driver])) {
+                throw new \Exception("LIMIT clause not supported for driver: " . $this->driver);
+            }
+
+            $this->_query .= $this->limit;
         }
 
         return $this;
