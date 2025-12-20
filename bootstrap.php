@@ -13,8 +13,24 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require_once __DIR__ . '/vendor/autoload.php';
 }
 
-require_once __DIR__ . '/env.php';
 require_once __DIR__ . '/systems/hooks.php';
+
+/*
+|--------------------------------------------------------------------------
+| LOAD CONFIG FILES
+|--------------------------------------------------------------------------
+*/
+foreach (glob(__DIR__ . '/app/config/*.php') as $file) {
+    try {
+        if (is_readable($file)) {
+            include_once $file;
+        } else {
+            throw new Exception("File not readable: $file");
+        }
+    } catch (Exception $e) {
+        die("Error: Unable to resolve file path for $file. " . $e->getMessage());
+    }
+}
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
 
@@ -135,7 +151,7 @@ $menuList = [
 
 $redirectAuth = $menuList['main']['dashboard']['url']; // Default redirect after login, can be changed as needed
 
-// Start connection to database, all configuration in env.php
+// Start connection to database, all configuration in app/config/database.php
 require_once __DIR__ . '/systems/app.php';
 
 ob_end_flush();

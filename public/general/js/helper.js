@@ -2346,7 +2346,7 @@ const loadFileContent = (fileName, idToLoad, sizeModal = 'lg', title = 'Default 
 
 	return $.ajax({
 		type: "POST",
-		url: $('meta[name="base_url"]').attr('content') + 'init.php',
+		url: $('meta[name="base_url"]').attr('content') + 'bootstrap.php',
 		data: {
 			action: 'modal',
 			baseUrl: $('meta[name="base_url"]').attr('content'),
@@ -2393,7 +2393,7 @@ const loadFormContent = (fileName, idToLoad, sizeModal = 'lg', urlFunc = null, t
 
 	return $.ajax({
 		type: "POST",
-		url: $('meta[name="base_url"]').attr('content') + 'init.php',
+		url: $('meta[name="base_url"]').attr('content') + 'bootstrap.php',
 		data: {
 			action: 'modal',
 			baseUrl: $('meta[name="base_url"]').attr('content'),

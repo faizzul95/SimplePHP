@@ -25,7 +25,7 @@ $configRoute = [
     'authenticate' => false
 ];
 
-// Handle for main menu list config from init.php
+// Handle for main menu list config from bootstrap.php
 if (isset($menuList) && is_array($menuList)) {
 
     $configList = $menuList[$menuType] ?? [];

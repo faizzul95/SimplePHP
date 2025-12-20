@@ -17,7 +17,7 @@ A lightweight PHP project structure with modern features for rapid web applicati
 git clone https://github.com/faizzul95/simplephp.git
 cd simplephp
 ```
-2. Edit `env.php` with your database and mail settings
+2. Edit `app/config/*.php` with your database and mail settings
 
 3. Import example database schema in #db folder
 
@@ -25,7 +25,7 @@ cd simplephp
 
 ### Environment Setup
 
-Edit `env.php` to configure your application:
+Edit `app/config/database.php` to configure your application:
 
 ```php
 <?php
@@ -1109,7 +1109,7 @@ Controllers in SimplePHP are organized as functions rather than classes:
 ```php
 // controllers/AuthController.php
 <?php
-require_once '../init.php';
+require_once '../bootstrap.php';
 
 function authorize($request)
 {
@@ -1210,6 +1210,13 @@ return [
 simplephp/
 ├── app/                           
 │   ├── routes/                     # Menu Routes
+│   ├── config/                    # System configuration
+│   │    ├── api.php
+│   │    ├── config.php
+│   │    ├── database.php
+│   │    ├── integration.php
+│   │    ├── mailer.php
+│   │    ├── security.php
 │   ├── helpers/                    # PHP Function helpers
 │   │    ├── custom_api_helper.php
 │   │    ├── custom_array_helper.php
@@ -1258,8 +1265,7 @@ simplephp/
 │   └── app.php
 ├── public/                # Public web files
 ├── logs/                  # Application logs
-├── env.php                # Environment configuration
-└── init.php              
+└── bootstrap.php              
 └── index.php              
 ```
 

@@ -1,7 +1,7 @@
 <?php
 
 // IMPORTANT: This file is part of the application
-require_once '../init.php';
+require_once '../bootstrap.php';
 
 function uploadImageCropper($request)
 {

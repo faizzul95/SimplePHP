@@ -1,7 +1,6 @@
 <?php
 
-
-require_once 'init.php';
+require_once 'bootstrap.php';
 
 // Initialize and run the router
 try {
