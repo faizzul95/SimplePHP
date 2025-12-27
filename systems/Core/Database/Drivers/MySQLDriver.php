@@ -455,7 +455,7 @@ class MySQLDriver extends BaseDatabase
                 'has_having' => isset($hasHaving) ? $hasHaving : 'unknown'
             ];
 
-            $this->db_error_log($e, __FUNCTION__, $context);
+            $this->db_error_log($e, __FUNCTION__, 'Count query failed', $context);
 
             // Stop profiler on error
             if (method_exists($this, '_stopProfiler')) {
