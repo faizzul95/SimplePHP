@@ -95,6 +95,42 @@ interface QueryInterface
     public function exists(?string $table);
 
     /**
+     * Determine if no records exist
+     *
+     * @param string|null $table Optional table name
+     * @return bool
+     */
+    public function doesntExist(?string $table = null);
+
+    /**
+     * Get a single column's value from the first result
+     * More efficient than fetch() when you only need one value
+     *
+     * @param string $column Column name
+     * @return mixed
+     */
+    public function value(string $column);
+
+    /**
+     * Get the first record or throw an exception
+     *
+     * @param string|null $table Optional table name
+     * @return array
+     * @throws \Exception
+     */
+    public function firstOrFail(?string $table = null);
+
+    /**
+     * Get a single record or throw an exception if zero or multiple records found
+     * Ensures exactly one record matches
+     *
+     * @param string|null $table Optional table name
+     * @return array
+     * @throws \Exception
+     */
+    public function sole(?string $table = null);
+
+    /**
      * Processes the query in chunks and applies a callback function to each chunk.
      *
      * @param int $size The size of each chunk.

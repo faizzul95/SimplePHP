@@ -28,6 +28,11 @@ class DatabaseHelper
      */
     protected $cacheFileExpired = 3600;
 
+    /**
+     * @var array Cache for validated columns to avoid re-validation
+     */
+    protected $validatedColumns = [];
+
 
     # GENERAL SECTION
 
@@ -83,12 +88,17 @@ class DatabaseHelper
      */
     protected function _forbidRawQuery($string, $message = 'Not supported to run full query')
     {
+        // Skip validation for non-string/non-array values (e.g., integers, floats, null, booleans)
+        if (!is_string($string) && !is_array($string)) {
+            return;
+        }
+
         $stringArr = is_string($string) ? [$string] : $string;
 
         $forbiddenKeywords = '/\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|GRANT|REVOKE|SHOW)\b/i';
 
         foreach ($stringArr as $str) {
-            if (preg_match($forbiddenKeywords, $str)) {
+            if (is_string($str) && preg_match($forbiddenKeywords, $str)) {
                 throw new \InvalidArgumentException($message);
             }
         }
@@ -147,7 +157,7 @@ class DatabaseHelper
      */
     protected function _getCacheData($key)
     {
-        $cache = new DatabaseCache();
+        $cache = new DatabaseCache('cache/query');
         return $cache->get($key);
     }
 
@@ -163,7 +173,7 @@ class DatabaseHelper
      */
     protected function _setCacheData($key, $data, $expire = 1800)
     {
-        $cache = new DatabaseCache();
+        $cache = new DatabaseCache('cache/query');
         return $cache->set($key, $data, $expire);
     }
 
@@ -171,12 +181,19 @@ class DatabaseHelper
 
     /**
      * Validates if the given value is a string and throws an exception if not.
+     * Uses caching to avoid re-validating the same columns
      *
      * @param string $column The column name to validate.
      * @throws InvalidArgumentException If the column name is not a string or no value.
      */
     protected function validateColumn($column, $default = 'Column')
     {
+        // Check cache first (optimization)
+        $cacheKey = md5($column . $default);
+        if (isset($this->validatedColumns[$cacheKey])) {
+            return;
+        }
+
         if (!is_string($column)) {
             throw new \InvalidArgumentException("Invalid $default value. Must be a string.");
         }
@@ -184,6 +201,9 @@ class DatabaseHelper
         if (empty($column)) {
             throw new \InvalidArgumentException("$default cannot be empty or null.");
         }
+
+        // Cache validation result
+        $this->validatedColumns[$cacheKey] = true;
     }
 
     /**

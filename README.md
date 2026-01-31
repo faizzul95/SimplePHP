@@ -799,6 +799,182 @@ $users = db()->table('users')->whereMonth('created_at', 6)->orWhereMonth('update
 // whereYear & orWhereYear
 $users = db()->table('users')->whereYear('created_at', 2024)->orWhereYear('updated_at', 2023)->get();
 
+// whereColumn - compare two columns
+$users = db()->table('users')->whereColumn('created_at', '<', 'updated_at')->get();
+
+// whereHas - filter by related records existence
+$usersWithProfiles = db()->table('users')
+    ->whereHas('user_profile', 'user_id', 'id', function($q) {
+        $q->where('profile_status', 1);
+    })
+    ->get();
+
+// whereDoesntHave - filter by missing related records
+$usersWithoutProfiles = db()->table('users')
+    ->whereDoesntHave('user_profile', 'user_id', 'id')
+    ->get();
+
+```
+
+### Additional Query Methods
+
+```php
+// distinct - get unique records
+$uniqueStatuses = db()->table('users')->distinct('user_status')->get();
+
+// value - get single column value from first record
+$email = db()->table('users')->where('id', 1)->value('email');
+
+// exists & doesntExist
+$hasUsers = db()->table('users')->where('status', 1)->exists(); // returns true/false
+$isEmpty = db()->table('users')->where('status', 99)->doesntExist(); // returns true/false
+
+// firstOrFail - throws exception if not found
+$user = db()->table('users')->where('id', $id)->firstOrFail();
+
+// sole - throws exception if none or multiple found
+$user = db()->table('users')->where('email', $email)->sole();
+
+// firstOrCreate - find or create a record
+$user = db()->table('users')->firstOrCreate(
+    ['email' => 'john@example.com'],
+    ['name' => 'John Doe', 'status' => 1]
+);
+
+// increment & decrement
+db()->table('users')->where('id', 1)->increment('login_count');
+db()->table('users')->where('id', 1)->increment('points', 10);
+db()->table('products')->where('id', 1)->decrement('stock', 5);
+
+// skip & take (aliases for offset & limit)
+$users = db()->table('users')->skip(10)->take(5)->get();
+
+// forPage - paginate results
+$users = db()->table('users')->forPage(2, 15)->get(); // page 2, 15 per page
+
+// union & unionAll
+$admins = db()->table('users')->where('role', 'admin');
+$editors = db()->table('users')->where('role', 'editor');
+$staff = $admins->union($editors)->get();
+
+// inRandomOrder - randomize results
+$randomUsers = db()->table('users')->inRandomOrder()->limit(5)->get();
+
+// latest & oldest
+$newestUsers = db()->table('users')->latest()->limit(10)->get();
+$oldestUsers = db()->table('users')->oldest()->limit(10)->get();
+
+// reorder - remove existing order and set new one
+$users = db()->table('users')->orderBy('name')->reorder('created_at', 'DESC')->get();
+
+// when & unless - conditional query building
+$status = request()->input('status');
+$users = db()->table('users')
+    ->when($status, function($q) use ($status) {
+        $q->where('status', $status);
+    })
+    ->unless(empty($search), function($q) use ($search) {
+        $q->where('name', 'LIKE', "%{$search}%");
+    })
+    ->get();
+
+// tap - inspect query without modifying
+$users = db()->table('users')
+    ->where('status', 1)
+    ->tap(function($query) {
+        logger()->log($query->toSql());
+    })
+    ->get();
+```
+
+### Index Hints
+
+```php
+// useIndex - suggest MySQL to use specific index
+$users = db()->table('users')
+    ->useIndex('idx_users_status')
+    ->where('status', 1)
+    ->get();
+
+// forceIndex - force MySQL to use specific index
+$users = db()->table('users')
+    ->forceIndex('idx_users_email')
+    ->where('email', $email)
+    ->get();
+
+// ignoreIndex - tell MySQL to ignore specific index
+$users = db()->table('users')
+    ->ignoreIndex('idx_users_created')
+    ->get();
+
+// Multiple indexes
+$users = db()->table('users')
+    ->useIndex(['idx_users_status', 'idx_users_email'])
+    ->where('status', 1)
+    ->get();
+```
+
+### Query Caching & Performance
+
+```php
+// Enable query caching with TTL (in seconds)
+$users = db()->enableQueryCache(3600)
+    ->table('users')
+    ->where('status', 1)
+    ->get();
+
+// Disable query caching
+db()->disableQueryCache();
+
+// Get performance report
+$report = db()->getPerformanceReport();
+
+// Analyze query performance
+$analysis = db()->table('users')
+    ->where('status', 1)
+    ->analyze();
+
+// Enable profiling
+db()->setProfilingEnabled(true);
+
+// Get profiler data
+$profilerData = db()->profiler();
+```
+
+### Transaction with Callback
+
+```php
+// Automatic transaction with callback (auto commit/rollback)
+$result = db()->transaction(function($db) {
+    $db->table('users')->insert(['name' => 'John']);
+    $db->table('user_profile')->insert(['user_id' => $db->getPdo()->lastInsertId()]);
+    
+    return true; // Commit on success
+});
+
+// Manual transaction control
+db()->beginTransaction();
+try {
+    db()->table('users')->insert(['name' => 'Jane']);
+    db()->table('logs')->insert(['action' => 'user_created']);
+    db()->commit();
+} catch (Exception $e) {
+    db()->rollback();
+    throw $e;
+}
+```
+
+### Dry Run Mode
+
+```php
+// Enable dry run - builds query without executing
+$query = db()->table('users')
+    ->where('status', 1)
+    ->dryRun()
+    ->get();
+
+// Returns the query info without executing
+// Useful for debugging and testing queries
 ```
 
 ## Security Notes
@@ -1287,10 +1463,14 @@ SimplePHP includes various helper functions organized by category:
 | Function                | Description                                                                                                 |
 |-------------------------|-------------------------------------------------------------------------------------------------------------|
 | `table()`               | Sets the table for the query.                                                                               |
+| `distinct()`            | Adds DISTINCT to the query, optionally with specific columns.                                               |
 | `select()`              | Specifies columns to select.                                                                                |
 | `selectRaw()`           | Selects columns using a raw SQL expression.                                                                 |
 | `where()`               | Adds a WHERE condition to the query.                                                                        |
 | `orWhere()`             | Adds an OR WHERE condition.                                                                                 |
+| `whereRaw()`            | Adds a raw WHERE condition with optional bindings.                                                          |
+| `whereColumn()`         | Adds a WHERE condition comparing two columns.                                                               |
+| `orWhereColumn()`       | Adds an OR WHERE condition comparing two columns.                                                           |
 | `whereIn()`             | Adds a WHERE IN condition.                                                                                  |
 | `orWhereIn()`           | Adds an OR WHERE IN condition.                                                                              |
 | `whereNotIn()`          | Adds a WHERE NOT IN condition.                                                                              |
@@ -1307,23 +1487,41 @@ SimplePHP includes various helper functions organized by category:
 | `orWhereDate()`         | Adds an OR WHERE clause for a date comparison.                                                              |
 | `whereDay()`            | Adds a WHERE clause for a specific day.                                                                     |
 | `orWhereDay()`          | Adds an OR WHERE clause for a specific day.                                                                 |
+| `whereMonth()`          | Adds a WHERE clause for a specific month.                                                                   |
+| `orWhereMonth()`        | Adds an OR WHERE clause for a specific month.                                                               |
 | `whereYear()`           | Adds a WHERE clause for a specific year.                                                                    |
 | `orWhereYear()`         | Adds an OR WHERE clause for a specific year.                                                                |
 | `whereTime()`           | Adds a WHERE clause for a specific time.                                                                    |
 | `orWhereTime()`         | Adds an OR WHERE clause for a specific time.                                                                |
+| `whereJsonContains()`   | Adds a WHERE clause for JSON column value matching.                                                         |
+| `whereHas()`            | Adds a WHERE EXISTS subquery for related records.                                                           |
+| `orWhereHas()`          | Adds an OR WHERE EXISTS subquery for related records.                                                       |
+| `whereDoesntHave()`     | Adds a WHERE NOT EXISTS subquery for missing related records.                                               |
+| `orWhereDoesntHave()`   | Adds an OR WHERE NOT EXISTS subquery for missing related records.                                           |
 | `when()`                | Conditionally adds clauses to the query based on a given value or callback.                                 |
+| `unless()`              | Inverse of when() - adds clauses when condition is false.                                                   |
+| `tap()`                 | Passes the query to a callback without modifying it.                                                        |
 | `join()`                | Adds a JOIN clause to the query.                                                                            |
 | `leftJoin()`            | Adds a LEFT JOIN clause.                                                                                    |
 | `rightJoin()`           | Adds a RIGHT JOIN clause.                                                                                   |
 | `innerJoin()`           | Adds an INNER JOIN clause.                                                                                  |
 | `outerJoin()`           | Adds a FULL OUTER JOIN clause.                                                                              |
+| `union()`               | Combines results from two queries using UNION.                                                              |
+| `unionAll()`            | Combines results from two queries using UNION ALL (includes duplicates).                                    |
 | `orderBy()`             | Adds an ORDER BY clause.                                                                                    |
 | `orderByRaw()`          | Adds a raw ORDER BY clause.                                                                                 |
+| `latest()`              | Orders by column descending (default: created_at).                                                          |
+| `oldest()`              | Orders by column ascending (default: created_at).                                                           |
+| `reorder()`             | Removes existing orders and optionally sets a new one.                                                      |
+| `inRandomOrder()`       | Orders results randomly.                                                                                    |
 | `groupBy()`             | Adds a GROUP BY clause.                                                                                     |
 | `having()`              | Adds a HAVING clause.                                                                                       |
 | `havingRaw()`           | Adds a raw HAVING clause.                                                                                   |
 | `limit()`               | Sets the LIMIT for the query.                                                                               |
 | `offset()`              | Sets the OFFSET for the query.                                                                              |
+| `skip()`                | Alias for offset() - sets offset for query.                                                                 |
+| `take()`                | Alias for limit() - limits query results.                                                                   |
+| `forPage()`             | Sets limit and offset for a specific page.                                                                  |
 | `with()`                | Eager loads related data (one-to-many).                                                                     |
 | `withOne()`             | Eager loads related data (one-to-one).                                                                      |
 | `withCount()`           | Adds a count subquery for related data.                                                                     |
@@ -1331,13 +1529,22 @@ SimplePHP includes various helper functions organized by category:
 | `withAvg()`             | Adds an average subquery for related data.                                                                  |
 | `withMin()`             | Adds a minimum value subquery for related data.                                                             |
 | `withMax()`             | Adds a maximum value subquery for related data.                                                             |
+| `useIndex()`            | Hints MySQL to use specific index(es).                                                                      |
+| `forceIndex()`          | Forces MySQL to use specific index(es).                                                                     |
+| `ignoreIndex()`         | Tells MySQL to ignore specific index(es).                                                                   |
+| `dryRun()`              | Enables dry run mode - builds query without executing.                                                      |
 | `selectQuery()`         | Executes a SELECT query with optional bindings.                                                             |
 | `query()`               | Prepares a raw SQL query for execution.                                                                     |
 | `execute()`             | Executes the previously set raw SQL query.                                                                  |
 | `get()`                 | Executes the built SELECT query and returns all results.                                                    |
 | `fetch()`               | Executes the built SELECT query and returns the first result.                                               |
-| `count()`               | Abstract. Returns the count of records (must be implemented in child class).                                |
-| `exists()`              | Abstract. Returns boolean true if records exist, false otherwise.(must be implemented in child class)       |
+| `count()`               | Returns the count of records.                                                                               |
+| `exists()`              | Returns boolean true if records exist, false otherwise.                                                     |
+| `doesntExist()`         | Returns boolean true if no records exist, false otherwise.                                                  |
+| `value()`               | Gets a single column value from the first result.                                                           |
+| `firstOrFail()`         | Gets first result or throws exception if not found.                                                         |
+| `sole()`                | Gets the only matching record, throws exception if none or multiple found.                                  |
+| `pluck()`               | Extracts values from a single column, supports dot notation for relations.                                  |
 | `chunk()`               | Processes results in chunks for large datasets.                                                             |
 | `cursor()`              | Returns a generator for iterating results in chunks.                                                        |
 | `lazy()`                | Returns a lazy collection for large result sets.                                                            |
@@ -1347,20 +1554,47 @@ SimplePHP includes various helper functions organized by category:
 | `toSql()`               | Returns the built SQL query as a string.                                                                    |
 | `toDebugSql()`          | Returns the SQL query with bound values for debugging.                                                      |
 | `insert()`              | Inserts a new record into the table.                                                                        |
+| `batchInsert()`         | Inserts multiple records in a single query.                                                                 |
 | `update()`              | Updates records in the table.                                                                               |
+| `batchUpdate()`         | Updates multiple records in a single query.                                                                 |
+| `increment()`           | Increments a column value by a given amount.                                                                |
+| `decrement()`           | Decrements a column value by a given amount.                                                                |
 | `delete()`              | Deletes records from the table.                                                                             |
 | `softDelete()`          | Soft deletes or updates records by setting the specified column(s) to a value.                              |
 | `truncate()`            | Truncates (empties) the table.                                                                              |
 | `upsert()`              | Inserts or updates records based on unique key.                                                             |
 | `insertOrUpdate()`      | Inserts or updates records based on unique key or conditions.                                               |
+| `firstOrCreate()`       | Finds first matching record or creates a new one.                                                           |
 | `toArray()`             | Sets the return type to array.                                                                              |
 | `toObject()`            | Sets the return type to object.                                                                             |
 | `toJson()`              | Sets the return type to JSON.                                                                               |
+| `safeInput()`           | Enables input sanitization before insert/update.                                                            |
 | `safeOutput()`          | Enables output sanitization.                                                                                |
+| `safeOutputWithException()` | Enables output sanitization with specific field exceptions.                                             |
+| `hasColumn()`           | Checks if a column exists in the table.                                                                     |
+| `analyze()`             | Analyzes query performance and returns optimization suggestions.                                            |
 | `profiler()`            | Returns query profiler information.                                                                         |
+| `transaction()`         | Wraps operations in a transaction with automatic commit/rollback.                                           |
 | `beginTransaction()`    | Begins a database transaction.                                                                              |
 | `commit()`              | Commits the current transaction.                                                                            |
-| `rollback()`            | Rolls back
+| `rollback()`            | Rolls back the current transaction.                                                                         |
+| `enableQueryCache()`    | Enables query caching with optional TTL.                                                                    |
+| `disableQueryCache()`   | Disables query caching.                                                                                     |
+| `getPerformanceReport()`| Returns performance metrics and statistics.                                                                 |
+| `cleanupConnections()`  | Cleans up idle database connections.                                                                        |
+| `setProfilingEnabled()` | Enables or disables query profiling.                                                                        |
+| `isProfilingEnabled()`  | Checks if profiling is enabled.                                                                             |
+| `addConnection()`       | Adds a new database connection configuration.                                                               |
+| `setConnection()`       | Switches to a different database connection.                                                                |
+| `getConnection()`       | Gets the current or specified connection.                                                                   |
+| `setDatabase()`         | Switches to a different database.                                                                           |
+| `getDatabase()`         | Gets the current database name.                                                                             |
+| `getPlatform()`         | Gets the database platform name.                                                                            |
+| `getDriver()`           | Gets the database driver name.                                                                              |
+| `getVersion()`          | Gets the database server version.                                                                           |
+| `getPdo()`              | Gets the underlying PDO instance.                                                                           |
+| `disconnect()`          | Disconnects from the database.                                                                              |
+| `reset()`               | Resets the query builder state.                                                                             |
 
 ## Requirements
 

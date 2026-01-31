@@ -105,3 +105,139 @@ if (!function_exists('includeTemplate')) {
         }
     }
 }
+
+if (!function_exists('showBreadcrumb')) {
+    function showBreadcrumb()
+    {
+        $mainPage = pageTitle();
+        $subPage = titleSubPage();
+
+        $showSubpage = !empty($subPage) ? " <div class='col-sm-auto'>
+                            <ul class='breadcrumb'>
+                                <li class='breadcrumb-item'>
+                                    <a href='javascript: void(0)'> {$subPage} </a>
+                                </li>
+                            </ul>
+                        </div>" : null;
+
+        return "<!-- [ breadcrumb ] start -->
+            <div class='page-header'>
+                <div class='page-block'>
+                    <div class='row align-items-center g-0'>
+                        <div class='col-sm-auto'>
+                            <div class='page-header-title'>
+                                <h5 class='mb-0'>{$mainPage}</h5>
+                            </div>
+                        </div>
+                    {$showSubpage}
+                    </div>
+                </div>
+            </div>
+            <!-- [ breadcrumb ] end --><!-- [ Main Content ] start -->";
+    }
+}
+
+if (!function_exists('sidebarMenuGroup')) {
+    function sidebarMenuGroup(string $type, array $mappingGroup): string
+    {
+        global $currentPage, $currentSubPage, $menuList;
+
+        $listMenu = [];
+
+        // 1. Filter menu based on permission and active
+        foreach ($mappingGroup as $grpName => $menuConfig) {
+            foreach ($menuConfig as $menu) {
+                $menuDetails = $menuList[$type][$menu] ?? null;
+                if (!$menuDetails) {
+                    continue;
+                }
+                if (permission($menuDetails['permission'] ?? null) === false) {
+                    continue;
+                }
+                if (empty($menuDetails['active'])) {
+                    continue;
+                }
+                $listMenu[$grpName][] = $menuDetails;
+            }
+        }
+
+        // 2. Closure for recursive building (returns [html, isActive])
+        $buildMenuItem = function (array $menu) use (&$buildMenuItem, $currentPage, $currentSubPage): array {
+            $icon = !empty($menu['icon'])
+                ? "<span class='pc-micon'><i class='{$menu['icon']}'></i></span>"
+                : '';
+            $desc = htmlspecialchars($menu['desc'], ENT_QUOTES, 'UTF-8');
+
+            $isActive = false;
+            $html = '';
+
+            // Has subpages?
+            if (!empty($menu['subpage'])) {
+                $subHtml = '';
+                $hasActiveChild = false;
+
+                foreach ($menu['subpage'] as $sub) {
+                    if (permission($sub['permission'] ?? null) === false) {
+                        continue;
+                    }
+                    if (empty($sub['active'])) {
+                        continue;
+                    }
+
+                    [$childHtml, $childActive] = $buildMenuItem($sub);
+                    if ($childActive) {
+                        $hasActiveChild = true;
+                    }
+                    $subHtml .= $childHtml;
+                }
+
+                $liClass = "pc-item pc-hasmenu" . ($hasActiveChild ? " pc-trigger" : "");
+                $html = "<li class='{$liClass}'>
+                            <a href='javascript:void(0);' class='pc-link'>
+                                {$icon}
+                                <span class='pc-mtext' data-i18n='{$desc}'>{$desc}</span>
+                                <span class='pc-arrow'><i data-feather='chevron-right'></i></span>
+                            </a>
+                            <ul class='pc-submenu'>{$subHtml}</ul>
+                         </li>";
+
+                return [$html, $hasActiveChild];
+            }
+
+            // Normal single menu item
+            $url = htmlspecialchars($menu['url'], ENT_QUOTES, 'UTF-8');
+
+            // Check if current menu is active
+            $isActive = (
+                (isset($menu['file']) && $menu['file'] === $currentPage) ||
+                (isset($menu['subpage_key']) && $menu['subpage_key'] === $currentSubPage) ||
+                (isset($menu['url']) && strpos($menu['url'], $currentPage) !== false)
+            );
+
+            $liClass = "pc-item" . ($isActive ? " active" : "");
+            $html = "<li class='{$liClass}'>
+                        <a href='{$url}' class='pc-link' data-i18n='{$desc}'>
+                            {$icon}<span class='pc-mtext'>{$desc}</span>
+                        </a>
+                     </li>";
+
+            return [$html, $isActive];
+        };
+
+        // 3. Build the final HTML
+        $output = [];
+        foreach ($listMenu as $grpName => $menuConfig) {
+            $captionMenu = strtoupper($grpName);
+            $output[] = "<li class='pc-item pc-caption'>
+                            <label data-i18n='{$captionMenu}'>{$captionMenu}</label>
+                         </li>";
+
+            foreach ($menuConfig as $menuDetails) {
+                [$html] = $buildMenuItem($menuDetails);
+                $output[] = $html;
+            }
+        }
+
+        return implode("\n", $output);
+    }
+}

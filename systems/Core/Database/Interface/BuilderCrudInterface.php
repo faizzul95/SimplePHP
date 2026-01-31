@@ -107,4 +107,33 @@ interface BuilderCrudInterface
      * @return mixed The result of the insert or update operation, depending on the database driver.
      */
     public function insertOrUpdate(array $conditions, array $data, string $primaryKey = 'id');
+
+    /**
+     * Get the first record matching conditions or create a new one
+     *
+     * @param array $conditions Conditions to search for
+     * @param array $data Additional data to set when creating (merged with conditions)
+     * @return array The existing or newly created record
+     */
+    public function firstOrCreate(array $conditions, array $data = []);
+
+    /**
+     * Increment a column's value by a given amount
+     *
+     * @param string $column Column to increment
+     * @param int $amount Amount to increment by (default 1)
+     * @param array $extra Additional columns to update
+     * @return mixed Result of the update operation
+     */
+    public function increment(string $column, int $amount = 1, array $extra = []);
+
+    /**
+     * Decrement a column's value by a given amount
+     *
+     * @param string $column Column to decrement
+     * @param int $amount Amount to decrement by (default 1)
+     * @param array $extra Additional columns to update
+     * @return mixed Result of the update operation
+     */
+    public function decrement(string $column, int $amount = 1, array $extra = []);
 }

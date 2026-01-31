@@ -78,8 +78,8 @@
 
     <script type="text/javascript">
         $(document).ready(async function() {
-            await getDataList();
             await getProfileList('filter_profile');
+            await getDataList();
         });
 
         async function getProfileList(id, includeAll = true) {

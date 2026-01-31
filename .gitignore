@@ -3,6 +3,7 @@
 composer.lock
 /logs/
 /cache/
+/storage/
 
 # IDE Files
 #-------------------------
@@ -22,3 +23,4 @@ package-lock.json
 node_modules
 .env
 /vendor/
+env.php

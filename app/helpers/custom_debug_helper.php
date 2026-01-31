@@ -122,3 +122,40 @@ if (!function_exists('hasData')) {
         return $traverse($keys, $data);
     }
 }
+
+/**
+ * Get database performance statistics for debugging
+ * 
+ * @param bool $logReport Whether to log the report to error.log (default: false)
+ * @param string $context Optional context label for the log (e.g., "Cart Datatable", "User Query")
+ * @return array Performance statistics array
+ * 
+ * Example use:
+ * 
+ * // Add to response without logging
+ * $result['_debug'] = getPerformanceStats();
+ * 
+ * // Add to response with logging
+ * $result['_debug'] = getPerformanceStats(true, 'Cart Datatable');
+ * 
+ * // Just log without adding to response
+ * getPerformanceStats(true, 'Heavy Query');
+ */
+if (!function_exists('getPerformanceStats')) {
+    function getPerformanceStats($logReport = false, $context = 'Performance')
+    {
+        $perfReport = \Core\Database\PerformanceMonitor::generateReport();
+        
+        if ($logReport) {
+            logger()->log_info("{$context}: " . json_encode($perfReport, JSON_PRETTY_PRINT));
+        }
+        
+        return [
+            'summary' => $perfReport['summary'] ?? [],
+            'statement_cache' => $perfReport['statement_cache_stats'] ?? [],
+            'query_cache' => $perfReport['query_cache_stats'] ?? [],
+            'optimizer' => $perfReport['optimizer_stats'] ?? [],
+            'connection_pool' => $perfReport['connection_stats'] ?? []
+        ];
+    }
+}

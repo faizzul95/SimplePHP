@@ -21,7 +21,7 @@ function authorize($request)
 
     $response = ['code' => 400, 'message' => 'Invalid username or password']; // set default
 
-    $userData = db()->query("SELECT `id`, `password` FROM `users` WHERE `email` = :0 OR `username` = :0", [$username])->fetch();
+    $userData = db()->query("SELECT `id`, `password` FROM `users` WHERE `email` = ? OR `username` = ?", [$username, $username])->fetch();
 
     if (!empty($userData)) {
         $ipUser = request()->ip();

@@ -852,3 +852,66 @@ if (!function_exists('nodataAccess')) {
 		echo "</div>";
 	}
 }
+
+if (!function_exists('disabledFxResponse')) {
+	function disabledFxResponse($code = 422, $text = "This feature is not available at the moment")
+	{
+		jsonResponse(['code' => $code, 'message' => $text]);
+	}
+}
+
+// SECURITY HELPERS SECTION
+
+if (!function_exists('sanitize')) {
+	function sanitize($value = null, array $ignoreList = [])
+	{
+		// Early return for null/unset values
+		if ($value === null) {
+			return null;
+		}
+
+		// Optimize type checking - use is_* functions instead of gettype() for better performance
+		if (is_string($value)) {
+			// Early return for empty strings
+			if ($value === '') {
+				return '';
+			}
+			// Apply XSS protection and trim in one operation
+			return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
+		}
+
+		if (is_array($value)) {
+			// Early return for empty arrays
+			if (empty($value)) {
+				return [];
+			}
+
+			// Optimize: Check if ignoreList is empty once before loop
+			$hasIgnoreList = !empty($ignoreList);
+			
+			$result = [];
+			foreach ($value as $key => $val) {
+				// If the key is in ignoreList, skip sanitization for this key
+				if ($hasIgnoreList && in_array($key, $ignoreList, true)) {
+					$result[$key] = $val;
+				} else {
+					$result[$key] = sanitize($val, $ignoreList);
+				}
+			}
+			return $result;
+		}
+
+		// Handle numeric types - integers, floats, doubles
+		if (is_int($value) || is_float($value)) {
+			return $value;
+		}
+
+		// Handle booleans
+		if (is_bool($value)) {
+			return $value;
+		}
+
+		// Return other types as-is (objects, resources, etc.)
+		return $value;
+	}
+}

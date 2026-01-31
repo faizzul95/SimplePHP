@@ -7,6 +7,14 @@
 */
 
 $config['db'] = [
+    'profiling' => [
+        'enabled' => false,  // Enable/disable query profiling (affects performance)
+    ],
+    'cache' => [
+        'enabled' => false,  // Enable/disable query cache globally
+        'ttl' => 120,        // Default cache time in seconds
+        'path' => null,      // null = auto (storage/cache/query)
+    ],
     'default' => [
         'development' => [
             'driver'   => 'mysql',

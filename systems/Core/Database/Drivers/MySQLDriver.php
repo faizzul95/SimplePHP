@@ -14,6 +14,7 @@ namespace Core\Database\Drivers;
  */
 
 use Core\Database\BaseDatabase;
+use Core\Database\ConnectionPool;
 
 class MySQLDriver extends BaseDatabase
 {
@@ -29,33 +30,13 @@ class MySQLDriver extends BaseDatabase
         $this->setDatabase($this->config[$connectionName]['database']);
 
         if (!isset($this->pdo[$connectionName])) {
-
-            $dsn = "mysql:host={$this->config[$connectionName]['host']};dbname={$this->config[$connectionName]['database']}";
-
-            if (isset($this->config[$connectionName]['charset'])) {
-                $dsn .= ";charset={$this->config[$connectionName]['charset']}";
-            }
-            if (isset($this->config[$connectionName]['port'])) {
-                $dsn .= ";port={$this->config[$connectionName]['port']}";
-            }
-            if (isset($this->config[$connectionName]['socket'])) {
-                $dsn .= ";unix_socket={$this->config[$connectionName]['socket']}";
-            }
-
             try {
-                // Connection options
-                $options = [
-                    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
-                    \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC
-                ];
-
-                if (isset($this->config[$connectionName]['charset']) && !empty($this->config[$connectionName]['charset'])) {
-                    $options[\PDO::MYSQL_ATTR_INIT_COMMAND] = "SET NAMES " . $this->config[$connectionName]['charset'];
-                }
-
-                $pdo = new \PDO($dsn, $this->config[$connectionName]['username'], $this->config[$connectionName]['password'], $options);
-                $this->pdo[$connectionName] = $pdo;
-            } catch (\PDOException $e) {
+                // Use ConnectionPool for optimized connection management
+                $this->pdo[$connectionName] = ConnectionPool::getConnection(
+                    $connectionName, 
+                    $this->config[$connectionName]
+                );
+            } catch (\Exception $e) {
                 throw new \Exception($e->getMessage());
             }
         }

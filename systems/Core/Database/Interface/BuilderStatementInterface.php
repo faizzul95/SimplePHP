@@ -301,6 +301,26 @@ interface BuilderStatementInterface
     public function whereJsonContains(string $columnName, string $jsonPath, $value);
 
     /**
+     * Add a where clause comparing two columns
+     *
+     * @param string $column1 First column
+     * @param string|null $operator Comparison operator (if null, defaults to '=')
+     * @param string|null $column2 Second column (if null, operator becomes '=' and column2 becomes operator)
+     * @return $this
+     */
+    public function whereColumn(string $column1, ?string $operator = null, ?string $column2 = null);
+
+    /**
+     * Add an or where clause comparing two columns
+     *
+     * @param string $column1 First column
+     * @param string|null $operator Comparison operator
+     * @param string|null $column2 Second column
+     * @return $this
+     */
+    public function orWhereColumn(string $column1, ?string $operator = null, ?string $column2 = null);
+
+    /**
      * Conditionally adds query constraints if the given conditions are true.
      *
      * This method allows you to fluently add query clauses only when certain conditions are met.
@@ -316,6 +336,23 @@ interface BuilderStatementInterface
      * @return $this
      */
     public function when(mixed $conditions, callable $callback);
+
+    /**
+     * Execute callback unless condition is true (opposite of when)
+     *
+     * @param mixed $condition Condition to check
+     * @param callable $callback Callback to execute if condition is false
+     * @return $this
+     */
+    public function unless(mixed $condition, callable $callback);
+
+    /**
+     * Execute callback and return the builder for debugging
+     *
+     * @param callable $callback Callback receives the builder instance
+     * @return $this
+     */
+    public function tap(callable $callback);
 
     /**
      * Adds a join clause to the query.
@@ -386,6 +423,38 @@ interface BuilderStatementInterface
     public function orderBy(string|array $column, string $direction = 'ASC');
 
     /**
+     * Order by column in descending order (created_at by default)
+     *
+     * @param string $column Column to order by
+     * @return $this
+     */
+    public function latest(string $column = 'created_at');
+
+    /**
+     * Order by column in ascending order (created_at by default)
+     *
+     * @param string $column Column to order by
+     * @return $this
+     */
+    public function oldest(string $column = 'created_at');
+
+    /**
+     * Clear existing order by and optionally set new order
+     *
+     * @param string|null $column Optional column to order by
+     * @param string $direction Order direction
+     * @return $this
+     */
+    public function reorder(?string $column = null, string $direction = 'DESC');
+
+    /**
+     * Order results randomly
+     *
+     * @return $this
+     */
+    public function inRandomOrder();
+
+    /**
      * Adds a raw order by clause to the query.
      *
      * @param string $string The raw order by string.
@@ -435,6 +504,31 @@ interface BuilderStatementInterface
      * @return $this
      */
     public function offset(int $offset);
+
+    /**
+     * Alias for offset() - skip records
+     *
+     * @param int $offset Number of records to skip
+     * @return $this
+     */
+    public function skip(int $offset);
+
+    /**
+     * Alias for limit() - take records
+     *
+     * @param int $limit Number of records to take
+     * @return $this
+     */
+    public function take(int $limit);
+
+    /**
+     * Simple pagination helper - set offset and limit for a page
+     *
+     * @param int $page Page number (1-indexed)
+     * @param int $perPage Records per page
+     * @return $this
+     */
+    public function forPage(int $page, int $perPage = 15);
 
     /**
      * Specifies a relationship to load with the query.

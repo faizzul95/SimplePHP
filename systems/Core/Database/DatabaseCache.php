@@ -20,7 +20,7 @@ class DatabaseCache
     /**
      * @var string The path
      */
-    private $path = './storage/';
+    private $path;
 
     /**
      * @var string $cacheDir Directory to store cached data.
@@ -39,6 +39,8 @@ class DatabaseCache
      */
     public function __construct($cacheDir = 'cache')
     {
+        // Use absolute path from ROOT_DIR constant
+        $this->path = defined('ROOT_DIR') ? ROOT_DIR . 'storage' . DIRECTORY_SEPARATOR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR;
         $this->cacheDir = $this->path . $cacheDir;
         $this->zlibEnabled = extension_loaded('zlib');
     }

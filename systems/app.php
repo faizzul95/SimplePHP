@@ -1,6 +1,7 @@
 <?php
 
 use Core\Database\Database;
+use Core\Database\QueryCache;
 
 global $config, $dbObject, $logger;
 
@@ -26,6 +27,11 @@ try {
     if (in_array(ENVIRONMENT, $environments)) {
         // Loop through all database connection types (default, slave, slave2, etc.)
         foreach ($dbConfig as $connectionName => $envConfigs) {
+            // Skip non-connection config keys like 'cache'
+            if ($connectionName === 'cache' || !is_array($envConfigs) || !isset($envConfigs[ENVIRONMENT])) {
+                continue;
+            }
+            
             if (!isset($dbObj[$connectionName]) && isset($envConfigs[ENVIRONMENT]) && is_array($envConfigs[ENVIRONMENT])) {
                 $dbObj[$connectionName] = new Database(strtolower($envConfigs[ENVIRONMENT]['driver']));
             }
@@ -41,6 +47,25 @@ try {
     }
 
     $dbObject = $dbObj;
+    
+    // Enable/disable query profiling based on config
+    if (!empty($config['db']['profiling']['enabled'])) {
+        foreach ($dbObject as $conn) {
+            $conn->setProfilingEnabled(true);
+        }
+    }
+    
+    // Initialize QueryCache with config
+    if (!empty($config['db']['cache']['path'])) {
+        QueryCache::init($config['db']['cache']['path']);
+    } else {
+        QueryCache::init(); // Use default path
+    }
+    
+    // Disable cache globally if config says so
+    if (empty($config['db']['cache']['enabled'])) {
+        QueryCache::disable();
+    }
 } catch (Exception $e) {
     $logger->logException('Connection : Failed to connect to database. :' . $e->getMessage());
 }
