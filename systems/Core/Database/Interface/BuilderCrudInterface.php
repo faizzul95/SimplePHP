@@ -109,6 +109,15 @@ interface BuilderCrudInterface
     public function insertOrUpdate(array $conditions, array $data, string $primaryKey = 'id');
 
     /**
+     * Update an existing record or insert a new one (alias for insertOrUpdate).
+     *
+     * @param array $conditions Conditions to match existing record.
+     * @param array $data Data to insert or update.
+     * @return mixed
+     */
+    public function updateOrInsert(array $conditions, array $data);
+
+    /**
      * Get the first record matching conditions or create a new one
      *
      * @param array $conditions Conditions to search for

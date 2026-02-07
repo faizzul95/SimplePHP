@@ -63,7 +63,7 @@ class MySQLDriver extends BaseDatabase
             $formattedDate = $this->validateDate($value);
             $this->validateOperator($operator);
 
-            $this->_buildWhereClause("DATE_FORMAT($column, '%Y-%m-%d')", $formattedDate, $operator, 'AND');
+            $this->_buildWhereClause("DATE($column)", $formattedDate, $operator, 'AND');
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
@@ -86,7 +86,7 @@ class MySQLDriver extends BaseDatabase
             $formattedDate = $this->validateDate($value);
             $this->validateOperator($operator);
 
-            $this->_buildWhereClause("DATE_FORMAT($column, '%Y-%m-%d')", $formattedDate, $operator, 'OR');
+            $this->_buildWhereClause("DATE($column)", $formattedDate, $operator, 'OR');
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
@@ -248,7 +248,8 @@ class MySQLDriver extends BaseDatabase
             $formattedTime = $this->validateTime($value); // Custom method to validate 'HH:MM[:SS]'
             $this->validateOperator($operator);
 
-            $this->_buildWhereClause("DATE_FORMAT($column, '%H:%i:%s')", $formattedTime, $operator, 'AND');
+            // Use TIME() function instead of DATE_FORMAT() for better index usage and semantics
+            $this->_buildWhereClause("TIME($column)", $formattedTime, $operator, 'AND');
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
@@ -271,7 +272,8 @@ class MySQLDriver extends BaseDatabase
             $formattedTime = $this->validateTime($value);
             $this->validateOperator($operator);
 
-            $this->_buildWhereClause("DATE_FORMAT($column, '%H:%i:%s')", $formattedTime, $operator, 'OR');
+            // Use TIME() function instead of DATE_FORMAT() for better index usage and semantics
+            $this->_buildWhereClause("TIME($column)", $formattedTime, $operator, 'OR');
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
@@ -280,14 +282,21 @@ class MySQLDriver extends BaseDatabase
 
     public function whereJsonContains($columnName, $jsonPath, $value)
     {
+        // Validate column name
+        $this->validateColumn($columnName);
+        $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in whereJsonContains().');
+
         // Check if the column is not null
         $this->whereNotNull($columnName);
 
-        // Construct the JSON search condition
-        $jsonCondition = "JSON_CONTAINS($columnName, '" . json_encode([$jsonPath => $value]) . "', '$')";
+        // Use parameterized binding for the JSON value to prevent injection
+        $jsonValue = json_encode([$jsonPath => $value], JSON_UNESCAPED_UNICODE);
+        if ($jsonValue === false) {
+            throw new \InvalidArgumentException('Failed to encode JSON value for whereJsonContains()');
+        }
 
-        // Add the condition to the query builder
-        $this->where($jsonCondition, null, 'JSON');
+        // Use parameterized binding via whereRaw instead of direct string concatenation
+        $this->whereRaw("JSON_CONTAINS($columnName, ?, '$')", [$jsonValue], 'AND');
         return $this;
     }
 
@@ -497,7 +506,7 @@ class MySQLDriver extends BaseDatabase
             // Stop profiler
             $this->_stopProfiler();
 
-            return $result !== false;
+            return $result !== false && (bool)($result['row_exists'] ?? false);
         } catch (\PDOException $e) {
             // Log database errors
             $this->db_error_log($e, __FUNCTION__);

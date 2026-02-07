@@ -107,9 +107,14 @@ class QueryCache
             return null;
         }
 
-        $cached = unserialize(file_get_contents($filePath));
+        $cached = self::safeUnserialize(file_get_contents($filePath));
 
-        // Check expiration
+        // Validate deserialized data
+        if ($cached === null) {
+            @unlink($filePath);
+            self::$stats['misses']++;
+            return null;
+        }
         if ($cached['expires'] < time()) {
             unlink($filePath);
             self::$stats['misses']++;
@@ -253,24 +258,52 @@ class QueryCache
      */
     public static function generateKey($query, array $binds = [], $connection = 'default')
     {
-        $data = [
-            'connection' => $connection,
-            'query' => $query,
-            'binds' => $binds
-        ];
-
-        return md5(json_encode($data));
+        return dechex(crc32($connection . $query . serialize($binds)));
     }
 
     /**
-     * Get cache file path
+     * Get cache file path with path traversal protection
      *
      * @param string $key Cache key
      * @return string File path
+     * @throws \InvalidArgumentException If the key contains invalid characters
      */
     protected static function getCacheFilePath($key)
     {
+        // Validate cache key - only allow alphanumeric, dashes, underscores, dots
+        if (!preg_match('/^[a-zA-Z0-9_\-.]+$/', $key)) {
+            throw new \InvalidArgumentException('Invalid cache key format: contains disallowed characters');
+        }
+
+        // Additional path traversal protection
+        if (strpos($key, '..') !== false || strpos($key, '/') !== false || strpos($key, '\\') !== false) {
+            throw new \InvalidArgumentException('Invalid cache key: path traversal detected');
+        }
+
         return self::$cacheDir . DIRECTORY_SEPARATOR . $key . '.cache';
+    }
+
+    /**
+     * Safely unserialize cache data with validation
+     *
+     * @param string $data Raw serialized data
+     * @return array|null The unserialized data or null if invalid
+     */
+    protected static function safeUnserialize($data)
+    {
+        if (empty($data)) {
+            return null;
+        }
+
+        // Only allow arrays and scalar types during unserialization (no objects)
+        $result = @unserialize($data, ['allowed_classes' => false]);
+
+        // Validate structure
+        if (!is_array($result) || !isset($result['expires']) || !isset($result['data'])) {
+            return null;
+        }
+
+        return $result;
     }
 
     /**
@@ -344,10 +377,18 @@ class QueryCache
             $files = glob(self::$cacheDir . '/*.cache');
             foreach ($files as $file) {
                 if (is_file($file)) {
-                    $cached = unserialize(file_get_contents($file));
-                    if ($cached['expires'] < $now) {
-                        unlink($file);
+                    // Use filemtime for faster expiry check instead of reading+deserializing every file
+                    $mtime = filemtime($file);
+                    // Files older than max possible TTL are definitely expired
+                    if ($mtime !== false && ($now - $mtime) > self::$defaultTTL * 2) {
+                        @unlink($file);
                         $cleaned++;
+                    } else {
+                        $cached = self::safeUnserialize(file_get_contents($file));
+                        if ($cached === null || $cached['expires'] < $now) {
+                            @unlink($file);
+                            $cleaned++;
+                        }
                     }
                 }
             }

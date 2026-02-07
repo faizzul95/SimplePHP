@@ -140,7 +140,7 @@ class PerformanceMonitor
         ];
 
         // Add to query log
-        self::addToLog($entry, $queryType);
+        self::addToLog($entry);
 
         // Update statistics
         self::updateStats($executionTime, $memoryUsed, $queryType);
@@ -377,7 +377,14 @@ class PerformanceMonitor
             'avg_time' => 0,
             'max_time' => 0,
             'min_time' => PHP_FLOAT_MAX,
-            'memory_peak' => 0
+            'memory_peak' => 0,
+            'by_type' => [
+                'select' => ['count' => 0, 'time' => 0.0],
+                'insert' => ['count' => 0, 'time' => 0.0],
+                'update' => ['count' => 0, 'time' => 0.0],
+                'delete' => ['count' => 0, 'time' => 0.0],
+                'other' => ['count' => 0, 'time' => 0.0]
+            ]
         ];
     }
 

@@ -191,6 +191,80 @@ interface BuilderStatementInterface
     public function orWhereNotNull(string $column);
 
     /**
+     * Adds a WHERE NOT clause (negated condition or grouped closure).
+     *
+     * @param string|\Closure $column Column name or closure for grouped NOT.
+     * @param mixed $operator Operator or value.
+     * @param mixed $value Value if operator is provided.
+     * @return $this
+     */
+    public function whereNot($column, $operator = null, $value = null);
+
+    /**
+     * Adds an OR WHERE NOT clause.
+     *
+     * @param string|\Closure $column Column name or closure for grouped NOT.
+     * @param mixed $operator Operator or value.
+     * @param mixed $value Value if operator is provided.
+     * @return $this
+     */
+    public function orWhereNot($column, $operator = null, $value = null);
+
+    /**
+     * Adds a WHERE LIKE clause.
+     *
+     * @param string $column The column name.
+     * @param mixed $value The LIKE pattern.
+     * @return $this
+     */
+    public function whereLike($column, $value);
+
+    /**
+     * Adds an OR WHERE LIKE clause.
+     *
+     * @param string $column The column name.
+     * @param mixed $value The LIKE pattern.
+     * @return $this
+     */
+    public function orWhereLike($column, $value);
+
+    /**
+     * Adds a WHERE NOT LIKE clause.
+     *
+     * @param string $column The column name.
+     * @param mixed $value The LIKE pattern.
+     * @return $this
+     */
+    public function whereNotLike($column, $value);
+
+    /**
+     * Adds an OR WHERE NOT LIKE clause.
+     *
+     * @param string $column The column name.
+     * @param mixed $value The LIKE pattern.
+     * @return $this
+     */
+    public function orWhereNotLike($column, $value);
+
+    /**
+     * Adds a WHERE IN clause for raw integer values (no binding, faster for large lists).
+     *
+     * @param string $column The column name.
+     * @param array $values Array of integer values.
+     * @return $this
+     */
+    public function whereIntegerInRaw($column, array $values);
+
+    /**
+     * Adds a WHERE NOT IN clause for raw integer values.
+     *
+     * @param string $column The column name.
+     * @param array $values Array of integer values.
+     * @return $this
+     */
+    public function whereIntegerNotInRaw($column, array $values);
+
+    /**
      * Adds a whereDate clause to the query.
      *
      * @param string $column The column name.
@@ -319,6 +393,55 @@ interface BuilderStatementInterface
      * @return $this
      */
     public function orWhereColumn(string $column1, ?string $operator = null, ?string $column2 = null);
+
+    /**
+     * Add a WHERE clause matching ANY of the given columns.
+     *
+     * @param array $columns Array of column names.
+     * @param string $operator Comparison operator.
+     * @param mixed $value The value to compare.
+     * @return $this
+     */
+    public function whereAny(array $columns, $operator, $value);
+
+    /**
+     * Add a WHERE clause matching ALL of the given columns.
+     *
+     * @param array $columns Array of column names.
+     * @param string $operator Comparison operator.
+     * @param mixed $value The value to compare.
+     * @return $this
+     */
+    public function whereAll(array $columns, $operator, $value);
+
+    /**
+     * Add a WHERE clause matching NONE of the given columns.
+     *
+     * @param array $columns Array of column names.
+     * @param string $operator Comparison operator.
+     * @param mixed $value The value to compare.
+     * @return $this
+     */
+    public function whereNone(array $columns, $operator, $value);
+
+    /**
+     * Add a WHERE clause checking if a column value is between two other column values.
+     *
+     * @param string $column The column to check.
+     * @param array $columns Array of two column names [min_column, max_column].
+     * @return $this
+     */
+    public function whereBetweenColumns($column, array $columns);
+
+    /**
+     * Add a WHERE FULLTEXT search clause.
+     *
+     * @param string|array $columns Column(s) with fulltext index.
+     * @param string $value The search value.
+     * @param array $options Options: 'mode' => 'boolean'|'natural'|'expansion'.
+     * @return $this
+     */
+    public function whereFullText($columns, $value, array $options = []);
 
     /**
      * Conditionally adds query constraints if the given conditions are true.
@@ -455,6 +578,39 @@ interface BuilderStatementInterface
     public function inRandomOrder();
 
     /**
+     * Order by a column in descending order.
+     *
+     * @param string $column The column to order by.
+     * @return $this
+     */
+    public function orderByDesc($column);
+
+    /**
+     * Order by a column in ascending order.
+     *
+     * @param string $column The column to order by.
+     * @return $this
+     */
+    public function orderByAsc($column);
+
+    /**
+     * Adds a CROSS JOIN clause to the query.
+     *
+     * @param string $table The table to cross join.
+     * @return $this
+     */
+    public function crossJoin($table);
+
+    /**
+     * Add a subquery select expression.
+     *
+     * @param \Closure|string $query Closure or raw SQL for the subquery.
+     * @param string $alias Alias for the subquery column.
+     * @return $this
+     */
+    public function selectSub($query, $alias);
+
+    /**
      * Adds a raw order by clause to the query.
      *
      * @param string $string The raw order by string.
@@ -470,6 +626,15 @@ interface BuilderStatementInterface
      * @return $this
      */
     public function groupBy(string|array $columns);
+
+    /**
+     * Adds a raw GROUP BY expression.
+     *
+     * @param string $expression The raw GROUP BY expression.
+     * @param array $bindings Optional parameter bindings.
+     * @return $this
+     */
+    public function groupByRaw($expression, array $bindings = []);
 
     /**
      * Adds a having clause to the query.
@@ -488,6 +653,15 @@ interface BuilderStatementInterface
      * @return $this
      */
     public function havingRaw(string $conditions);
+
+    /**
+     * Adds a HAVING BETWEEN clause.
+     *
+     * @param string $column The column name.
+     * @param array $values Array of two values [min, max].
+     * @return $this
+     */
+    public function havingBetween($column, array $values);
 
     /**
      * Adds a limit clause to the query.

@@ -65,14 +65,55 @@ if (!function_exists('jsonResponse')) {
             $response_code = 400;
         }
 
+        // Clean any existing output buffers to prevent corruption
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
         // Set the HTTP response code and content type
         http_response_code($response_code);
 
         // Set the Content-Type header to indicate JSON response
         header('Content-Type: application/json');
 
-        // Encode the data as JSON with pretty printing for readability
-        echo json_encode($data, JSON_PRETTY_PRINT);
+        // Encode the data as JSON (without pretty print to reduce size)
+        $json = json_encode($data);
+
+        // Check if the web server is already handling compression (Apache mod_deflate, Nginx gzip)
+        // If so, skip manual compression to avoid double-encoding
+        $serverCompression = isset($_SERVER['HTTP_ACCEPT_ENCODING']) 
+            && (ini_get('zlib.output_compression') 
+                || in_array('ob_gzhandler', ob_list_handlers())
+                || !empty($_SERVER['HTTP_X_FORWARDED_FOR']) // proxy may compress
+            );
+
+        $acceptEncoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
+
+        if (!$serverCompression && str_contains($acceptEncoding, 'gzip') && function_exists('gzencode')) {
+            $compressed = gzencode($json, 6); // compression level 6 (balanced speed/size)
+            if ($compressed !== false) {
+                header('Content-Encoding: gzip');
+                header('Content-Length: ' . strlen($compressed));
+                echo $compressed;
+            } else {
+                // Fallback if compression fails
+                header('Content-Length: ' . strlen($json));
+                echo $json;
+            }
+        } elseif (!$serverCompression && str_contains($acceptEncoding, 'deflate') && function_exists('gzdeflate')) {
+            $compressed = gzdeflate($json, 6);
+            if ($compressed !== false) {
+                header('Content-Encoding: deflate');
+                header('Content-Length: ' . strlen($compressed));
+                echo $compressed;
+            } else {
+                header('Content-Length: ' . strlen($json));
+                echo $json;
+            }
+        } else {
+            header('Content-Length: ' . strlen($json));
+            echo $json;
+        }
 
         // Terminate the script
         exit;

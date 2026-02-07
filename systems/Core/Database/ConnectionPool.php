@@ -71,7 +71,7 @@ class ConnectionPool
      * @return \PDO
      * @throws \Exception
      */
-    public static function getConnection($name, array $config = null)
+    public static function getConnection($name, ?array $config = null)
     {
         self::$stats['total_requests']++;
 
@@ -113,17 +113,38 @@ class ConnectionPool
 
         $config = self::$configs[$name];
 
-        // Build DSN
+        // Build DSN with validated parameters
         $driver = $config['driver'] ?? 'mysql';
-        $dsn = "{$driver}:host={$config['host']};dbname={$config['database']}";
 
-        if (isset($config['charset'])) {
+        // Validate DSN components to prevent injection
+        $allowedDrivers = ['mysql', 'mariadb', 'pgsql', 'sqlite'];
+        if (!in_array($driver, $allowedDrivers, true)) {
+            throw new \Exception("Unsupported database driver: '$driver'");
+        }
+
+        $host = $config['host'] ?? 'localhost';
+        if (!preg_match('/^[a-zA-Z0-9._\-:]+$/', $host)) {
+            throw new \Exception("Invalid host format for connection '$name'");
+        }
+
+        $database = $config['database'] ?? '';
+        if (!preg_match('/^[a-zA-Z0-9_\-]+$/', $database)) {
+            throw new \Exception("Invalid database name format for connection '$name'");
+        }
+
+        $dsn = "{$driver}:host={$host};dbname={$database}";
+
+        if (isset($config['charset']) && preg_match('/^[a-zA-Z0-9_]+$/', $config['charset'])) {
             $dsn .= ";charset={$config['charset']}";
         }
         if (isset($config['port'])) {
-            $dsn .= ";port={$config['port']}";
+            $port = filter_var($config['port'], FILTER_VALIDATE_INT);
+            if ($port === false || $port < 1 || $port > 65535) {
+                throw new \Exception("Invalid port number for connection '$name'");
+            }
+            $dsn .= ";port={$port}";
         }
-        if (isset($config['socket'])) {
+        if (isset($config['socket']) && preg_match('/^[\/a-zA-Z0-9._\-]+$/', $config['socket'])) {
             $dsn .= ";unix_socket={$config['socket']}";
         }
 
@@ -151,12 +172,16 @@ class ConnectionPool
 
             return $pdo;
         } catch (\PDOException $e) {
-            throw new \Exception("Failed to create connection '$name': " . $e->getMessage());
+            // Never expose password in error messages
+            $safeMessage = preg_replace('/password[=:][^;\s]+/i', 'password=***', $e->getMessage());
+            throw new \Exception("Failed to create connection '$name': " . $safeMessage);
         }
     }
 
     /**
      * Check if a connection is still valid
+     * Uses a lightweight time-based check first, only pinging the DB
+     * if the connection has been idle for a significant period.
      *
      * @param string $name Connection name
      * @return bool
@@ -173,9 +198,15 @@ class ConnectionPool
             if ($idle > self::$connectionTimeout) {
                 return false;
             }
+
+            // If connection was used recently (within 5 seconds), skip the ping
+            // This avoids unnecessary SELECT 1 queries on active connections
+            if ($idle < 5) {
+                return true;
+            }
         }
 
-        // Test connection with a simple query
+        // Only ping the database if connection has been idle for a while
         try {
             self::$pool[$name]->query('SELECT 1');
             return true;

@@ -77,6 +77,7 @@ class StatementCache
 
     /**
      * Generate cache key for a statement
+     * Uses crc32 for speed — no need for cryptographic hashing here
      *
      * @param string $sql SQL query
      * @param string $connectionName Connection name
@@ -84,7 +85,7 @@ class StatementCache
      */
     protected static function generateKey($sql, $connectionName)
     {
-        return md5($connectionName . ':' . $sql);
+        return $connectionName . ':' . crc32($sql);
     }
 
     /**
@@ -168,8 +169,9 @@ class StatementCache
     public static function clearConnection($connectionName)
     {
         $cleared = 0;
+        $prefix = $connectionName . ':';
         foreach (array_keys(self::$cache) as $key) {
-            if (strpos($key, md5($connectionName)) === 0) {
+            if (strpos($key, $prefix) === 0) {
                 unset(self::$cache[$key]);
                 unset(self::$stats[$key]);
                 $cleared++;

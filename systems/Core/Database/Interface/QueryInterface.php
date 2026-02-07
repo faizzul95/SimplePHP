@@ -187,4 +187,66 @@ interface QueryInterface
      * @return array The SQL query as an array.
      */
     public function toDebugSql();
+
+    /**
+     * Run an aggregate function on the query.
+     *
+     * @param string $function Aggregate function (COUNT, SUM, AVG, MIN, MAX).
+     * @param string $column Column to aggregate on, default '*'.
+     * @return mixed The aggregate result.
+     */
+    public function aggregate($function, $column = '*');
+
+    /**
+     * Get the sum of a column.
+     *
+     * @param string $column Column to sum.
+     * @return mixed The sum result.
+     */
+    public function sum($column);
+
+    /**
+     * Get the average of a column.
+     *
+     * @param string $column Column to average.
+     * @return mixed The average result.
+     */
+    public function avg($column);
+
+    /**
+     * Get the minimum value of a column.
+     *
+     * @param string $column Column to find minimum.
+     * @return mixed The minimum value.
+     */
+    public function min($column);
+
+    /**
+     * Get the maximum value of a column.
+     *
+     * @param string $column Column to find maximum.
+     * @return mixed The maximum value.
+     */
+    public function max($column);
+
+    /**
+     * Get the raw SQL query with bindings substituted.
+     *
+     * @return string The SQL with values inlined.
+     */
+    public function toRawSql();
+
+    /**
+     * Dump the current SQL query and bindings for debugging.
+     *
+     * @return $this
+     */
+    public function dump();
+
+    /**
+     * Dump the current SQL query and bindings, then stop execution.
+     *
+     * @return void
+     */
+    public function dd();
 }
