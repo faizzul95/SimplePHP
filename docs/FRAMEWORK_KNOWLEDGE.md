@@ -21,6 +21,7 @@ controllers/              ← Action-based controllers (plain PHP functions)
   ScopeMacroQuery/        ← DB scope & macro registrations
 app/
   config/                 ← Config files (auto-loaded by bootstrap)
+  cron/                   ← Scheduled task scripts (cron jobs)
   helpers/                ← Helper functions (auto-loaded by hooks)
   routes/                 ← Web & API route definitions
   views/                  ← PHP view templates (Sneat theme)
@@ -36,6 +37,7 @@ Browser → index.php → bootstrap.php (config, session, helpers, menu)
   Web:  → app/routes/web.php → PageRouter → loads view file
   API:  → app/routes/api.php → Api component → route handler
   Ajax: → Middleware (XMLHttpRequestMiddleware) → Controller function
+  Cron: → php app/cron/script.php → bootstrap.php → direct DB/helper access
 ```
 
 ---
@@ -91,6 +93,14 @@ $menuList = [
 ```
 
 ### 2.3 API Routes (RESTful)
+
+> **⛔ CRITICAL WARNING — DO NOT USE API ROUTES**
+>
+> The API routing system (`app/routes/api.php` and the `Api` component) is **currently broken and non-functional**. Do **NOT** create or rely on API routes for any feature.
+>
+> **All server communication MUST use the Controller + AJAX pattern** (Section 3) — call controllers directly via `callApi()` / `submitApi()` with the `action` parameter. This is the only supported and working approach.
+>
+> API route definitions below are kept for reference only. They will be removed or reworked in a future release.
 
 Defined in `app/routes/api.php` using the `Api` component:
 
@@ -217,6 +227,10 @@ $result = db()->table('users')->where('id', $id)->delete();
 // Conditional clauses
 ->when($condition, function($q) { ... })    // execute if truthy
 ->unless($condition, function($q) { ... })  // execute if falsy
+
+// ⭐ BEST PRACTICE: Always use when() for conditional filters instead of
+//    wrapping queries in if/else blocks. This produces cleaner, more
+//    readable query chains. See Section 4.7 for detailed examples.
 
 // Advanced WHERE clauses
 ->orWhere('col', 'value')                   // OR condition
@@ -356,7 +370,26 @@ $result = db()->transaction(function($db) {
 
 ### 4.6 Query Scopes & Macros
 
-Registered in `controllers/ScopeMacroQuery/Scope.php` and `Macro.php`:
+All scope and macro files live in `controllers/ScopeMacroQuery/`. The framework auto-loads every PHP file in this folder via `loadScopeMacroDBFunctions()` in `systems/app.php` — no manual registration needed.
+
+#### File Organisation
+
+| File | Purpose | Rule |
+|------|---------|------|
+| `Scope.php` | **Framework-level** scopes (shipped with SimplePHP) | ⛔ Do NOT modify |
+| `Macro.php` | **Framework-level** macros (shipped with SimplePHP) | ⛔ Do NOT modify |
+| `ProjectScope.php` | **Project-specific** scopes you create for this project | ✅ Add your scopes here |
+| `ProjectMacro.php` | **Project-specific** macros you create for this project | ✅ Add your macros here |
+
+> **⛔ RULE: Never modify `Scope.php` or `Macro.php`** — these are framework base files. Always create project-specific scopes and macros in **separate files** (`ProjectScope.php`, `ProjectMacro.php`). This keeps framework updates clean and avoids merge conflicts.
+
+#### Built-in Scopes (Scope.php)
+
+`withTrashed`, `onlyTrashed`, `latest($column)`, `oldest($column)`, `recent($days, $column)`
+
+#### Built-in Macros (Macro.php)
+
+`whereLike($column, $value)` — auto-wraps value with `%` wildcards
 
 ```php
 // Usage:
@@ -364,13 +397,252 @@ db()->table('users')->latest()->get();
 db()->table('users')->whereLike('name', 'john')->get();  // macro: auto-wraps with %
 ```
 
-**Registered scopes** (in `Scope.php`): `withTrashed`, `onlyTrashed`, `latest($column)`, `oldest($column)`, `recent($days, $column)`
+#### Adding Project-Specific Scopes (`ProjectScope.php`)
 
-**Registered macros** (in `Macro.php`): `whereLike($column, $value)` — auto-wraps value with `%` wildcards
+```php
+<?php
+// controllers/ScopeMacroQuery/ProjectScope.php
+
+if (!function_exists('projectScopeQuery')) {
+    function projectScopeQuery($db)
+    {
+        try {
+            $listOfScope = [
+                'scopeName' => function ($param1, $param2 = null) {
+                    // $this refers to the query builder instance
+                    return $this->where('column', $param1);
+                },
+            ];
+
+            if (!empty($listOfScope)) {
+                $db->scopes($listOfScope);
+            }
+        } catch (Exception $e) {
+            logger()->logException($e);
+        }
+    }
+}
+```
+
+#### Adding Project-Specific Macros (`ProjectMacro.php`)
+
+```php
+<?php
+// controllers/ScopeMacroQuery/ProjectMacro.php
+
+if (!function_exists('projectMacroQuery')) {
+    function projectMacroQuery($db)
+    {
+        try {
+            $listOfMacros = [
+                'macroName' => function ($param1) {
+                    return $this->where('column', $param1);
+                },
+            ];
+
+            if (!empty($listOfMacros)) {
+                $db->macros($listOfMacros);
+            }
+        } catch (Exception $e) {
+            logger()->logException($e);
+        }
+    }
+}
+```
 
 > **IMPORTANT — No auto soft-delete filtering on reads:** Unlike Laravel, this framework does **NOT** automatically add `whereNull('deleted_at')` to SELECT queries. The `withTrashed` and `onlyTrashed` scopes are registered but non-functional for reads — `BaseDatabase._buildSelectQuery()` never checks the `$this->softDelete` property they set. **You MUST manually add `->whereNull('deleted_at')` to every query** on tables that have a `deleted_at` column. Only the `delete()` method has auto soft-delete behavior (redirects to `softDelete()` if the table has a `deleted_at` column).
 
-> **Note:** `latest` and `oldest` also exist as native query builder methods. The native `whereLike()` does NOT auto-wrap with `%` — use the macro version for convenience. Custom scopes/macros can be added to these files for project-specific needs.
+> **Note:** `latest` and `oldest` also exist as native query builder methods. The native `whereLike()` does NOT auto-wrap with `%` — use the macro version for convenience.
+
+### 4.7 Best Practice: Use `when()` for Clean Conditional Queries
+
+Always prefer `when()` over wrapping query parts in `if/else` blocks. This keeps the query chain readable, reduces nesting, and avoids breaking the fluent builder pattern.
+
+**❌ Avoid — messy if/else breaks the chain:**
+
+```php
+$query = db()->table('users')->whereNull('deleted_at');
+
+if (!empty($status)) {
+    $query->where('status', $status);
+}
+if (!empty($role)) {
+    $query->where('role_id', $role);
+}
+if (!empty($search)) {
+    $query->whereLike('name', $search);
+}
+
+$result = $query->get();
+```
+
+**✅ Preferred — clean fluent chain with `when()`:**
+
+```php
+$result = db()->table('users')
+    ->whereNull('deleted_at')
+    ->when($status, function($q) use ($status) {
+        $q->where('status', $status);
+    })
+    ->when($role, function($q) use ($role) {
+        $q->where('role_id', $role);
+    })
+    ->when($search, function($q) use ($search) {
+        $q->whereLike('name', $search);
+    })
+    ->get();
+```
+
+**Common `when()` use cases:**
+
+```php
+// Filter by date range (only if both dates provided)
+->when($startDate && $endDate, function($q) use ($startDate, $endDate) {
+    $q->whereBetween('created_at', $startDate, $endDate);
+})
+
+// Include trashed records only for admin
+// NOTE: when() does NOT support a second "else" callback — use unless() instead
+->when($includeDeleted, function($q) {
+    // truthy: skip soft-delete filter (show all including trashed)
+})
+->unless($includeDeleted, function($q) {
+    $q->whereNull('deleted_at');  // falsy: exclude trashed records
+})
+
+// Sort direction from user input
+->when($sortBy, function($q) use ($sortBy, $sortDir) {
+    $q->orderBy($sortBy, $sortDir ?? 'ASC');
+})
+->unless($sortBy, function($q) {
+    $q->orderByDesc('created_at');  // default sort when no sortBy provided
+})
+```
+
+> **Rule of thumb:** If a query has optional filters (status, search, date range, role, etc.), always use `when()`. It applies to `where()`, `orderBy()`, `select()`, `join()`, and any other builder method.
+
+### 4.8 Mandatory: Use `safeOutput()` for All User-Facing Queries
+
+`safeOutput()` HTML-encodes all string values in query results to prevent **stored XSS attacks**. It must be used on **every query that renders data in the browser**.
+
+```php
+// ✅ ALWAYS use safeOutput() before rendering data
+$users = db()->table('users')
+    ->whereNull('deleted_at')
+    ->safeOutput()        // ← MANDATORY for any data shown to users
+    ->get();
+
+// ✅ DataTable listing — safeOutput() before paginate_ajax()
+$result = db()->table('invoices')
+    ->whereNull('deleted_at')
+    ->setPaginateFilterColumn(['invoice_no', 'owner_name'])
+    ->safeOutput()        // ← MUST be before paginate_ajax()
+    ->paginate_ajax(request()->all());
+
+// ✅ Single record for display
+$data = db()->table('complaints')->where('id', $id)->safeOutput()->fetch();
+```
+
+**When safeOutput() is NOT needed (skip for performance):**
+
+```php
+// ❌ Internal processing only — no browser rendering
+$record = db()->table('users')->where('id', $id)->fetch();  // used for logic, not display
+$count = db()->table('invoices')->where('status', 'overdue')->count();
+$exists = db()->table('users')->where('email', $email)->exists();
+
+// ❌ Data used for calculations, comparisons, or backend logic
+$balance = db()->table('invoices')->where('unit_id', $unitId)->sum('amount');
+```
+
+> **⚠️ Performance note:** `safeOutput()` iterates over every field in every row and applies `htmlspecialchars()`. For large datasets, this adds processing time. Use it **only when data is rendered in HTML** — skip it for internal logic, aggregates, existence checks, and backend processing. For exports, prefer raw data (the export format handles encoding).
+
+> **Rule:** When in doubt, **use `safeOutput()`**. Security takes priority over performance. Only omit it when you are certain the data will never be rendered in a browser.
+
+### 4.9 Memory-Efficient Data Export with `chunk()` and `lazy()`
+
+For **any data export** (CSV, Excel, PDF) or batch processing of large datasets, **never use `->get()`** — it loads the entire result set into memory at once, which can crash the server for large tables.
+
+**Always use `chunk()` or `lazy()` instead:**
+
+#### `chunk()` — Process in fixed-size batches
+
+```php
+// ✅ Export to CSV — process 500 rows at a time
+function exportInvoicesCsv($request) {
+    $filename = 'invoices_' . date('Ymd_His') . '.csv';
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    
+    $output = fopen('php://output', 'w');
+    fputcsv($output, ['Invoice No', 'Unit', 'Amount', 'Status', 'Due Date']);
+    
+    db()->table('invoices')
+        ->whereNull('deleted_at')
+        ->when($status, function($q) use ($status) {
+            $q->where('status', $status);
+        })
+        ->orderByDesc('created_at')
+        ->chunk(500, function($rows) use ($output) {
+            foreach ($rows as $row) {
+                fputcsv($output, [
+                    $row['invoice_no'],
+                    $row['unit_name'],
+                    $row['amount'],
+                    $row['status'],
+                    $row['due_date'],
+                ]);
+            }
+        });
+    
+    fclose($output);
+    exit;
+}
+```
+
+#### `lazy()` — Generator-based streaming (lower memory)
+
+```php
+// ✅ Export with lazy() — streams rows one at a time
+function exportResidentsCsv($request) {
+    $filename = 'residents_' . date('Ymd_His') . '.csv';
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    
+    $output = fopen('php://output', 'w');
+    fputcsv($output, ['Name', 'Email', 'Unit', 'Occupancy Type']);
+    
+    $rows = db()->table('users')
+        ->whereNull('deleted_at')
+        ->where('status', 1)
+        ->lazy();  // returns a generator — rows fetched one at a time
+    
+    foreach ($rows as $row) {
+        fputcsv($output, [
+            $row['name'],
+            $row['email'],
+            $row['unit_name'],
+            $row['occupancy_type'],
+        ]);
+    }
+    
+    fclose($output);
+    exit;
+}
+```
+
+**When to use which:**
+
+| Method | Use When | Memory Usage |
+|--------|----------|-------------|
+| `->get()` | Small datasets (< 1,000 rows), display in browser | ⚠️ Loads ALL rows into memory |
+| `->chunk(N, callback)` | Exports, batch updates, large reports | ✅ Only N rows in memory at a time |
+| `->lazy()` | Streaming exports, very large datasets | ✅ One row at a time (generator) |
+| `->cursor()` | Same as lazy() (alias) | ✅ One row at a time |
+
+> **⛔ RULE: All export functions (CSV, Excel, PDF) MUST use `chunk()` or `lazy()`** — never `get()`. This prevents out-of-memory errors when exporting thousands of records (invoices, residents, fines, delivery history, etc.).
+
+> **Note:** `safeOutput()` is generally **not needed** for exports — the export format (CSV, Excel) handles encoding natively. Skip it for better performance in export functions.
 
 ---
 
@@ -398,6 +670,14 @@ $seg   = request()->segment(1);                     // URL segment
 ```
 
 ### 5.2 Validation
+
+> **⛔ MANDATORY RULE: Always validate on BOTH front-end AND back-end.**
+>
+> - **Front-end validation** (Section 7.6 — `validationJs()`) provides instant feedback to the user and prevents unnecessary server calls.
+> - **Back-end validation** (`request()->validate()` below) is the **security gate** — it must NEVER be skipped, even if front-end validation exists.
+> - Front-end validation can be bypassed by disabling JavaScript or manipulating requests. Back-end validation is the **only reliable defence**.
+> - Both validation layers should use **matching rules** — if the back-end requires `min_length:3|max_length:255`, the front-end should enforce the same.
+> - Every form submission flow must follow: **`validationJs()` → `submitApi()` → `request()->validate()`**.
 
 ```php
 $validation = request()->validate([
@@ -875,7 +1155,7 @@ Fetches all data upfront via `callApi()`, then renders with client-side DataTabl
 
 #### 7.4.3 Server-Side Controller Pattern
 
-See Section 10.3 for the controller template. The controller must return DataTables-compatible JSON using `->paginate_ajax(request()->all())`.
+See Section 11.3 for the controller template. The controller must return DataTables-compatible JSON using `->paginate_ajax(request()->all())`.
 
 ### 7.5 Frontend Helper Functions Reference
 
@@ -1455,7 +1735,153 @@ noti(422);                     // → "Ops! Something went wrong"
 
 ---
 
-## 9. Security Features
+## 9. Cron Jobs (Scheduled Tasks)
+
+All cron/scheduled task scripts are placed in the `app/cron/` folder. Each script is a standalone PHP file that bootstraps the application and executes its logic independently — no web server or AJAX middleware involved.
+
+### 9.1 File Location & Bootstrap
+
+Every cron script **must** include `bootstrap.php` to access the database, helpers, config, and all framework utilities:
+
+```php
+<?php
+// app/cron/my_task.php
+
+// Bootstrap application — gives access to db(), helpers, config, etc.
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+```
+
+> **⚠️ IMPORTANT:** The path `dirname(__DIR__, 2)` navigates from `app/cron/` up two levels to the project root where `bootstrap.php` lives. This must be the first executable line in every cron script.
+
+After bootstrapping, you have full access to:
+- `db()` — Database query builder (all methods from Section 4)
+- `timestamp()` — Current timestamp helper
+- `logError()` — Error logging
+- All helper functions from `app/helpers/`
+- All config values from `app/config/`
+
+### 9.2 Standard Cron Script Structure
+
+```php
+<?php
+
+/**
+ * Task Name — Cron Job
+ * 
+ * Schedule: [frequency, e.g., Daily at 02:00 AM, Every 5 minutes, Hourly]
+ * Command:  php /path/to/app/cron/task_name.php
+ * 
+ * [Brief description of what this cron does]
+ * 
+ * File: app/cron/task_name.php
+ */
+
+// Bootstrap application
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+// Result tracker — returned as JSON at the end
+$result = [
+    'status'    => 'ok',
+    'processed' => 0,
+    'timestamp' => date('Y-m-d H:i:s'),
+];
+
+try {
+
+    // ── Main logic ──
+    $records = db()->table('table_name')
+        ->where('status', 'pending')
+        ->whereNull('deleted_at')
+        ->get();
+
+    foreach ($records as $record) {
+        db()->table('table_name')
+            ->where('id', $record['id'])
+            ->update([
+                'status'     => 'processed',
+                'updated_at' => timestamp(),
+            ]);
+
+        $result['processed']++;
+    }
+
+    $result['status'] = 'completed';
+} catch (\Exception $e) {
+    $result['status'] = 'error';
+    $result['message'] = $e->getMessage();
+}
+
+header('Content-Type: application/json');
+echo json_encode($result);
+```
+
+### 9.3 Naming Convention
+
+Use descriptive, snake_case filenames that indicate the task purpose:
+
+```
+app/cron/
+  queue_processor.php         ← Processes a message/job queue
+  record_auto_close.php       ← Auto-closes records after a grace period
+  overdue_check.php           ← Flags overdue items
+  file_cleanup.php            ← Purges expired files from disk
+  token_expiry_cleanup.php    ← Expires stale tokens
+  expiry_notification.php     ← Sends warning notifications before expiry
+```
+
+**Typical schedule patterns:**
+
+| Frequency | Use For |
+|-----------|--------|
+| Every 2–5 minutes | Queue processors, real-time notifications |
+| Hourly | Token/session cleanup, cache invalidation |
+| Daily (off-peak) | Status transitions, auto-close, overdue checks, expiry warnings |
+| Weekly | File cleanup, report generation, data archival |
+
+### 9.4 Conventions & Rules
+
+1. **One file per task** — Each cron job is a single PHP file in `app/cron/`. Do not combine multiple tasks into one file.
+2. **Always bootstrap** — Every cron file must `require_once dirname(__DIR__, 2) . '/bootstrap.php';` as its first executable line.
+3. **JSON output** — Always output a JSON result object with at least `status` and `timestamp` fields. This enables monitoring and log parsing.
+4. **Config-driven** — Use `getSystemConfig()` for thresholds, batch sizes, retention periods, and feature toggles. Allow tasks to be disabled via config without removing the cron entry.
+5. **Audit trail** — Use `auditLog()` for every state-changing operation so changes are traceable.
+6. **Error handling** — Wrap all logic in `try/catch`. Log errors via `logError('cron', ...)` and set `$result['status'] = 'error'`.
+7. **Idempotent** — Cron scripts should be safe to run multiple times. Use status checks and date comparisons to avoid double-processing.
+8. **No session/auth** — Cron scripts run outside the web context. There is no logged-in user, no session, and no permission checks. Use `null` for `created_by`/`updated_by` fields or a system-level marker.
+9. **Batch processing** — For large datasets, use `->limit($batchSize)` or `->chunk()` to avoid memory issues (see Section 4.9).
+
+### 9.5 Server Crontab Setup
+
+```bash
+# ┌───────────── minute (0-59)
+# │ ┌───────────── hour (0-23)
+# │ │ ┌───────────── day of month (1-31)
+# │ │ │ ┌───────────── month (1-12)
+# │ │ │ │ ┌───────────── day of week (0-7, 0=Sun)
+# │ │ │ │ │
+# │ │ │ │ │
+
+# Every 5 minutes — queue processor
+*/5 * * * * php /var/www/project/app/cron/queue_processor.php >> /var/log/cron/queue.log 2>&1
+
+# Every hour — token cleanup
+0 * * * * php /var/www/project/app/cron/token_expiry_cleanup.php >> /var/log/cron/token.log 2>&1
+
+# Daily at 2:00 AM — expiry check
+0 2 * * * php /var/www/project/app/cron/expiry_check.php >> /var/log/cron/expiry.log 2>&1
+
+# Daily at 7:00 AM — auto-close
+0 7 * * * php /var/www/project/app/cron/record_auto_close.php >> /var/log/cron/autoclose.log 2>&1
+
+# Weekly Sunday 3:00 AM — file cleanup
+0 3 * * 0 php /var/www/project/app/cron/file_cleanup.php >> /var/log/cron/cleanup.log 2>&1
+```
+
+> **Tip:** Always redirect output to a log file (`>> /var/log/cron/xxx.log 2>&1`) for debugging. The JSON output from each script will be appended to the log.
+
+---
+
+## 10. Security Features
 
 | Feature | Config Key | Description |
 |---------|-----------|-------------|
@@ -1463,14 +1889,22 @@ noti(422);                     // → "Ops! Something went wrong"
 | CSRF Protection | `security.csrf` | Token-based, per-controller/action |
 | Rate Limiting | `security.throttle_request` | Request throttling |
 | Permission Check | `security.permission_request` | Middleware-level permission enforcement |
-| `safeOutput()` | Query builder method | HTML-encodes output to prevent stored XSS |
+| `safeOutput()` | Query builder method | HTML-encodes output to prevent stored XSS — **MANDATORY for all browser-rendered data** (see Section 4.8). Skip for internal logic and exports for performance. |
 | `secure_value` | Validation rule | Strips dangerous input patterns |
+
+> **⛔ Security rules that MUST be followed in every module:**
+>
+> 1. **`safeOutput()`** — Use on every query whose results are rendered in HTML (datatables, detail views, modals). See Section 4.8 for when to skip.
+> 2. **Dual validation** — Every form must validate on front-end (`validationJs()`) AND back-end (`request()->validate()`). See Section 5.2.
+> 3. **`chunk()` / `lazy()` for exports** — Never use `get()` for data exports. See Section 4.9.
+> 4. **`when()` for conditional queries** — Use `when()` instead of if/else around query builders. See Section 4.7.
+> 5. **DO NOT use API routes** — The API system is broken. Use Controller + AJAX pattern only. See Section 2.3.
 
 ---
 
-## 10. Reusable Patterns for New Modules
+## 11. Reusable Patterns for New Modules
 
-### 10.1 New Module Checklist
+### 11.1 New Module Checklist
 
 1. **Database:** Create table(s) with `id, ..., created_at, updated_at, deleted_at`
 2. **Controller:** Create `controllers/XxxController.php` with standard CRUD functions
@@ -1478,8 +1912,9 @@ noti(422);                     // → "Ops! Something went wrong"
 4. **Menu:** Register in `$menuList` in `bootstrap.php`
 5. **Permissions:** Add abilities to `system_abilities`, assign to roles via `system_permission`
 6. **Scopes:** Add module-specific scopes if needed in `ScopeMacroQuery/Scope.php`
+7. **Cron (if needed):** Create `app/cron/module_task.php` with bootstrap + standard structure (Section 9)
 
-### 10.2 Standard Table Schema Pattern
+### 11.2 Standard Table Schema Pattern
 
 ```sql
 CREATE TABLE `table_name` (
@@ -1495,7 +1930,7 @@ CREATE TABLE `table_name` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 ```
 
-### 10.3 Controller Template
+### 11.3 Controller Template
 
 ```php
 <?php
@@ -1562,7 +1997,7 @@ function destroy($request) {
 }
 ```
 
-### 10.4 View Template
+### 11.4 View Template
 
 ```php
 <?php includeTemplate('header'); ?>
@@ -1591,7 +2026,7 @@ async function getDataList() {
 <?php includeTemplate('footer'); ?>
 ```
 
-### 10.5 Modal Form Template
+### 11.5 Modal Form Template
 
 See Section 7.3.3 for the full modal form pattern with `getPassData()`, `submitApi()`, and `validationJs()`. Below is the simplified structure:
 
@@ -1668,7 +2103,7 @@ See Section 7.3.3 for the full modal form pattern with `getPassData()`, `submitA
 
 ---
 
-## 11. Key Helper Functions Reference
+## 12. Key Helper Functions Reference
 
 | Function | File | Purpose |
 |----------|------|---------|
@@ -1694,7 +2129,7 @@ See Section 7.3.3 for the full modal form pattern with `getPassData()`, `submitA
 
 ---
 
-## 12. Existing Database Tables (Base System)
+## 13. Existing Database Tables (Base System)
 
 | Table | Purpose |
 |-------|---------|
