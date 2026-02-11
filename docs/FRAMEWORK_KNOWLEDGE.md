@@ -191,10 +191,26 @@ $db = db('slave');    // Named connection
 
 ```php
 // SELECT
-$users = db()->table('users')->where('status', 1)->get();       // Multiple
-$user  = db()->table('users')->where('id', 1)->fetch();          // Single
-$count = db()->table('users')->where('status', 1)->count();      // Count
+$users = db()->table('users')->where('status', 1)->get();       // Multiple (returns array of associative arrays)
+$user  = db()->table('users')->where('id', 1)->fetch();          // Single (returns associative array)
+$count = db()->table('users')->where('status', 1)->count();      // Count (returns integer)
 $exists = db()->table('users')->where('email', $e)->exists();    // Boolean
+
+// ⚠️ IMPORTANT: Default return type is ARRAY (multidimensional)
+// get()   returns: [['id' => 1, 'name' => 'John'], ['id' => 2, 'name' => 'Jane']]
+// fetch() returns: ['id' => 1, 'name' => 'John', 'email' => 'john@example.com']
+//
+// Access data using ARRAY SYNTAX:
+// Correct:   $user['name']  or  foreach($users as $u) { echo $u['name']; }
+// Incorrect: $user->name    or  foreach($users as $u) { echo $u->name; }
+//
+// To convert results to objects or JSON, use these methods BEFORE get()/fetch():
+$users = db()->table('users')->toObject()->get();  // Returns array of stdClass objects
+$users = db()->table('users')->toJson()->get();    // Returns JSON string
+$users = db()->table('users')->toArray()->get();   // Explicit array (default, not needed)
+//
+// With toObject(), you can then use object syntax:
+// foreach($users as $u) { echo $u->name; }  // ✅ Works with toObject()
 
 // INSERT
 $result = db()->table('users')->insert([...]);
@@ -208,7 +224,14 @@ $result = db()->table('users')->insertOrUpdate(
     $data,               // data to save
     'id'                 // primary key column (default: 'id')
 );
+```
 
+> **⚡ Optimization Rule:**  When the operation is **confirmed** (you know it's a create or an update), use `insert()` or `update()` directly instead of `insertOrUpdate()`.
+> - Use `insert($data)` when you are certain it's a **new record** (e.g., logging, creating deliveries, recording transactions).
+> - Use `update($data)` with `->where('id', $id)` when you are certain you're **modifying an existing record** (e.g., status changes, callback updates).
+> - Only use `insertOrUpdate()` when the **same form/code path** genuinely handles both create and update (e.g., a shared save form where `id` may or may not be present), or for true upsert logic (e.g., `['user_id' => $userId]`).
+
+```php
 // SOFT DELETE
 $result = db()->table('users')->where('id', $id)->softDelete(
     'deleted_at',        // column name (default: 'deleted_at')
