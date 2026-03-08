@@ -1,0 +1,128 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Core\Http\Controller;
+use Core\Http\Request;
+use App\Http\Requests\SaveEmailTemplateRequest;
+
+class MasterEmailTemplateController extends Controller
+{
+    public function __construct()
+    {
+        parent::__construct();
+    }
+
+    public function index(): void
+    {
+        $this->setPageState('rbac', 'email', 'rbac-email-view', 'App Management', 'Email Template');
+        $this->view('rbac.emailTemplate');
+    }
+
+    public function listEmailTemplateDatatable(Request $request): void
+    {
+        $statusF = request()->input('email_status');
+
+        $db = db();
+        $result = $db->table('master_email_templates')
+            ->select('id, email_type, email_subject, email_status, email_cc, email_bcc')
+            ->when(strlen((string) $statusF) > 0, function ($query) use ($statusF) {
+                $query->where('email_status', $statusF);
+            })
+            ->setPaginateFilterColumn(['email_type', 'email_subject'])
+            ->safeOutput()
+            ->paginate_ajax(request()->all());
+
+        $result['data'] = array_map(function ($row) {
+            $id = encodeID($row['id']);
+
+            return [
+                'type' => $row['email_type'],
+                'subject' => $row['email_subject'],
+                'cc' => empty($row['email_cc']) ? 'NO' : 'YES',
+                'bcc' => empty($row['email_bcc']) ? 'NO' : 'YES',
+                'status' => $row['email_status'] ? '<span class="badge bg-label-success"> Active </span>' : '<span class="badge bg-label-warning"> Inactive </span>',
+                'action' => "
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
+                </span>
+                <div class='dropdown' style='display: inline-block; vertical-align: middle;'>
+                    <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
+                        <i class='bx bx-dots-vertical-rounded'></i>
+                    </button>
+                    <div class='dropdown-menu'>
+                        <a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'>
+                            <i class='bx bx-trash me-1'></i> Delete
+                        </a>
+                    </div>
+                </div>
+            "
+            ];
+        }, $result['data']);
+
+        jsonResponse($result);
+    }
+
+    public function show(string $id): void
+    {
+        $id = decodeID($id);
+
+        if (empty($id)) {
+            jsonResponse(['code' => 400, 'message' => 'ID is required']);
+        }
+
+        $emailTemplate = db()->table('master_email_templates')
+            ->where('id', $id)
+            ->safeOutputWithException(['email_body'])
+            ->fetch();
+
+        if (!$emailTemplate) {
+            jsonResponse(['code' => 404, 'message' => 'Email template not found']);
+        }
+
+        jsonResponse(['code' => 200, 'data' => $emailTemplate]);
+    }
+
+    public function save(SaveEmailTemplateRequest $request): void
+    {
+        $dataToSave = [
+            'email_type' => $request->validated('email_type'),
+            'email_subject' => $request->validated('email_subject'),
+            'email_body' => $request->validated('email_body'),
+            'email_status' => $request->validated('email_status'),
+            'email_footer' => $request->input('email_footer'),
+            'email_cc' => $request->input('email_cc'),
+            'email_bcc' => $request->input('email_bcc'),
+        ];
+
+        $result = db()->table('master_email_templates')->insertOrUpdate(
+            [
+                'id' => $request->input('id')
+            ],
+            $dataToSave
+        );
+
+        if (isError($result['code'])) {
+            jsonResponse(['code' => 422, 'message' => 'Failed to save email template']);
+        }
+
+        jsonResponse(['code' => 200, 'message' => 'Email template saved']);
+    }
+
+    public function destroy(string $id): void
+    {
+        $id = decodeID($id);
+
+        if (empty($id)) {
+            jsonResponse(['code' => 400, 'message' => 'ID is required']);
+        }
+
+        $result = db()->table('master_email_templates')->where('id', $id)->delete();
+
+        if (isError($result['code'])) {
+            jsonResponse(['code' => 422, 'message' => 'Failed to delete email template']);
+        }
+
+        jsonResponse(['code' => 200, 'message' => 'Email template deleted']);
+    }
+}

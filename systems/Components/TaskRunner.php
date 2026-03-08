@@ -37,12 +37,22 @@ class TaskRunner
     /**
      * @var string The directory path where job files will be stored.
      */
-    private $jobsDir = '../../jobs/';
+    private $jobsDir;
 
     /**
      * @var string|null The file path where task outputs will be logged, or null if logging is disabled.
      */
-    private $logPath = DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'TaskRunnerLog' . DIRECTORY_SEPARATOR;
+    private $logPath;
+
+    /**
+     * @var Logger|null Cached logger instance to avoid creating new objects per call.
+     */
+    private $loggerInstance = null;
+
+    /**
+     * @var string|null The log path used for the cached logger instance.
+     */
+    private $loggerCachedPath = null;
 
     /**
      * @var string PHP CLI command for current environment
@@ -61,8 +71,17 @@ class TaskRunner
 
     /**
      * TaskRunner constructor.
+     *
+     * @param string|null $jobsDir  Absolute path to the jobs directory (default: ROOT_DIR/jobs/)
+     * @param string|null $logPath  Absolute path to the log directory (default: ROOT_DIR/logs/TaskRunnerLog/)
      */
-    public function __construct() {}
+    public function __construct(?string $jobsDir = null, ?string $logPath = null)
+    {
+        $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR;
+
+        $this->jobsDir = $jobsDir ?? $rootDir . 'jobs' . DIRECTORY_SEPARATOR;
+        $this->logPath = $logPath ?? $rootDir . 'logs' . DIRECTORY_SEPARATOR . 'TaskRunnerLog' . DIRECTORY_SEPARATOR;
+    }
 
     /**
      * Add a task to the TaskRunner.
@@ -87,6 +106,26 @@ class TaskRunner
     public function setMaxConcurrentTasks($maxConcurrentTasks)
     {
         $this->maxConcurrentTasks = $maxConcurrentTasks;
+    }
+
+    /**
+     * Set the jobs directory path.
+     *
+     * @param string $jobsDir Absolute path to the jobs directory
+     */
+    public function setJobsDir(string $jobsDir)
+    {
+        $this->jobsDir = rtrim($jobsDir, '/\\') . DIRECTORY_SEPARATOR;
+    }
+
+    /**
+     * Set the log directory path.
+     *
+     * @param string $logPath Absolute path to the log directory
+     */
+    public function setLogPath(string $logPath)
+    {
+        $this->logPath = rtrim($logPath, '/\\') . DIRECTORY_SEPARATOR;
     }
 
     /**
@@ -223,7 +262,7 @@ class TaskRunner
     {
         $filePath = $this->jobsDir . $task['command'];
         $params = !empty($task['params']) ? implode(' ', $task['params']) : NULL;
-        $logFolderPath = dirname(__DIR__, 1) . $this->logPath . 'debug_log' . DIRECTORY_SEPARATOR;
+        $logFolderPath = $this->logPath . 'debug_log' . DIRECTORY_SEPARATOR;
 
         if (!is_dir($logFolderPath)) {
             mkdir($logFolderPath, 0755, true);
@@ -375,7 +414,14 @@ class TaskRunner
     private function logRecord($message, $type = 'error')
     {
         $logType = $type == 'error' ? 'log_error' : 'log_info';
-        $logger = new Logger(dirname(__DIR__, 1) . $this->logPath . $logType . date('Ymd') . '.log');
-        $logger->$logType($message);
+        $logFilePath = $this->logPath . $logType . date('Ymd') . '.log';
+
+        // Reuse logger instance if same path, avoid creating new Logger per call
+        if ($this->loggerInstance === null || $this->loggerCachedPath !== $logFilePath) {
+            $this->loggerInstance = new Logger($logFilePath);
+            $this->loggerCachedPath = $logFilePath;
+        }
+
+        $this->loggerInstance->$logType($message);
     }
 }

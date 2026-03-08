@@ -51,11 +51,7 @@ switch (ENVIRONMENT) {
     case 'testing':
     case 'production':
         ini_set('display_errors', 0);
-        if (version_compare(PHP_VERSION, '5.3', '>=')) {
-            error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT & ~E_USER_NOTICE & ~E_USER_DEPRECATED);
-        } else {
-            error_reporting(E_ALL & ~E_NOTICE & ~E_STRICT & ~E_USER_NOTICE);
-        }
+        error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT & ~E_USER_NOTICE & ~E_USER_DEPRECATED);
         break;
 
     default:
@@ -64,14 +60,36 @@ switch (ENVIRONMENT) {
         exit(1); // EXIT_ERROR
 }
 
+// Harden session configuration before starting
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_secure', ENVIRONMENT === 'production' ? '1' : '0');
+ini_set('session.cookie_samesite', 'Lax');
+ini_set('session.use_strict_mode', '1');
+ini_set('session.use_only_cookies', '1');
+
+// Only set session ID settings on PHP < 8.4 (deprecated in 8.4)
+if (PHP_VERSION_ID < 80400) {
+    ini_set('session.sid_length', '48');
+    ini_set('session.sid_bits_per_character', '6');
+}
+
 // Start session only if it hasn't been started already
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
-} else {
-    if ($config['sess_regenerate_destroy'] && (!isset($_SESSION['last_regeneration']) || (time() - $_SESSION['last_regeneration']) > $config['sess_time_to_update'])) {
-        session_regenerate_id(true);
+    // Set regeneration timer on new sessions
+    if (!isset($_SESSION['last_regeneration'])) {
         $_SESSION['last_regeneration'] = time();
     }
+}
+
+// Regenerate session ID periodically to prevent session fixation
+if (
+    !empty($config['sess_regenerate_destroy'])
+    && session_status() === PHP_SESSION_ACTIVE
+    && (!isset($_SESSION['last_regeneration']) || (time() - $_SESSION['last_regeneration']) > ($config['sess_time_to_update'] ?? 300))
+) {
+    session_regenerate_id(true);
+    $_SESSION['last_regeneration'] = time();
 }
 
 define('BASE_URL', getProjectBaseUrl());
@@ -97,7 +115,7 @@ $menuList = [
     'main' => [
         'dashboard' => [
             'desc' => 'Dashboard',
-            'url' => paramUrl(['_p' => "dashboard"], true),
+            'url' => url('dashboard'),
             'file' => 'app/views/dashboard/admin.php',
             'icon' => 'tf-icons bx bx-home-smile',
             'permission' => null,
@@ -107,7 +125,7 @@ $menuList = [
         ],
         'directory' => [
             'desc' => 'Directory',
-            'url' => paramUrl(['_p' => "directory"], true),
+            'url' => url('directory'),
             'file' => 'app/views/directory/users.php',
             'icon' => 'tf-icons bx bx-user',
             'permission' => 'user-view',
@@ -124,10 +142,7 @@ $menuList = [
             'subpage' => [
                 'roles' => [
                     'desc' => 'Roles',
-                    'url' => paramUrl(
-                        ['_p' => "rbac", '_sp' => "roles"],
-                        true
-                    ),
+                    'url' => url('rbac/roles'),
                     'file' => 'app/views/rbac/roles.php',
                     'permission' => 'rbac-roles-view',
                     'active' => true,
@@ -135,10 +150,7 @@ $menuList = [
                 ],
                 'email' => [
                     'desc' => 'Email Template',
-                    'url' => paramUrl(
-                        ['_p' => "rbac", '_sp' => "email"],
-                        true
-                    ),
+                    'url' => url('rbac/email'),
                     'file' => 'app/views/rbac/emailTemplate.php',
                     'permission' => 'rbac-email-view',
                     'active' => true,

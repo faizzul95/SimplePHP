@@ -38,10 +38,11 @@ class CSRF
         'csrf_cookie_name' => 'csrf_cookie',
         'csrf_expire' => 7200,
         'csrf_regenerate' => true,
-        'csrf_include_uris' => [],
+        'csrf_exclude_uris' => [],      // opt-out: URIs to SKIP CSRF (e.g. 'api/*')
+        'csrf_include_uris' => [],      // legacy opt-in (ignored when exclude list is non-empty)
         'csrf_secure_cookie' => true,
         'csrf_httponly' => true,
-        'csrf_samesite' => 'Strict'
+        'csrf_samesite' => 'Lax'
     ];
 
     /**
@@ -122,8 +123,8 @@ class CSRF
         try {
             $this->currentUri = $url;
 
-            // Only validate POST requests
-            if (!$this->isPostRequest()) {
+            // Only validate state-changing requests
+            if (!$this->isWriteRequest()) {
                 return true;
             }
 
@@ -132,15 +133,24 @@ class CSRF
                 return true;
             }
 
-            // Only check CSRF if current URI is in include list (if set)
-            if ($this->isIncludedUri()) {
-                // Perform token validation
-                return $this->validateToken();
+            // Opt-out model: skip CSRF for excluded URIs (e.g. API routes using Bearer tokens)
+            if ($this->isExcludedUri()) {
+                return true;
             }
 
-            return true;
+            // Legacy opt-in model: if include list is set and exclude list is empty,
+            // only validate URIs in the include list
+            $excludeUris = $this->config['csrf_exclude_uris'] ?? [];
+            $includeUris = $this->config['csrf_include_uris'] ?? [];
+            if (empty($excludeUris) && !empty($includeUris)) {
+                if (!$this->isIncludedUri()) {
+                    return true;
+                }
+            }
+
+            // Perform token validation
+            return $this->validateToken();
         } catch (RuntimeException $e) {
-            // Log error and fail securely
             error_log('CSRF validation error: ' . $e->getMessage());
             return false;
         }
@@ -233,13 +243,41 @@ class CSRF
     }
 
     /**
-     * Check if current request is POST
+     * Check if current request is a state-changing (write) method
      * 
      * @return bool
      */
-    private function isPostRequest(): bool
+    private function isWriteRequest(): bool
     {
-        return ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST';
+        $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+        return in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true);
+    }
+
+    /**
+     * Check if current URI is excluded from CSRF verification.
+     * Supports wildcard patterns (e.g. 'api/*').
+     * 
+     * @return bool
+     */
+    private function isExcludedUri(): bool
+    {
+        $excludeUris = $this->config['csrf_exclude_uris'] ?? [];
+        if (empty($excludeUris) || empty($this->currentUri)) {
+            return false;
+        }
+
+        $uri = ltrim($this->currentUri, '/');
+
+        foreach ($excludeUris as $pattern) {
+            $pattern = ltrim($pattern, '/');
+            // Convert wildcard pattern to regex
+            $regex = '#^' . str_replace('\*', '.*', preg_quote($pattern, '#')) . '$#i';
+            if (preg_match($regex, $uri)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -253,12 +291,23 @@ class CSRF
             return false;
         }
 
-        $includeUris = $this->config['csrf_include_uris'];
+        $includeUris = $this->config['csrf_include_uris'] ?? [];
         if (empty($includeUris)) {
             return false;
         }
 
-        return in_array($this->currentUri, $includeUris, true);
+        $uri = ltrim($this->currentUri, '/');
+
+        foreach ($includeUris as $pattern) {
+            $pattern = ltrim($pattern, '/');
+            // Support wildcard patterns like isExcludedUri
+            $regex = '#^' . str_replace('\*', '.*', preg_quote($pattern, '#')) . '$#i';
+            if (preg_match($regex, $uri)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -301,13 +350,26 @@ class CSRF
     }
 
     /**
-     * Get token from POST data
+     * Get token from POST data or X-CSRF-TOKEN header
      * 
      * @return string
      */
     private function getTokenFromPost(): string
     {
-        return $_POST[$this->config['csrf_token_name']] ?? '';
+        // Check POST body first
+        $token = $_POST[$this->config['csrf_token_name']] ?? '';
+
+        // Fall back to X-CSRF-TOKEN header (for AJAX requests)
+        if (empty($token)) {
+            $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+        }
+
+        // Fall back to X-XSRF-TOKEN header (for frameworks like Axios)
+        if (empty($token)) {
+            $token = $_SERVER['HTTP_X_XSRF_TOKEN'] ?? '';
+        }
+
+        return (string) $token;
     }
 
     /**
@@ -344,8 +406,14 @@ class CSRF
      */
     private function isTokenExpired(): bool
     {
-        $timestampCookie = $this->config['csrf_cookie_name'] . '_time';
-        $tokenTime = $_COOKIE[$timestampCookie] ?? 0;
+        // Check session-based timestamp first (server-side, tamper-proof)
+        if (session_status() === PHP_SESSION_ACTIVE && isset($_SESSION['_csrf_token_time'])) {
+            $tokenTime = $_SESSION['_csrf_token_time'];
+        } else {
+            // Fallback to cookie-based timestamp
+            $timestampCookie = $this->config['csrf_cookie_name'] . '_time';
+            $tokenTime = $_COOKIE[$timestampCookie] ?? 0;
+        }
 
         if (empty($tokenTime) || !is_numeric($tokenTime)) {
             return true;
@@ -389,7 +457,12 @@ class CSRF
             throw new RuntimeException('Failed to set CSRF token cookie');
         }
 
-        // Set timestamp cookie for expiration checking
+        // Store timestamp in session (server-side, tamper-proof)
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $_SESSION['_csrf_token_time'] = time();
+        }
+
+        // Set timestamp cookie as fallback
         $timestampCookie = $cookieName . '_time';
         if (!$this->setCookie($timestampCookie, (string)time(), $expireTime, $secure, $httpOnly, $sameSite)) {
             throw new RuntimeException('Failed to set CSRF timestamp cookie');
@@ -409,20 +482,14 @@ class CSRF
      */
     private function setCookie(string $name, string $value, int $expire, bool $secure, bool $httpOnly, string $sameSite): bool
     {
-        if (PHP_VERSION_ID >= 70300) {
-            // PHP 7.3+ supports SameSite in options array
-            return setcookie($name, $value, [
-                'expires' => $expire,
-                'path' => '/',
-                'domain' => '',
-                'secure' => $secure,
-                'httponly' => $httpOnly,
-                'samesite' => $sameSite
-            ]);
-        } else {
-            // Fallback for older PHP versions
-            return setcookie($name, $value, $expire, '/', '', $secure, $httpOnly);
-        }
+        return setcookie($name, $value, [
+            'expires' => $expire,
+            'path' => '/',
+            'domain' => '',
+            'secure' => $secure,
+            'httponly' => $httpOnly,
+            'samesite' => $sameSite
+        ]);
     }
 
     /**

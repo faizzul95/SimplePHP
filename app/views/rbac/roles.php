@@ -64,8 +64,7 @@
 
         // GET DATATABLE (SERVER-SIDE)
         async function getDataList() {
-            generateDatatableServer('dataList', 'controllers/RoleController.php', 'nodataDiv', {
-                    'action': 'listRolesDatatable',
+            generateDatatableServer('dataList', '<?= route('roles.list') ?>', 'nodataDiv', {
                     'role_status': $("#filter_role_status").val()
                 },
                 [{
@@ -103,17 +102,14 @@
         }
 
         function addRoles() {
-            loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Add Roles', {}, 'offcanvas');
+            loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', '<?= route('roles.save') ?>', 'Add Roles', {}, 'offcanvas');
         }
 
         async function editRecord(id) {
-            const res = await callApi('post', "controllers/RoleController.php", {
-                'action': 'show',
-                'id': id
-            });
+            const res = await callApi('get', "<?= route('roles.show') ?>".replace('{id}', id));
 
             if (isSuccess(res)) {
-                loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', 'controllers/RoleController.php', 'Update Roles', res.data.data, 'offcanvas');
+                loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', '<?= route('roles.save') ?>', 'Update Roles', res.data.data, 'offcanvas');
             }
         }
 
@@ -132,10 +128,7 @@
                 },
             }).then(async (result) => {
                 if (result.isConfirmed) {
-                    const res = await callApi('post', "controllers/RoleController.php", {
-                        'action': 'destroy',
-                        'id': id
-                    });
+                    const res = await callApi('delete', "<?= route('roles.delete') ?>".replace('{id}', id));
 
                     if (isSuccess(res)) {
                         const response = res.data;

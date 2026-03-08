@@ -49,7 +49,7 @@ if (!function_exists('getProjectBaseUrl')) {
 |--------------------------------------------------------------------------
 */
 if (!function_exists('config')) {
-    function config($key)
+    function config($key, $default = null)
     {
         global $config;
 
@@ -64,7 +64,7 @@ if (!function_exists('config')) {
             if (is_array($value) && array_key_exists($segment, $value)) {
                 $value = $value[$segment];
             } else {
-                return null;
+                return $default;
             }
         }
 
@@ -79,18 +79,40 @@ if (!function_exists('config')) {
 */
 
 spl_autoload_register(function ($class) {
-    $baseDir = __DIR__ . '/../systems/'; // root of class files
-    $classPath = str_replace('\\', DIRECTORY_SEPARATOR, $class);
-    $file = $baseDir . $classPath . '.php';
+    $classPath = str_replace('\\', DIRECTORY_SEPARATOR, $class) . '.php';
+    $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR;
 
-    try {
+    $prefixMap = [
+        'App\\Http\\Controllers\\' => $rootDir . 'app' . DIRECTORY_SEPARATOR . 'http' . DIRECTORY_SEPARATOR . 'controllers' . DIRECTORY_SEPARATOR,
+        'App\\Http\\Middleware\\'  => $rootDir . 'app' . DIRECTORY_SEPARATOR . 'http' . DIRECTORY_SEPARATOR . 'middleware' . DIRECTORY_SEPARATOR,
+        'App\\Http\\Requests\\'   => $rootDir . 'app' . DIRECTORY_SEPARATOR . 'http' . DIRECTORY_SEPARATOR . 'requests' . DIRECTORY_SEPARATOR,
+        'App\\Http\\'             => $rootDir . 'app' . DIRECTORY_SEPARATOR . 'http' . DIRECTORY_SEPARATOR,
+        'App\\Console\\'          => $rootDir . 'app' . DIRECTORY_SEPARATOR . 'console' . DIRECTORY_SEPARATOR,
+        'App\\'                   => $rootDir . 'app' . DIRECTORY_SEPARATOR,
+        'Core\\'                  => $rootDir . 'systems' . DIRECTORY_SEPARATOR . 'Core' . DIRECTORY_SEPARATOR,
+        'Components\\'            => $rootDir . 'systems' . DIRECTORY_SEPARATOR . 'Components' . DIRECTORY_SEPARATOR,
+        'Middleware\\'             => $rootDir . 'systems' . DIRECTORY_SEPARATOR . 'Middleware' . DIRECTORY_SEPARATOR,
+    ];
+
+    foreach ($prefixMap as $prefix => $baseDir) {
+        if (strpos($class, $prefix) !== 0) {
+            continue;
+        }
+
+        $relativeClass = substr($class, strlen($prefix));
+        $file = rtrim($baseDir, '/\\') . DIRECTORY_SEPARATOR . str_replace('\\', DIRECTORY_SEPARATOR, $relativeClass) . '.php';
+
         if (is_readable($file)) {
             require_once $file;
-        } else {
-            throw new Exception("File not readable: $file");
         }
-    } catch (Exception $e) {
-        die("Error: Unable to resolve file path for $file. " . $e->getMessage());
+
+        return;
+    }
+
+    // Backward compatibility for existing system classes
+    $legacyFile = $rootDir . 'systems' . DIRECTORY_SEPARATOR . $classPath;
+    if (is_readable($legacyFile)) {
+        require_once $legacyFile;
     }
 });
 
@@ -103,7 +125,8 @@ spl_autoload_register(function ($class) {
 if (!function_exists('loadHelperFiles')) {
     function loadHelperFiles()
     {
-        $helpersDir = __DIR__ . '/../app/helpers/'; // root of helper files
+        $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR;
+        $helpersDir = $rootDir . 'app' . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR;
 
         // Get all PHP files in the General folder
         $helperFiles = glob($helpersDir . '*.php');
@@ -134,12 +157,17 @@ if (!function_exists('loadHelperFiles')) {
  * @param mixed $params Parameters to pass to functions (can be single value or array)
  * @param string|array $filename Single filename or array of filenames
  * @param string|array $foldername Single folder name or array of folder names
- * @param string $base_path Base path for files/folders (default: '../controllers/')
+ * @param string $base_path Base path for files/folders (absolute path recommended)
  * @param bool $silent Whether to suppress error reporting (default: false)
  */
 if (!function_exists('loadScopeMacroDBFunctions')) {
-    function loadScopeMacroDBFunctions($params, $filename = [], $foldername = [], $base_path = '../controllers/', $silent = false)
+    function loadScopeMacroDBFunctions($params, $filename = [], $foldername = [], $base_path = null, $silent = false)
     {
+        // Default to ROOT_DIR/app/database/ if no base_path provided
+        if ($base_path === null) {
+            $base_path = (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR) . 'app' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR;
+        }
+
         // Input validation
         if (empty($filename) && empty($foldername)) {
             if (!$silent) {
@@ -418,8 +446,13 @@ if (!function_exists('debug')) {
 if (!function_exists('logger')) {
     function logger()
     {
-        global $config;
-        return new \Components\Logger(__DIR__ . '/../' . $config['error_log_path']);
+        static $instance = null;
+        if ($instance === null) {
+            global $config;
+            $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR;
+            $instance = new \Components\Logger($rootDir . $config['error_log_path']);
+        }
+        return $instance;
     }
 }
 
@@ -432,7 +465,67 @@ if (!function_exists('logger')) {
 if (!function_exists('request')) {
     function request()
     {
-        return new \Components\Request();
+        static $instance = null;
+        if ($instance === null) {
+            $instance = new \Components\Request();
+        }
+        return $instance;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| FRAMEWORK VIEW ENGINE
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('blade_engine')) {
+    function blade_engine()
+    {
+        static $blade = null;
+
+        if ($blade === null) {
+            $viewPath = ROOT_DIR . (config('framework.view_path') ?? 'app/views');
+            $cachePath = ROOT_DIR . (config('framework.view_cache_path') ?? 'storage/cache/views');
+            $blade = new \Core\View\BladeEngine($viewPath, $cachePath);
+        }
+
+        return $blade;
+    }
+}
+
+if (!function_exists('view')) {
+    function view($view, array $data = [])
+    {
+        $content = blade_engine()->render((string) $view, $data);
+        echo $content;
+        exit;
+    }
+}
+
+if (!function_exists('view_raw')) {
+    function view_raw($view, array $data = [])
+    {
+        return blade_engine()->render((string) $view, $data);
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| AUTH COMPONENT
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('auth')) {
+    function auth()
+    {
+        static $auth = null;
+
+        if ($auth === null) {
+            $auth = new \Components\Auth(\config('auth') ?? []);
+        }
+
+        return $auth;
     }
 }
 
@@ -472,8 +565,12 @@ if (!function_exists('validator')) {
 if (!function_exists('csrf')) {
     function csrf()
     {
-        global $config;
-        return new \Components\CSRF($config['security']['csrf']);
+        static $instance = null;
+        if ($instance === null) {
+            global $config;
+            $instance = new \Components\CSRF($config['security']['csrf']);
+        }
+        return $instance;
     }
 }
 
@@ -489,5 +586,117 @@ if (!function_exists('csrf_value')) {
     function csrf_value()
     {
         return csrf()->regenerate();
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| COLLECTION HELPER
+|--------------------------------------------------------------------------
+|
+|  collect([1, 2, 3])->map(fn($v) => $v * 2)->toArray();
+|
+*/
+
+if (!function_exists('collect')) {
+    /**
+     * Create a new Collection instance.
+     *
+     * @param  array|\Core\Collection $items
+     * @return \Core\Collection
+     */
+    function collect(array|\Core\Collection $items = []): \Core\Collection
+    {
+        return new \Core\Collection($items);
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| CACHE HELPER
+|--------------------------------------------------------------------------
+|
+|  cache('key');                      // get value
+|  cache(['key' => 'val'], 300);     // put value (300 seconds)
+|  cache()->remember('k', 60, fn()=> ...);
+|
+*/
+
+if (!function_exists('cache')) {
+    /**
+     * Get / set cache values, or return the CacheManager instance.
+     *
+     * @param  string|array|null $key
+     * @param  mixed             $default
+     * @return mixed|\Core\Cache\CacheManager
+     */
+    function cache(string|array|null $key = null, mixed $default = null): mixed
+    {
+        static $manager = null;
+
+        if ($manager === null) {
+            $manager = new \Core\Cache\CacheManager(\config('cache') ?? []);
+        }
+
+        // No arguments → return the manager
+        if ($key === null) {
+            return $manager;
+        }
+
+        // Array → batch put
+        if (is_array($key)) {
+            return $manager->putMany($key, is_int($default) ? $default : 0);
+        }
+
+        // String → get
+        return $manager->get($key, $default);
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| JOB DISPATCH HELPER
+|--------------------------------------------------------------------------
+|
+|  dispatch(new \App\Jobs\SendEmail($user));
+|
+*/
+
+if (!function_exists('dispatch')) {
+    /**
+     * Dispatch a job to the queue.
+     *
+     * @param  \Core\Queue\Job $job
+     * @return string|null  Job ID (null for sync driver)
+     */
+    function dispatch(\Core\Queue\Job $job): ?string
+    {
+        static $dispatcher = null;
+
+        if ($dispatcher === null) {
+            $dispatcher = new \Core\Queue\Dispatcher(\config('queue') ?? []);
+        }
+
+        return $dispatcher->dispatch($job);
+    }
+}
+
+if (!function_exists('schema')) {
+    /**
+     * Get the Schema builder instance.
+     *
+     * Usage:
+     *   schema()::create('users', function ($table) { ... });
+     *   schema()::dropIfExists('table');
+     *
+     * Or use Schema directly:
+     *   use Core\Database\Schema\Schema;
+     *   Schema::create('users', ...);
+     *
+     * @return string The Schema class FQCN for static calls
+     */
+    function schema(): string
+    {
+        return \Core\Database\Schema\Schema::class;
     }
 }

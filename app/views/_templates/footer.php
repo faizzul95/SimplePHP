@@ -44,9 +44,7 @@
 
     async function signOut() {
         if (confirm("Are you sure you want to logout?")) {
-            const res = await callApi('post', 'controllers/AuthController.php', {
-                'action': 'logout'
-            });
+            const res = await callApi('post', '<?= route('auth.logout') ?>', {});
 
             const resCode = parseInt(res.data.code);
             noti(resCode, res.data.message);
@@ -76,7 +74,7 @@
             'entity_id': entityId,
             'entity_type': entityType,
             'entity_file_type': entityFileType,
-            'url': 'controllers/UploadController.php',
+            'url': '<?= route('uploads.image-cropper') ?>',
             'imagePath': currentImage,
             'reloadFunction': reloadFunction,
             'folder_group': folderGroup,

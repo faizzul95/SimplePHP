@@ -1,0 +1,17 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * SimplePHP Console (Myth)
+ *
+ * Usage: php myth <command> [arguments] [options]
+ *
+ * Similar to Laravel's Artisan, this is the CLI entry point for
+ * running console commands, scheduling tasks, and code generation.
+ */
+
+require_once __DIR__ . '/bootstrap.php';
+
+$kernel = new \Core\Console\Kernel();
+$exitCode = $kernel->handle($_SERVER['argv'] ?? []);
+exit($exitCode);

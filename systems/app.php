@@ -73,7 +73,7 @@ try {
 if (!function_exists('db')) {
     function db($conn = 'default')
     {
-        global $dbObject, $logger;
+        global $dbObject, $logger, $config;
 
         $conn_db = null;
 
@@ -90,12 +90,14 @@ if (!function_exists('db')) {
         }
 
         if (!empty($conn_db)) {
-            // This use to load the scope/macro db
+            // Load scope/macro DB functions from config
+            $scopeMacroConfig = $config['framework']['scope_macro'] ?? [];
+            $scopeMacroBasePath = ROOT_DIR . ($scopeMacroConfig['base_path'] ?? 'app/database/');
             loadScopeMacroDBFunctions(
                 $conn_db,
-                [], // Put the file name here, Eg : ScopeQueryController.php
-                ['ScopeMacroQuery'], // put the folder name here
-                '../controllers/', // Base Path for the files or folder will be load. 
+                (array) ($scopeMacroConfig['files'] ?? []),
+                (array) ($scopeMacroConfig['folders'] ?? ['ScopeMacroQuery']),
+                $scopeMacroBasePath,
                 false // The error log message
             );
         }
@@ -110,4 +112,4 @@ if (!function_exists('db')) {
 |--------------------------------------------------------------------------
 */
 
-loadMiddlewaresFiles($config['middleware']);
+loadMiddlewaresFiles((array) ($config['middleware'] ?? []));

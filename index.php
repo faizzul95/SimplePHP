@@ -2,14 +2,10 @@
 
 require_once 'bootstrap.php';
 
-// Initialize and run the router
 try {
-    $requestUri = $_SERVER['REQUEST_URI'] ?? '';
-    if (strpos($requestUri, '/api/') !== false) {
-        require_once 'app/routes/api.php';
-    } else {
-        require_once 'app/routes/web.php';
-    }
+    $request = \Core\Http\Request::capture();
+    $kernel = new \App\Http\Kernel();
+    $kernel->handle($request);
 } catch (Exception $e) {
     error_log("Router initialization error: " . $e->getMessage());
     http_response_code(500);

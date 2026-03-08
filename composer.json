@@ -5,6 +5,12 @@
     "license": "MIT",
     "autoload": {
         "psr-4": {
+            "App\\Http\\Controllers\\": "app/http/controllers/",
+            "App\\Http\\Middleware\\": "app/http/middleware/",
+            "App\\Http\\Requests\\": "app/http/requests/",
+            "App\\Http\\": "app/http/",
+            "App\\Console\\": "app/console/",
+            "App\\Providers\\": "app/providers/",
             "App\\": "app/"
         }
     },

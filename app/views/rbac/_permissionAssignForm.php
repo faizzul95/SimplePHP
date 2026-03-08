@@ -11,8 +11,7 @@
     }
 
     async function getListPermissionAssignment() {
-        const res = await callApi('post', "controllers/PermissionController.php", {
-            'action': 'listPermissionAssignDatatable',
+        const res = await callApi('post', "<?= route('permissions.list-assignment') ?>", {
             'id': $('#tempPermRoleID').val()
         });
 
@@ -82,8 +81,7 @@
             },
         }).then(async (result) => {
             if (result.isConfirmed) {
-                const res = await callApi('post', "controllers/PermissionController.php", {
-                    'action': 'saveAssignment',
+                const res = await callApi('post', "<?= route('permissions.save-assignment') ?>", {
                     'role_id': roleID,
                     'abilities_id': abilitiesID,
                     'all_access': isAllAccess,

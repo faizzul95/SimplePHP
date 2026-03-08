@@ -23,7 +23,7 @@ class MariaDBDriver extends BaseDatabase
         $connectionName = !empty($connectionID) ? $connectionID : $this->connectionName;
 
         if (!isset($this->config[$connectionName])) {
-            die("Configuration for $connectionName not found");
+            throw new \RuntimeException("Configuration for '{$connectionName}' not found");
         }
 
         $this->setConnection($connectionName);
@@ -280,14 +280,21 @@ class MariaDBDriver extends BaseDatabase
 
     public function whereJsonContains($columnName, $jsonPath, $value)
     {
+        // Validate column name
+        $this->validateColumn($columnName);
+        $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in whereJsonContains().');
+
         // Check if the column is not null
         $this->whereNotNull($columnName);
 
-        // Construct the JSON search condition
-        $jsonCondition = "JSON_CONTAINS($columnName, '" . json_encode([$jsonPath => $value]) . "', '$')";
+        // Use parameterized binding for the JSON value to prevent injection
+        $jsonValue = json_encode([$jsonPath => $value], JSON_UNESCAPED_UNICODE);
+        if ($jsonValue === false) {
+            throw new \InvalidArgumentException('Failed to encode JSON value for whereJsonContains()');
+        }
 
-        // Add the condition to the query builder
-        $this->where($jsonCondition, null, 'JSON');
+        // Use parameterized binding via whereRaw instead of direct string concatenation
+        $this->whereRaw("JSON_CONTAINS($columnName, ?, '$')", [$jsonValue], 'AND');
         return $this;
     }
 

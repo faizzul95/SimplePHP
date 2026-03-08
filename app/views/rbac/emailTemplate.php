@@ -62,8 +62,7 @@
 
         // GET DATATABLE (SERVER-SIDE)
         async function getDataList() {
-            generateDatatableServer('dataList', 'controllers/MasterEmailTemplateController.php', 'nodataDiv', {
-                    'action': 'listEmailTemplateDatatable',
+            generateDatatableServer('dataList', '<?= route('email-templates.list') ?>', 'nodataDiv', {
                     'email_status': $("#filter_email_status").val()
                 },
                 [{
@@ -111,10 +110,7 @@
         }
 
         async function editRecord(id) {
-            const res = await callApi('post', "controllers/MasterEmailTemplateController.php", {
-                'action': 'show',
-                'id': id
-            });
+            const res = await callApi('get', "<?= route('email-templates.show') ?>".replace('{id}', id));
 
             if (isSuccess(res)) {
                 emailTemplateForm('update', res.data.data);
@@ -136,10 +132,7 @@
                 },
             }).then(async (result) => {
                 if (result.isConfirmed) {
-                    const res = await callApi('post', "controllers/MasterEmailTemplateController.php", {
-                        'action': 'destroy',
-                        'id': id
-                    });
+                    const res = await callApi('delete', "<?= route('email-templates.delete') ?>".replace('{id}', id));
 
                     if (isSuccess(res)) {
                         const response = res.data;

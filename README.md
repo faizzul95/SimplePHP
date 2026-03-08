@@ -1,14 +1,29 @@
 # SimplePHP
 
-A lightweight PHP project structure with modern features for rapid web application development using procedural programming approach.
+A lightweight PHP 8.0+ framework with modern features for rapid web application development, combining procedural simplicity with Laravel-inspired architecture.
 
 ## Features
 
 - **Organized File Structure** - Clean separation of controllers, helpers, and core components
 - **Database Query Builder** - Fluent, expressive database interactions with Laravel-style eager loading — no models required
-- **Request Handling** - Modern request/response utilities
+- **Modern HTTP Router** - Fast indexed routing with middleware pipeline, named routes, route groups, multi-parameter routes, `where()` constraints, middleware groups, and 405 Method Not Allowed detection
+- **API Versioning** - Support for versioned (`/api/v1/users`) and non-versioned (`/api/users`) API routes via route group prefixing
+- **Blade-like Template Engine** - Template compilation with caching, includes `@forelse`, `@method`, `@error`, `@checked`, `@class`, and more
+- **Artisan-like Console** - CLI command system with argument parsing, scheduling (cron expressions), colored output, progress bars, and scaffolding generators
+- **Laravel-like Auth** - Configurable session keys, `login()`, `attempt()`, OAuth/Socialite support, dual session + API token authentication
+- **RBAC Permissions** - Role-based access control with abilities, checked for both session and token auth
+- **Collection Class** - Fluent array wrapper with 60+ methods (map, filter, where, pluck, groupBy, reduce, etc.) inspired by Laravel Collection
+- **Cache System** - Unified cache API with file and array drivers, remember pattern, counters, and batch operations
+- **Job Queue** - Database-backed job queue with background workers, retries, failed job management, and delayed dispatch
+- **Configurable Security Headers** - CSP and Permissions-Policy built from config, not hardcoded — easily add CDN domains
+- **Schema Builder** - Fluent, database-agnostic API for creating tables, indexes, procedures, functions, triggers, and views
+- **Migration System** - Versioned database schema changes with `up()`/`down()`, deploy.json tracking (no migration table needed), seeders, and `timestamps()`/`softDeletes()` shortcuts
+- **Backup System** - Spatie-like backup component for database and file backups with cron scheduling and automatic cleanup
+- **Request Handling** - Modern request/response utilities with FormRequest validation
+- **API Component** - Token-based API authentication with rate limiting, CORS, and SQL injection protection
+- **Middleware Traits** - Composable security traits (XSS protection, rate limiting, permissions) usable in custom middleware
 - **Environment Configuration** - Multi-environment support
-- **Helper Functions** - Extensive collection of utility functions
+- **Helper Functions** - Extensive collection of utility functions including `collect()`, `cache()`, `dispatch()`
 
 ## Installation
 
@@ -19,7 +34,11 @@ cd simplephp
 ```
 2. Edit `app/config/*.php` with your database and mail settings
 
-3. Import example database schema in #db folder
+3. Run database migrations:
+```bash
+php myth migrate
+php myth db:seed
+```
 
 ## Configuration
 
@@ -76,122 +95,170 @@ $config['mail'] = [
 
 ## Usage
 
-### Controller Actions
+### Routing
 
-SimplePHP uses an action-based routing system. Controllers are invoked by specifying an `action` parameter that corresponds to the function name in the controller.
+SimplePHP uses a clean URL router. Define routes in `app/routes/web.php` (web) or `app/routes/api.php` (API):
+
+```php
+// app/routes/web.php
+use App\Http\Controllers\UserController;
+
+$router->get('/users', [UserController::class, 'index'])->name('users.index');
+$router->post('/users/save', [UserController::class, 'store'])->name('users.store');
+$router->get('/users/{id}', [UserController::class, 'show'])->name('users.show');
+$router->delete('/users/{id}', [UserController::class, 'destroy'])->name('users.delete');
+
+// Multi-parameter routes
+$router->get('/users/{id}/posts/{postId}', [PostController::class, 'show']);
+
+// Route parameter constraints
+$router->get('/users/{id}', [UserController::class, 'show'])
+    ->where('id', '[0-9]+');               // Regex constraint
+    // ->whereNumber('id')                   // Shortcut for [0-9]+
+    // ->whereAlpha('slug')                  // Shortcut for [a-zA-Z]+
+    // ->whereAlphaNumeric('code')           // Shortcut for [a-zA-Z0-9]+
+
+// Route groups with shared middleware and prefix
+$router->group(['prefix' => 'admin', 'middleware' => ['auth.web']], function ($router) {
+    $router->get('/dashboard', [DashboardController::class, 'index']);
+    $router->resource('/roles', RoleController::class);
+});
+```
+
+### API Versioning
+
+```php
+// app/routes/api.php — Versioned API
+$router->group(['prefix' => '/api/v1', 'middleware' => ['auth.api']], function ($router) {
+    $router->get('/users', [UserApiController::class, 'index']);
+    $router->resource('/posts', PostApiController::class);
+});
+
+// Non-versioned API (internal use)
+$router->group(['prefix' => '/api', 'middleware' => ['auth.api']], function ($router) {
+    $router->get('/health', [SystemController::class, 'health']);
+});
+```
 
 ### Form Submissions
 
-All forms must include a hidden input field with the `action` parameter to specify which controller function to invoke:
+Forms submit to named routes — no hidden `action` fields needed:
 
 ```html
-<form method="POST" action="controllers/ExampleController.php">
-    
-    <!-- Your form fields here -->
+<form method="POST" action="{{ route('users.store') }}">
+    @csrf
     <input type="text" name="name" required>
     <input type="email" name="email" required>
-    
-    <!-- Required to have this hidden action -->
-    <input type="hidden" name="action" value="save" readonly>
     <button type="submit">Submit</button>
 </form>
 ```
 
-### API Calls with callApi Wrapper
-
-When using the `callApi` wrapper function, include the `action` parameter to specify which controller function to call:
+### API Calls
 
 ```javascript
-// Example: Calling the 'show' function in ExampleController
-const res = await callApi('post', "controllers/ExampleController.php", {
-    'action': 'show',
-    'id': id
-});
-
-// Example: Calling the 'save' function
-const saveRes = await callApi('post', "controllers/UserController.php", {
-    'action': 'save',
-    'name': 'John Doe',
-    'email': 'john@example.com'
-});
-
-// Example: Calling the 'delete' function
-const deleteRes = await callApi('post', "controllers/UserController.php", {
-    'action': 'delete',
-    'id': userId
+// Use named routes via the route() helper or direct URLs
+const res = await callApi('get', "/api/v1/users");
+const user = await callApi('get', `/api/v1/users/${id}`);
+const saved = await callApi('post', "/api/v1/users", {
+    name: 'John Doe',
+    email: 'john@example.com'
 });
 ```
 
-### Controller Structure
+### Controller Structure (Class-Based)
 
-Controllers should be structured with functions that correspond to different actions:
+Controllers are classes with methods mapped to routes. Use **FormRequest** for automatic validation:
 
 ```php
 <?php
-// controllers/ExampleController.php
+// app/http/controllers/UserController.php
 
-function save($request) {
-    // Handle save logic
-    $validation = request()->validate([
-        'name' => 'required|string|min_length:3|max_length:255|secure_value',
-        'email' => 'required|email|max_length:255|secure_value',
-        'id' => 'numeric',
-    ]);
+namespace App\Http\Controllers;
 
-    if (!$validation->passed()) {
-        jsonResponse(['code' => 400, 'message' => $validation->getFirstError()]);
+use Core\Http\Controller;
+use App\Http\Requests\SaveUserRequest;
+use Core\Http\Request;
+
+class UserController extends Controller
+{
+    public function index()
+    {
+        $users = db()->table('users')->whereNull('deleted_at')->safeOutput()->paginate();
+        return view('directory/users', ['users' => $users]);
     }
 
-    $result = db()->table('users')->insertOrUpdate(
-        [
-            'id' => request()->input('id') // Similar as $_POST['id'] or $request['id']
-        ],
-        request()->all()
-    );
+    public function store(SaveUserRequest $request)
+    {
+        $data = $request->validated();
 
-    if (isError($result['code'])) {
-        jsonResponse(['code' => 422, 'message' => 'Failed to save user']);
+        $result = db()->table('users')->insertOrUpdate(
+            ['id' => $request->input('id')],
+            $data
+        );
+
+        if (isError($result['code'])) {
+            return ['code' => 422, 'message' => 'Failed to save user'];
+        }
+
+        return ['code' => 200, 'message' => 'User saved'];
     }
 
-    jsonResponse(['code' => 200, 'message' => 'User saved']);
+    public function show(string $id)
+    {
+        $data = db()->table('users')->where('id', (int) $id)->safeOutput()->fetch();
+
+        if (!$data) {
+            return ['code' => 404, 'message' => 'User not found'];
+        }
+
+        return ['code' => 200, 'data' => $data];
+    }
+
+    public function destroy(string $id)
+    {
+        $result = db()->table('users')->where('id', (int) $id)->softDelete();
+
+        if (isError($result['code'])) {
+            return ['code' => 422, 'message' => 'Failed to delete data'];
+        }
+
+        return ['code' => 200, 'message' => 'Data deleted'];
+    }
 }
+```
 
-function show($request) {
-    // Handle show logic
-    $id = request()->input('id'); // Similar as $_POST['id'] or $request['id']
-    
-    if (empty($id)) {
-        jsonResponse(['code' => 400, 'message' => 'ID is required']);
+### FormRequest Validation
+
+```php
+<?php
+// app/http/requests/SaveUserRequest.php
+
+namespace App\Http\Requests;
+
+use Core\Http\FormRequest;
+
+class SaveUserRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        $rules = [
+            'name'  => 'required|string|min_length:3|max_length:255',
+            'email' => 'required|email|max_length:255',
+        ];
+
+        if ($this->isCreate()) {
+            $rules['password'] = 'required|min_length:8';
+        }
+
+        return $rules;
     }
 
-    $data = db()->table('users')->where('id', $id)->safeOutput()->fetch();
-    // $data = db()->where('id', $id)->safeOutput()->fetch('users'); // without using table()
-
-    if (!$data) {
-        jsonResponse(['code' => 404, 'message' => 'User not found']);
+    public function authorize(): bool
+    {
+        return true;
     }
-    
-    jsonResponse(['code' => 200, 'data' => $data]);
 }
-
-function delete($request) {
-    // Handle delete logic
-    $id = request()->input('id'); // Similar as $_POST['id'] or $request['id']
-    
-    if (empty($id)) {
-        jsonResponse(['code' => 400, 'message' => 'ID is required']);
-    }
-
-    // $result = db()->table('users')->where('id', $id)->delete();
-    $result = db()->table('users')->where('id', $id)->softDelete();
-
-    if (isError($result['code'])) {
-        jsonResponse(['code' => 422, 'message' => 'Failed to delete data']);
-    }
-
-    jsonResponse(['code' => 200, 'message' => 'Data deleted']);
-}
-?>
+```
 ```
 
 ## Database Usage
@@ -979,7 +1046,15 @@ $query = db()->table('users')
 
 ## Security Notes
 
-- Always use `->safeOutput` when working with the query builder before calling `->get`, `->fetch`, `->paginate`, or `->paginate_ajax` to prevent XSS injection from being displayed on the frontend.
+- Always use `->safeOutput()` when working with the query builder before calling `->get()`, `->fetch()`, `->paginate()`, or `->paginate_ajax()` to prevent XSS injection from being displayed on the frontend.
+- CSRF protection is enabled by default for all POST/PUT/PATCH/DELETE requests. Use `@csrf` in forms. AJAX calls via `callApi()` automatically include the CSRF token.
+- CSP headers are configurable in `app/config/security.php` — add CDN domains to the `csp` array without changing code.
+- Trusted proxies are configurable in `security.php` to prevent IP spoofing.
+- All passwords use `password_hash(PASSWORD_DEFAULT)` (bcrypt) and `password_verify()`.
+- Bearer tokens are SHA-256 hashed before database storage.
+- Session hardening: HttpOnly, SameSite=Lax, Secure (production), strict mode, session regeneration on login.
+- Scheduler output paths are sanitized against directory traversal.
+- Rate limiter file writes use `LOCK_EX` for atomic operations.
 
 ### Advanced Queries with Relationships (Using eager loading)
 
@@ -1276,73 +1351,119 @@ Both methods support parameter binding for security:
 - Use `:0`, `:1`, etc. for named parameters
 - Always use parameterized queries to prevent SQL injection
 
-## Controllers (Function-Based)
+## Controllers (Class-Based)
 
-Controllers in SimplePHP are organized as functions rather than classes:
+Controllers in SimplePHP use class methods routed via the HTTP Router:
 
-### Authentication Controller Example
+### Web Controller Example
 
 ```php
-// controllers/AuthController.php
 <?php
-require_once '../bootstrap.php';
+// app/http/controllers/AuthController.php
 
-function authorize($request)
+namespace App\Http\Controllers;
+
+use Core\Http\Controller;
+use Core\Http\Request;
+
+class AuthController extends Controller
 {
-    $username = request()->input('username');
-    $password = request()->input('password');
-    
-    $response = ['code' => 400, 'message' => 'Invalid username or password'];
-    
-    $userData = db()->query(
-        "SELECT `id`, `password` FROM `users` WHERE `email` = :0 OR `username` = :0", 
-        [$username]
-    )->fetch();
-    
-    if (!empty($userData)) {
-        // Rate limiting check
-        $ipUser = request()->ip();
-        $countAttempt = db()->query(
-            "SELECT COUNT(*) as count FROM `system_login_attempt` 
-             WHERE `ip_address` = ? AND `time` > NOW() - INTERVAL 10 MINUTE AND `user_id` = ?", 
-            [$ipUser, $userData['id']]
-        )->fetch();
-        
-        if ($countAttempt['count'] >= 5) {
-            $response = [
-                'code' => 429,
-                'message' => 'Too many login attempts. Please try again later.',
-            ];
-            jsonResponse($response);
-        }
-        
-        if (password_verify($password, $userData['password'])) {
-            $response = loginSessionStart($userData, 1);
-            // Clear login attempts on successful login
-            db()->table('system_login_attempt')->where('user_id', $userData['id'])->delete();
-        } else {
-            // Log failed attempt
-            db()->table('system_login_attempt')->insert([
-                'ip_address' => $ipUser,
-                'user_id' => $userData['id'],
-                'user_agent' => request()->userAgent(),
-                'time' => timestamp()
-            ]);
-        }
+    public function showLogin()
+    {
+        return view('auth/login');
     }
-    
-    jsonResponse($response);
-}
 
-function logout()
-{
-    session_destroy();
-    jsonResponse([
-        'code' => 200,
-        'message' => 'Logout',
-        'redirectUrl' => url(REDIRECT_LOGIN),
-    ]);
+    public function authorize(Request $request)
+    {
+        $username = $request->input('username');
+        $password = $request->input('password');
+
+        $userData = db()->query(
+            "SELECT `id`, `password` FROM `users` WHERE (`email` = :0 OR `username` = :0) AND `deleted_at` IS NULL",
+            [$username]
+        )->fetch();
+
+        if (empty($userData) || !password_verify($password, $userData['password'])) {
+            return ['code' => 400, 'message' => 'Invalid username or password'];
+        }
+
+        $response = loginSessionStart($userData, 1);
+
+        // Clear login attempts on success
+        db()->table('system_login_attempt')->where('user_id', $userData['id'])->delete();
+
+        return $response;
+    }
+
+    public function logout()
+    {
+        session_destroy();
+        return [
+            'code' => 200,
+            'message' => 'Logout',
+            'redirectUrl' => url(REDIRECT_LOGIN),
+        ];
+    }
 }
+```
+
+### API Controller Example
+
+```php
+<?php
+// app/http/controllers/Api/UserApiController.php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Requests\Api\StoreUserRequest;
+use Core\Http\Request;
+
+class UserApiController
+{
+    public function index(Request $request): array
+    {
+        $limit = (int) $request->input('limit', 20);
+        $data = db()->table('users')
+            ->select('id, name, email, username, user_status, created_at')
+            ->whereNull('deleted_at')
+            ->orderBy('id', 'DESC')
+            ->limit(min($limit, 100))
+            ->safeOutput()
+            ->get();
+
+        return ['code' => 200, 'data' => $data];
+    }
+
+    public function store(StoreUserRequest $request): array
+    {
+        $payload = $request->validated();
+        $insert = db()->table('users')->insert([
+            'name'     => $payload['name'],
+            'email'    => $payload['email'],
+            'username' => $payload['username'],
+            'password' => password_hash($payload['password'], PASSWORD_DEFAULT),
+        ]);
+
+        return isSuccess($insert['code'] ?? 500)
+            ? ['code' => 201, 'message' => 'User created']
+            : ['code' => 422, 'message' => 'Failed to create user'];
+    }
+}
+```
+
+### Route Registration
+
+```php
+// app/routes/web.php
+$router->get('/login', [AuthController::class, 'showLogin'])->name('login');
+$router->post('/auth/login', [AuthController::class, 'authorize'])->name('auth.login');
+$router->post('/auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
+
+// app/routes/api.php
+$router->group(['prefix' => 'api/v1', 'middleware' => ['auth.api']], function ($router) {
+    $router->get('/users', [UserApiController::class, 'index']);
+    $router->post('/users', [UserApiController::class, 'store']);
+});
 ```
 
 ## Request Handling
@@ -1385,64 +1506,75 @@ return [
 ```
 simplephp/
 ├── app/                           
-│   ├── routes/                     # Menu Routes
+│   ├── database/                   # Database migrations & seeders
+│   │    ├── migrations/            # Migration files (YYYYMMDD_00x_name.php)
+│   │    ├── seeders/               # Seeder files (YYYYMMDD_00x_NameSeeder.php)
+│   │    └── deploy.json            # Migration & seeder tracking (auto-generated)
+│   ├── routes/                     # Route definitions (web, api, console)
+│   │    ├── web.php                # Web routes
+│   │    ├── api.php                # API routes
+│   │    └── console.php            # Console commands & schedules
 │   ├── config/                    # System configuration
 │   │    ├── api.php
+│   │    ├── cache.php              # Cache driver config
 │   │    ├── config.php
 │   │    ├── database.php
+│   │    ├── framework.php          # Middleware aliases, groups, service providers
 │   │    ├── integration.php
 │   │    ├── mailer.php
-│   │    ├── security.php
+│   │    ├── queue.php              # Job queue driver config
+│   │    └── security.php
+│   ├── http/                       # HTTP layer
+│   │    ├── Kernel.php             # HTTP kernel (middleware pipeline)
+│   │    ├── controllers/           # Controller classes
+│   │    ├── middleware/            # Custom middleware
+│   │    │    ├── RequireAuth.php    # Unified session+token auth
+│   │    │    ├── RequirePermission.php
+│   │    │    ├── RequireSessionAuth.php
+│   │    │    ├── RequireApiToken.php
+│   │    │    ├── EnsureGuest.php
+│   │    │    ├── RateLimit.php
+│   │    │    └── SetSecurityHeaders.php
+│   │    └── requests/              # Form request validation
 │   ├── helpers/                    # PHP Function helpers
-│   │    ├── custom_api_helper.php
-│   │    ├── custom_array_helper.php
-│   │    ├── custom_date_time_helper.php
-│   │    ├── custom_debug_helper.php
-│   │    ├── custom_general_helper.php
-│   │    ├── custom_mailer_helper.php
-│   │    ├── custom_project_helper.php
-│   │    ├── custom_session_helper.php
-│   │    ├── custom_template_helper.php
-│   │    └── custom_upload_helper.php
-│   └── views/                      # View templates
-|        ├── _templates/            # Template files
-│        └── auth/                  # Authentication views
-│             └── login.php
-├── controllers/                    # Controller functions
-│   ├── AuthController.php          # Authentication functions
-│   ├── RoleController.php          # Role management functions
-│   └── UserController.php          # User management functions
-├── systems/                        # Core system files
+│   ├── jobs/                       # Queue job classes (created by make:job)
+│   └── views/                      # View templates (Blade-like)
+├── systems/                        # Core framework files
 │   ├── Components/                 # System components
-│   │   ├── Debug.php
-│   │   ├── Logger.php
-│   │   ├── PageRouter.php
-│   │   ├── Request.php
-│   │   ├── Validation.php
-│   │   ├── Input.php
-│   │   ├── CSRF.php
-│   │   ├── Files.php
-│   │   └── HTML.php
-│   ├── Core/               # Core functionality
-│   │    ├── Database/       # Database drivers and helpers
-│   │    │   ├── Drivers/
-│   │    │   ├── Interface/
-│   │    │   ├── BaseDatabase.php
-│   │    │   ├── Database.php
-│   │    │   ├── DatabaseCache.php
-│   │    │   └── DatabaseHelper.php
-│   │    └── LazyCollection.php
-│   ├── Middleware/              
-│   │    └── Traits/      
-│   │        ├── PermissionAbilitiesTrait.php
-│   │        ├── RateLimitingThrottleTrait.php
-│   │        ├── SecurityHeadersTrait.php
-│   │        └── XssProtectionTrait.php
-│   └── app.php
-├── public/                # Public web files
-├── logs/                  # Application logs
-└── bootstrap.php              
-└── index.php              
+│   │   ├── Api.php                 # API token auth + rate limiting
+│   │   ├── Auth.php                # Authentication manager
+│   │   ├── Backup.php              # Spatie-like backup system
+│   │   ├── CSRF.php                # CSRF protection
+│   │   ├── Debug.php               # Debug utilities
+│   │   ├── Files.php               # File upload handling
+│   │   ├── HTML.php                # HTML utilities
+│   │   ├── Input.php               # Input sanitization
+│   │   ├── Logger.php              # Logging component
+│   │   ├── Request.php             # Request utilities
+│   │   ├── TaskRunner.php          # Task execution
+│   │   └── Validation.php          # Validation engine
+│   ├── Core/                       # Core functionality
+│   │    ├── Collection.php         # Fluent array wrapper (60+ methods)
+│   │    ├── LazyCollection.php     # Iterator-based chunked collection
+│   │    ├── Cache/                 # CacheManager, FileStore, ArrayStore
+│   │    ├── Console/               # Console Kernel + built-in Commands
+│   │    ├── Database/              # Database drivers and query builder
+│   │    ├── Http/                  # HTTP request/response/kernel
+│   │    ├── Queue/                 # Job, Dispatcher, Worker
+│   │    ├── Routing/               # Router, Pipeline, ServiceProvider
+│   │    └── View/BladeEngine.php   # Blade template engine
+│   ├── Middleware/                  # Framework middleware + traits
+│   ├── app.php                     # DB connection, scopes, middleware
+│   └── hooks.php                   # Autoloader, helpers (collect, cache, dispatch)
+├── storage/
+│   ├── cache/                      # Compiled views, query cache, app cache
+│   └── backups/                    # Backup archives (auto-created)
+├── public/                         # Public web files
+├── logs/                           # Application logs
+├── docs/                           # Documentation
+├── bootstrap.php                   # Application bootstrap
+├── myth                            # CLI entry point (like Laravel's artisan)
+└── index.php                       # Web entry point
 ```
 
 ## Helper Functions
@@ -1457,6 +1589,23 @@ SimplePHP includes various helper functions organized by category:
 - **Project Helpers**: Project-specific utilities
 - **Session Helpers**: Session management utilities
 - **Upload Helpers**: File upload handling
+
+### Global Helpers (hooks.php)
+
+| Function | Description |
+|----------|-------------|
+| `collect($items)` | Create a `Collection` instance — `collect([1,2,3])->map(fn($v) => $v * 2)` |
+| `cache($key, $default)` | Get/set cache or return `CacheManager` — `cache('key')`, `cache(['k' => 'v'], 300)` |
+| `dispatch($job)` | Dispatch a job to the queue — `dispatch(new SendEmail($user))` |
+| `db()` | Get the Database instance |
+| `auth()` | Get the Auth instance |
+| `csrf()` | Get the CSRF instance |
+| `logger()` | Get the Logger instance |
+| `config($key)` | Load a config file by name |
+| `request()` | Get the Request instance |
+| `response()` | Get the Response class |
+| `route($name, $params)` | Generate URL from named route |
+| `blade_engine()` | Get the BladeEngine instance |
 
 ### Database Operations
 
@@ -1596,10 +1745,659 @@ SimplePHP includes various helper functions organized by category:
 | `disconnect()`          | Disconnects from the database.                                                                              |
 | `reset()`               | Resets the query builder state.                                                                             |
 
+## Modern HTTP Router
+
+SimplePHP includes a fast, indexed HTTP router with middleware pipeline support:
+
+```php
+// app/routes/web.php
+$router->get('/', [DashboardController::class, 'index']);
+$router->get('/users', [UserController::class, 'index'])->middleware('auth');
+$router->post('/users', [UserController::class, 'store'])->middleware('auth:session');
+
+// Array middleware syntax
+$router->post('/api/upload', [UploadController::class, 'store'])
+    ->middleware(['throttle:120,1', 'xss', 'auth:token']);
+
+// Route groups with shared middleware
+$router->group(['middleware' => ['auth', 'permission:admin']], function($router) {
+    $router->get('/admin/settings', [SettingsController::class, 'index']);
+    $router->post('/admin/settings', [SettingsController::class, 'update']);
+});
+
+// Resource routes
+$router->resource('/roles', RoleController::class);
+
+// Multi-parameter routes
+$router->get('/users/{id}/posts/{postId}', [PostController::class, 'show']);
+
+// Route parameter constraints
+$router->get('/users/{id}', [UserController::class, 'show'])
+    ->whereNumber('id')
+    ->name('users.show');
+
+// API versioning via group prefix
+$router->group(['prefix' => '/api/v1', 'middleware' => ['auth.api']], function ($router) {
+    $router->resource('/users', UserApiController::class);
+});
+```
+
+### Route Performance
+- Static routes use O(1) hashmap lookup
+- Dynamic routes use pre-compiled regex patterns
+- Automatic 405 Method Not Allowed responses with `Allow` header
+
+## Schema Builder & Migrations
+
+### Schema Builder
+
+Create and modify tables using a fluent, Laravel-like API:
+
+```php
+use Core\Database\Schema\Schema;
+use Core\Database\Schema\Blueprint;
+
+// Create a table
+Schema::create('posts', function (Blueprint $table) {
+    $table->id();                                  // BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY
+    $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+    $table->string('title');
+    $table->text('body')->nullable();
+    $table->enum('status', ['draft', 'published'])->default('draft');
+    $table->timestamps();                          // created_at + updated_at
+    $table->softDeletes();                         // deleted_at (nullable)
+});
+
+// Modify a table
+Schema::table('posts', function (Blueprint $table) {
+    $table->string('subtitle')->nullable()->after('title');
+    $table->dropColumn('metadata');
+});
+
+// Introspection
+Schema::hasTable('users');             // bool
+Schema::hasColumn('users', 'email');   // bool
+Schema::getColumnListing('users');     // ['id', 'name', ...]
+```
+
+### Migrations
+
+Migrations live in `app/database/migrations/` with format `YYYYMMDD_00x_name.php`:
+
+```php
+<?php
+use Core\Database\Schema\Schema;
+use Core\Database\Schema\Blueprint;
+use Core\Database\Schema\Migration;
+
+return new class extends Migration
+{
+    protected string $table = 'posts';
+    protected string $connection = 'default';
+
+    public function up(): void
+    {
+        Schema::create($this->table, function (Blueprint $table) {
+            $table->id();
+            $table->string('title');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists($this->table);
+    }
+};
+```
+
+### Seeders
+
+Seeders live in `app/database/seeders/` with format `YYYYMMDD_00x_NameSeeder.php`:
+
+```php
+<?php
+use Core\Database\Schema\Seeder;
+
+return new class extends Seeder
+{
+    protected string $table = 'master_roles';
+    protected string $connection = 'default';
+
+    public function run(): void
+    {
+        // Simple insert
+        $this->insert($this->table, [
+            'role_name' => 'Administrator',
+            'role_rank' => 1000,
+            'role_status' => 1,
+        ]);
+
+        // Insert or update (upsert)
+        $this->insertOrUpdate($this->table, ['id' => 1], [
+            'role_name' => 'Super Administrator',
+            'role_rank' => 9999,
+            'role_status' => 1,
+        ]);
+    }
+};
+```
+
+### Migration Commands
+
+```bash
+php myth migrate                    # Run all pending migrations
+php myth migrate:rollback           # Rollback last batch
+php myth migrate:rollback --step=3  # Rollback 3 batches
+php myth migrate:reset              # Rollback everything
+php myth migrate:fresh              # Drop all tables + re-migrate (destructive)
+php myth migrate:status             # Show migration & seeder status
+php myth db:seed                    # Run all pending seeders
+php myth db:seed --class=MasterRolesSeeder  # Run specific seeder
+php myth make:migration create_posts_table  # Generate migration
+php myth make:seeder PostsSeeder            # Generate seeder
+```
+
+Migration and seeder state is tracked in `app/database/deploy.json` (no database table needed). Both migrations and seeders are recorded with timestamps, batch numbers, and status.
+
+## Myth CLI (Artisan-like Console)
+
+Run commands via `php myth <command>`:
+
+```bash
+# Scaffolding
+php myth make:controller UserController --resource
+php myth make:controller Api/V2/OrderController --api
+php myth make:middleware CheckAge
+php myth make:request StoreUserRequest
+php myth make:model Product
+php myth make:job SendWelcomeEmail
+
+# Cache management
+php myth cache:clear              # Clear all caches
+php myth cache:clear views        # Clear only view cache
+php myth view:clear               # Clear compiled views
+
+# Route inspection
+php myth route:list               # Display all registered routes
+
+# Queue management
+php myth queue:work               # Start processing jobs
+php myth queue:work --queue=emails --tries=5 --sleep=5
+php myth queue:work --once        # Process single job then exit
+php myth queue:failed             # List failed jobs
+php myth queue:retry {id}         # Retry specific failed job
+php myth queue:retry all          # Retry all failed jobs
+php myth queue:flush              # Delete all failed jobs
+php myth queue:clear              # Clear pending jobs
+
+# Database & Backup
+php myth db:backup                # Quick database backup
+php myth backup:run               # Full backup (DB + files)
+php myth backup:run --only-db     # Database only
+php myth backup:run --only-files  # Files only
+php myth backup:clean --days=30   # Remove backups older than 30 days
+
+# Migrations & Seeders
+php myth migrate                  # Run pending migrations
+php myth migrate:rollback         # Rollback last batch
+php myth migrate:reset            # Rollback all migrations
+php myth migrate:fresh            # Drop all + re-migrate
+php myth migrate:status           # Show status table
+php myth db:seed                  # Run all pending seeders
+php myth make:migration create_posts_table
+php myth make:seeder PostsSeeder
+
+# Development
+php myth serve --port=8080        # Start PHP dev server
+php myth key:generate             # Generate app key
+php myth storage:link             # Create storage symlink
+
+# Scheduler (add to crontab: * * * * * php /path/to/myth schedule:run)
+php myth schedule:run             # Run due scheduled tasks
+php myth schedule:list            # Show all scheduled tasks
+```
+
+### Custom Commands
+```php
+// app/routes/console.php
+$console->command('mail:send {user} {--queue}', function($args, $options) use ($console) {
+    $userId = $args[0] ?? null;
+    $useQueue = $options['queue'] ?? false;
+    $console->info("Sending mail to user {$userId}...");
+    // ... logic
+    $console->success('Mail sent!');
+})->describe('Send email to a user');
+```
+
+### Task Scheduling
+
+Define schedules in `app/routes/console.php` using a fluent API:
+
+```php
+// app/routes/console.php — inside the schedule section
+$console->getSchedule()->command('backup:run')
+    ->dailyAt('02:00')
+    ->withoutOverlapping()
+    ->description('Daily full backup');
+
+$console->getSchedule()->command('backup:clean --days=30')
+    ->weekly()->sundays()->at('03:00')
+    ->description('Clean old backups');
+
+$console->getSchedule()->command('cache:clear query')
+    ->hourly()
+    ->description('Purge stale query cache');
+```
+
+Run the scheduler every minute via crontab:
+```bash
+* * * * * php /path/to/myth schedule:run >> /dev/null 2>&1
+```
+
+## Collection
+
+A fluent wrapper for arrays with 60+ methods, inspired by Laravel's Collection:
+
+```php
+$users = collect([
+    ['name' => 'John', 'age' => 30, 'role' => 'admin'],
+    ['name' => 'Jane', 'age' => 25, 'role' => 'user'],
+    ['name' => 'Bob',  'age' => 35, 'role' => 'admin'],
+]);
+
+// Filter, sort, transform
+$adminNames = $users
+    ->where('role', 'admin')
+    ->sortBy('name')
+    ->pluck('name')
+    ->toArray();  // ['Bob', 'John']
+
+// Aggregation
+$users->avg('age');     // 30
+$users->sum('age');     // 90
+$users->min('age');     // 25
+$users->max('age');     // 35
+
+// Grouping
+$byRole = $users->groupBy('role');
+// ['admin' => Collection(John, Bob), 'user' => Collection(Jane)]
+
+// Chaining with conditions
+$result = collect($data)
+    ->when($search, fn($c) => $c->filter(fn($r) => str_contains($r['name'], $search)))
+    ->whereNotNull('email')
+    ->unique('email')
+    ->values()
+    ->toArray();
+
+// Available methods include: map, filter, reject, where, whereIn, whereNull,
+// whereBetween, pluck, sortBy, groupBy, keyBy, chunk, flatten, merge, unique,
+// first, last, contains, reduce, each, pipe, tap, when, unless, and many more.
+```
+
+## Cache System
+
+Unified cache API with file and array drivers:
+
+```php
+// Via helper
+cache()->put('key', $value, 300);           // Store for 5 minutes
+$value = cache('key');                       // Get value
+cache(['key' => 'value'], 300);             // Batch put
+
+// Remember pattern (cache-aside)
+$users = cache()->remember('all_users', 600, function () {
+    return db()->table('users')->get();
+});
+
+// Counters, pull, add
+cache()->increment('page_views');
+$token = cache()->pull('one-time-token');    // Get + delete
+cache()->add('lock', true, 60);             // Only if not exists
+cache()->flush();                            // Clear all
+```
+
+Configure in `app/config/cache.php`. Supports `file` (default) and `array` drivers.
+
+## Job Queue
+
+Database-backed job queue for asynchronous task processing:
+
+```php
+// Create a job
+// php myth make:job SendWelcomeEmail
+
+class SendWelcomeEmail extends \Core\Queue\Job
+{
+    public function __construct(private string $email) {}
+    
+    public function handle(): void
+    {
+        mailer()->to($this->email)->send('welcome');
+    }
+    
+    public function failed(\Throwable $e): void
+    {
+        logger()->error("Send failed: " . $e->getMessage());
+    }
+}
+
+// Dispatch
+dispatch(new SendWelcomeEmail('user@example.com'));
+dispatch((new SendWelcomeEmail($email))->onQueue('emails')->delay(60));
+```
+
+Run workers: `php myth queue:work --queue=emails --tries=3`
+
+Configure in `app/config/queue.php`. Supports `database` and `sync` drivers. Tables auto-created on first use.
+
+## Backup System
+
+Spatie-like backup component supporting database + file backups with cron integration:
+
+```php
+use Components\Backup;
+
+// Database backup only
+$result = (new Backup())->database()->run();
+
+// Full backup (DB + project files)
+$result = (new Backup())->database()->files()->run();
+
+// Custom configuration
+$backup = new Backup([
+    'backup_path' => '/custom/path',
+    'filename_prefix' => 'myapp',
+    'directories' => ['/path/to/app', '/path/to/config'],
+    'exclude' => ['*.log', 'vendor', 'node_modules'],
+    // Optional override: exact binary path (if known)
+    'mysqldump_path' => '/usr/bin/mysqldump',
+
+    // Optional search list (supports glob patterns) when path is not fixed
+    'mysqldump_search_paths' => [
+        '/usr/bin/mysqldump',
+        '/usr/local/bin/mysqldump',
+        'C:/Program Files/MySQL/*/bin/mysqldump.exe',
+        'C:/xampp/mysql/bin/mysqldump.exe',
+    ],
+]);
+$result = $backup->database()->files()->run();
+
+// Cleanup old backups
+$removed = (new Backup())->cleanup(30); // Remove backups older than 30 days
+
+// List existing backups
+$backups = (new Backup())->listBackups();
+```
+
+### Backup via Cron
+```bash
+# Automated via console scheduler (already configured):
+# Daily at 2:00 AM - Full backup
+# Weekly Sunday 3:00 AM - Cleanup old backups
+
+# Or add directly to crontab:
+0 2 * * * php /path/to/myth backup:run >> /var/log/backup.log 2>&1
+0 3 * * 0 php /path/to/myth backup:clean --days=30 >> /var/log/backup.log 2>&1
+```
+
+## Authentication & Middleware
+
+### Laravel-like Auth Component
+
+The `Auth` class provides configurable session keys, `login()`/`attempt()` methods, and OAuth/Socialite support:
+
+```php
+// Attempt credentials without logging in
+$user = auth()->attempt(['email' => $email, 'password' => $password]);
+
+// Login by user ID (regenerates session)
+auth()->login($userId, [
+    'userFullName' => $user['name'],
+    'userEmail'    => $user['email'],
+    'roleID'       => $profile['role_id'],
+    'permissions'  => getPermissionSlug($permissions),
+]);
+
+// OAuth / Socialite login
+$authUser = auth()->socialite('google', $socialUserData, function (&$userData) {
+    $userData['status'] = 1;
+});
+
+// Token authentication
+$token = auth()->createToken($userId, 'api-access', ['user-view'], 30);
+auth()->revokeAllTokens($userId);
+
+// Session helpers
+auth()->check();    // true/false
+auth()->id();       // user ID
+auth()->user();     // session/token user data
+auth()->logout();   // destroys session
+```
+
+### Unified Auth Middleware
+
+SimplePHP supports both session and API token authentication through a unified `auth` middleware:
+
+```php
+// Accept either session or token auth
+$router->get('/profile', [ProfileController::class, 'show'])->middleware('auth');
+
+// Session-only (web pages)
+$router->get('/dashboard', [DashboardController::class, 'index'])->middleware('auth:session');
+
+// Token-only (API endpoints)
+$router->get('/api/users', [ApiUserController::class, 'index'])->middleware('auth:token');
+
+// Permission checking works with both auth types
+$router->get('/admin', [AdminController::class, 'index'])->middleware('permission:admin-access');
+```
+
+### Available Middleware Aliases
+| Alias | Class | Description |
+|-------|-------|-------------|
+| `auth` | `RequireAuth` | Session or token authentication |
+| `auth.web` | `RequireSessionAuth` | Session-only authentication |
+| `auth.api` | `RequireApiToken` | Token-only (Bearer) authentication |
+| `guest` | `EnsureGuest` | Redirect authenticated users |
+| `permission` | `RequirePermission` | Check RBAC permission (session + token) |
+| `throttle` | `RateLimit` | Laravel-style rate limiting |
+| `aggressive-throttle` | `ThrottleRequests` | Aggressive IP-based throttling with blocking |
+| `xss` | `XssProtection` | XSS pattern detection on input |
+| `headers` | `SetSecurityHeaders` | CSP, HSTS, and security headers |
+
+### Middleware Groups
+
+Groups bundle multiple middleware under one name. Configure in `app/config/framework.php`:
+
+```php
+'middleware_groups' => [
+    'web' => ['headers', 'throttle:web'],
+    'api' => ['headers', 'throttle:api', 'xss', 'api.log'],
+],
+```
+
+Use in routes — groups are automatically expanded:
+```php
+$router->get('/page', [PageController::class, 'show'])->middleware('web');
+// Expands to: ['headers', 'throttle:web']
+
+// Mix groups with individual middleware (array syntax)
+$router->get('/admin', [AdminController::class, 'index'])
+    ->middleware(['web', 'auth.web', 'permission:admin-access']);
+```
+
+### Router Error Views & Browser 404 Redirect
+
+Router fallback behavior is config-driven in `app/config/framework.php`:
+
+```php
+'error_views' => [
+    '404'         => 'app/views/errors/404.php',
+    'general'     => 'app/views/errors/general_error.php',
+    'error_image' => 'general/images/nodata/403.png',
+],
+
+// For browser requests that do not match any route
+'not_found_redirect' => [
+    'web' => 'login', // route name or URL path
+],
+
+// Scope/macro auto-loading used by db()
+'scope_macro' => [
+    'base_path' => 'app/database/',
+    'folders'   => ['ScopeMacroQuery'],
+    'files'     => [],
+],
+```
+
+Notes:
+- Browser HTML requests with unmatched routes redirect to `login` (or your configured target).
+- API/AJAX/JSON requests continue to receive JSON `404` responses.
+- Scope/macro files are loaded from `app/database/ScopeMacroQuery/` by default.
+
+### Middleware Traits
+
+Composable traits in `systems/Middleware/Traits/` can be used to build custom middleware:
+
+```php
+use Middleware\Traits\RateLimitingThrottleTrait;
+use Middleware\Traits\XssProtectionTrait;
+use Middleware\Traits\SecurityHeadersTrait;
+use Middleware\Traits\PermissionAbilitiesTrait;
+```
+
+### Configurable Security Headers (CSP)
+
+CSP and Permissions-Policy are configured in `app/config/security.php` — no hardcoded values:
+
+```php
+'csp' => [
+    'script-src' => ["'self'", "'unsafe-inline'", "cdn.datatables.net", "cdn.jsdelivr.net"],
+    'style-src'  => ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+    'font-src'   => ["'self'", "fonts.gstatic.com"],
+    // Add any CDN domain here — no code changes needed
+],
+```
+
+## Blade Template Engine
+
+### Directives
+
+```blade
+{{-- Standard Laravel-like directives --}}
+@if($condition) ... @elseif($other) ... @else ... @endif
+@foreach($items as $item) ... @endforeach
+@for($i = 0; $i < 10; $i++) ... @endfor
+@while($condition) ... @endwhile
+
+{{-- Forelse (with empty fallback) --}}
+@forelse($users as $user)
+    <li>{{ $user['name'] }}</li>
+@empty
+    <li>No users found.</li>
+@endforelse
+
+{{-- Output --}}
+{{ $variable }}          {{-- Escaped output --}}
+{!! $rawHtml !!}         {{-- Unescaped output --}}
+
+{{-- Form helpers --}}
+@method('PUT')           {{-- Hidden _method field --}}
+@csrf                    {{-- CSRF token field --}}
+
+{{-- Conditional attributes --}}
+@checked($isActive)      {{-- checked="checked" if true --}}
+@selected($isDefault)    {{-- selected="selected" if true --}}
+@disabled($isLocked)     {{-- disabled="disabled" if true --}}
+@readonly($isReadonly)    {{-- readonly="readonly" if true --}}
+@required($isRequired)   {{-- required="required" if true --}}
+
+{{-- Class merging --}}
+@class(['btn', 'btn-primary' => $isPrimary, 'disabled' => $isDisabled])
+
+{{-- Error handling --}}
+@error('email')
+    <span class="text-danger">{{ $message }}</span>
+@enderror
+
+{{-- Environment --}}
+@env('production')
+    {{-- Production-only content --}}
+@endenv
+
+@production
+    {{-- Shorthand for production --}}
+@endproduction
+
+{{-- Includes and sections --}}
+@include('partial', ['key' => 'value'])
+@section('content') ... @endsection
+@yield('content')
+@extends('layout')
+```
+
+### View Caching
+- Compiled views cached in `storage/cache/views/`
+- Cache key includes file modification time — automatically invalidates on changes
+- Thread-safe writes with `LOCK_EX`
+- OPcache integration for compiled PHP files
+
+## Security
+
+### CSRF Protection
+
+CSRF protection is enabled by default for all state-changing requests (POST, PUT, PATCH, DELETE). API routes are excluded since they use Bearer token authentication.
+
+**In Blade forms:**
+```blade
+<form method="POST" action="{{ route('users.store') }}">
+    @csrf
+    <!-- form fields -->
+</form>
+```
+
+**In AJAX requests:**
+```javascript
+// Token is accepted via X-CSRF-TOKEN header
+const token = document.querySelector('meta[name="csrf-token"]').content;
+axios.defaults.headers.common['X-CSRF-TOKEN'] = token;
+
+// Or include in POST body as csrf_token
+callApi('post', '/users', { csrf_token: token, name: 'John' });
+```
+
+**Excluding routes from CSRF** (`app/config/security.php`):
+```php
+'csrf_exclude_uris' => [
+    'api/*',        // All API routes (use Bearer tokens instead)
+    'webhooks/*',   // Third-party webhooks
+],
+```
+
+### Built-in Security Features
+
+| Feature | Description |
+|---------|-------------|
+| XSS Prevention | All input auto-sanitized; `{{ }}` escapes output; `safeOutput()` on queries |
+| SQL Injection | Parameterized PDO queries; `safeTable()` for dynamic table names |
+| CSRF Tokens | Opt-out model with cookie + hidden field; supports AJAX headers |
+| Rate Limiting | Per-route throttling via `throttle:60,1` middleware |
+| RBAC Permissions | Role-based access control checked at middleware level |
+| Security Headers | HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy |
+| Trusted Proxies | IP spoofing prevention — forwarded headers only honored from trusted IPs |
+| Session Fixation | `session_regenerate_id()` called on every login |
+| Password Hashing | bcrypt via `password_hash(PASSWORD_DEFAULT)` |
+| Token Security | Bearer tokens SHA-256 hashed before storage; TTL capped at 30 days |
+
 ## Requirements
 
 - PHP 8.0 or higher
 - MySQL 5.7 or higher
+- ext-zip (for backup compression)
+- ext-pdo (for database access)
 
 ## Contributing
 

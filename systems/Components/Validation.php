@@ -108,60 +108,77 @@ class Validation
         '/<meta[^>]*>/is',
         '/<link[^>]*>/is',
         
-        // JavaScript protocols
-        '/javascript:/is',
-        '/vbscript:/is',
-        '/data:/is',
+        // JavaScript / VBScript protocols
+        '/javascript\s*:/is',
+        '/vbscript\s*:/is',
         
-        // Event handlers
-        '/on\w+\s*=/is',
-        '/onload\s*=/is',
-        '/onerror\s*=/is',
-        '/onclick\s*=/is',
-        '/onmouseover\s*=/is',
-        '/onmouseout\s*=/is',
-        '/onfocus\s*=/is',
-        '/onblur\s*=/is',
-        '/onchange\s*=/is',
-        '/onsubmit\s*=/is',
-        '/onkeydown\s*=/is',
-        '/onkeyup\s*=/is',
-        '/onkeypress\s*=/is',
-        '/onmousedown\s*=/is',
-        '/onmouseup\s*=/is',
-        '/onmousemove\s*=/is',
-        '/onresize\s*=/is',
-        '/onscroll\s*=/is',
-        '/onunload\s*=/is',
+        // Dangerous data: URI schemes (only block executable types, not all data: URIs)
+        '/data\s*:\s*text\/html/is',
+        '/data\s*:\s*application\/javascript/is',
+        '/data\s*:\s*application\/x-javascript/is',
+        '/data\s*:\s*application\/ecmascript/is',
+        '/data\s*:\s*text\/javascript/is',
+        '/data\s*:\s*text\/ecmascript/is',
+        '/data\s*:\s*image\/svg\+xml/is',
         
-        // Style with javascript
-        '/style\s*=.*javascript/is',
-        '/style\s*=.*expression/is',
+        // Event handlers — explicit high-risk patterns + catch-all
+        '/\bonclick\s*=/is',
+        '/\bonload\s*=/is',
+        '/\bonerror\s*=/is',
+        '/\bonmouseover\s*=/is',
+        '/\bonmouseout\s*=/is',
+        '/\bonmousemove\s*=/is',
+        '/\bonkeydown\s*=/is',
+        '/\bonkeyup\s*=/is',
+        '/\bonkeypress\s*=/is',
+        '/\bonfocus\s*=/is',
+        '/\bonblur\s*=/is',
+        '/\bonchange\s*=/is',
+        '/\bonsubmit\s*=/is',
+        '/\bonreset\s*=/is',
+        '/\bonselect\s*=/is',
+        '/\bonabort\s*=/is',
+        '/\bonresize\s*=/is',
+        '/\bonscroll\s*=/is',
+        '/\bonunload\s*=/is',
+        '/\bonbeforeunload\s*=/is',
+        '/\boncontextmenu\s*=/is',
+        '/\bondrag\w*\s*=/is',
+        '/\bonpaste\s*=/is',
+        '/\boncopy\s*=/is',
+        '/\boncut\s*=/is',
+        '/\boninput\s*=/is',
+        '/\boninvalid\s*=/is',
+        '/\bonsearch\s*=/is',
+        '/\bontoggle\s*=/is',
+        // Catch-all for any other on* event handlers not listed above
+        '/\bon\w+\s*=/is',
         
-        // Form action
+        // Style with javascript/expression
+        '/style\s*=\s*["\']?[^"\']*(?:javascript|expression|url\s*\()/is',
+        
+        // Form action hijack
         '/<form[^>]*action\s*=\s*["\']?javascript/is',
         
-        // Import statements
-        '/@import/is',
+        // CSS @import (can load external malicious styles)
+        '/@import\s/is',
         
-        // Generic HTML with potential XSS
-        '/<\s*\w.*?>/is',
-        
-        // Unicode and encoding bypasses
-        '/&#/is',
-        '/%3C/is',
-        '/%3E/is',
-        '/&lt;/is',
-        '/&gt;/is',
-        
-        // SVG XSS
+        // SVG XSS vectors
         '/<svg[^>]*>/is',
         '/<use[^>]*>/is',
-        '/<image[^>]*>/is',
+        '/<math[^>]*>/is',
         
-        // Base64 encoded scripts
-        '/data:text\/html;base64/is',
-        '/data:application\/javascript;base64/is'
+        // URL-encoded angle brackets (bypass filters)
+        '/%3C\s*s\s*c\s*r\s*i\s*p\s*t/is',
+        '/%3C\s*i\s*f\s*r\s*a\s*m\s*e/is',
+        
+        // HTML-encoded angle brackets used to sneak tags
+        '/&lt;\s*script/is',
+        '/&lt;\s*iframe/is',
+        '/&lt;\s*svg/is',
+        
+        // Base64 encoded scripts within data URIs
+        '/data:[^;]*;base64,.*(?:PHNjcmlwdA|amF2YXNjcmlwdA)/is',
     ];
 
     /**
@@ -226,7 +243,24 @@ class Validation
         'deep_array' => 'The :field array structure is invalid.',
         'array_keys' => 'The :field array contains invalid keys.',
         'array_values' => 'The :field array contains invalid values.',
-        'base64' => 'The :field must be a valid base64-encoded string.'
+        'base64' => 'The :field must be a valid base64-encoded string.',
+        'required_if' => 'The :field field is required when :other is :value.',
+        'required_unless' => 'The :field field is required unless :other is in :values.',
+        'required_with' => 'The :field field is required when :values is present.',
+        'required_without' => 'The :field field is required when :values is not present.',
+        'required_without_all' => 'The :field field is required when none of :values are present.',
+        'exclude_if' => '',
+        'exclude_unless' => '',
+        'json' => 'The :field must be a valid JSON string.',
+        'uuid' => 'The :field must be a valid UUID.',
+        'digits' => 'The :field must be :digits digits.',
+        'digits_between' => 'The :field must be between :min and :max digits.',
+        'prohibited' => 'The :field field is prohibited.',
+        'prohibited_if' => 'The :field field is prohibited when :other is :value.',
+        'not_regex' => 'The :field format is invalid.',
+        'current_password' => 'The password is incorrect.',
+        'filled' => 'The :field field must have a value when present.',
+        'distinct' => 'The :field field has a duplicate value.',
     ];
 
     /**
@@ -589,6 +623,29 @@ class Validation
                 return; // Skip validation if sometimes is present and field is missing
             }
 
+            // Handle exclude_if: exclude the field if another field has a specific value
+            foreach ($rulesArray as $rule) {
+                $rule = trim($rule);
+                if (str_starts_with($rule, 'exclude_if:')) {
+                    $params = explode(',', substr($rule, 11), 2);
+                    if (count($params) >= 2) {
+                        $otherValue = $this->getFieldValue(trim($params[0]));
+                        if ((string) $otherValue === trim($params[1])) {
+                            return; // Exclude this field entirely
+                        }
+                    }
+                }
+                if (str_starts_with($rule, 'exclude_unless:')) {
+                    $params = explode(',', substr($rule, 15), 2);
+                    if (count($params) >= 2) {
+                        $otherValue = $this->getFieldValue(trim($params[0]));
+                        if ((string) $otherValue !== trim($params[1])) {
+                            return; // Exclude this field entirely
+                        }
+                    }
+                }
+            }
+
             foreach ($rulesArray as $rule) {
                 $rule = trim($rule);
 
@@ -943,6 +1000,19 @@ class Validation
                     case 'lte':
                         $message = str_replace(':value', $params[0], $message);
                         break;
+                    case 'digits':
+                        $message = str_replace(':digits', $params[0], $message);
+                        break;
+                    case 'digits_between':
+                        $message = str_replace([':min', ':max'], [$params[0] ?? '', $params[1] ?? ''], $message);
+                        break;
+                    case 'prohibited_if':
+                    case 'required_if':
+                        $message = str_replace([':other', ':value'], [$params[0] ?? '', $params[1] ?? ''], $message);
+                        break;
+                    case 'required_unless':
+                        $message = str_replace([':other', ':values'], [$params[0] ?? '', implode(', ', array_slice($params, 1))], $message);
+                        break;
                 }
             }
 
@@ -1186,8 +1256,13 @@ class Validation
 
             $sanitizeValue = trim($value);
 
-            $this->validateXss($field, $sanitizeValue, $params);
-            $this->validateNosqlinjection($field, $sanitizeValue, $params);
+            if (!$this->validateXss($field, $sanitizeValue, $params)) {
+                return false;
+            }
+
+            if (!$this->validateNosqlinjection($field, $sanitizeValue, $params)) {
+                return false;
+            }
 
             return true;
         } catch (Exception $e) {
@@ -1211,8 +1286,7 @@ class Validation
             }
 
             // Verify uploaded file integrity
-            // if (!is_uploaded_file($value['tmp_name']) || !file_exists($value['tmp_name'])) {
-            if (!file_exists($value['tmp_name'])) {
+            if (!is_uploaded_file($value['tmp_name']) || !file_exists($value['tmp_name'])) {
                 return false;
             }
 
@@ -1456,6 +1530,28 @@ class Validation
     private function validateUrl(string $field, $value, array $params = []): bool
     {
         try {
+            if (!is_string($value)) {
+                return false;
+            }
+
+            // Block dangerous protocols
+            $normalized = strtolower(trim($value));
+            $dangerousProtocols = ['javascript:', 'vbscript:', 'data:text/html', 'data:application/javascript'];
+            foreach ($dangerousProtocols as $protocol) {
+                if (str_starts_with($normalized, $protocol)) {
+                    return false;
+                }
+            }
+
+            // Only allow http, https, ftp, ftps schemes (or no scheme for relative-like URLs)
+            $parsed = parse_url($value);
+            if (isset($parsed['scheme'])) {
+                $allowedSchemes = !empty($params) ? $params : ['http', 'https', 'ftp', 'ftps'];
+                if (!in_array(strtolower($parsed['scheme']), $allowedSchemes, true)) {
+                    return false;
+                }
+            }
+
             return filter_var($value, FILTER_VALIDATE_URL) !== false;
         } catch (Exception $e) {
             return false;
@@ -1751,7 +1847,7 @@ class Validation
     }
 
     /**
-     * Validate regex rule
+     * Validate regex rule (with ReDoS protection)
      */
     private function validateRegex(string $field, $value, array $params = []): bool
     {
@@ -1761,7 +1857,31 @@ class Validation
             }
 
             $pattern = $params[0];
-            return preg_match($pattern, $value);
+
+            // Validate pattern syntax before executing (prevents warnings)
+            if (@preg_match($pattern, '') === false) {
+                return false;
+            }
+
+            // ReDoS protection: limit input length for regex validation
+            if (is_string($value) && strlen($value) > 10000) {
+                return false;
+            }
+
+            // Set pcre.backtrack_limit temporarily for safety
+            $oldLimit = ini_get('pcre.backtrack_limit');
+            ini_set('pcre.backtrack_limit', '50000');
+
+            $result = preg_match($pattern, (string) $value);
+
+            ini_set('pcre.backtrack_limit', $oldLimit);
+
+            // preg_match returns false on error (backtrack limit hit)
+            if ($result === false) {
+                return false;
+            }
+
+            return $result === 1;
         } catch (Exception $e) {
             return false;
         }
@@ -1899,7 +2019,16 @@ class Validation
             }
 
             $imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp', 'image/svg+xml'];
-            return in_array($value['type'], $imageTypes);
+
+            // Use finfo for server-side MIME detection instead of trusting client-reported type
+            $detectedType = null;
+            if (function_exists('finfo_open') && !empty($value['tmp_name']) && file_exists($value['tmp_name'])) {
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $detectedType = finfo_file($finfo, $value['tmp_name']);
+                finfo_close($finfo);
+            }
+
+            return in_array($detectedType ?? $value['type'], $imageTypes);
         } catch (Exception $e) {
             return false;
         }
@@ -2279,6 +2408,385 @@ class Validation
             $reencoded = rtrim(base64_encode($decoded), '=');
             $original = rtrim($value, '=');
             return $reencoded === $original;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate required_unless rule
+     * The field is required unless another field has one of the specified values.
+     * Usage: required_unless:other_field,value1,value2
+     */
+    private function validateRequiredunless(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (count($params) < 2) {
+                return true;
+            }
+
+            $otherField = $params[0];
+            $acceptedValues = array_slice($params, 1);
+            $otherFieldValue = $this->getFieldValue($otherField);
+
+            // If the other field's value is in the accepted list, skip required check
+            if (in_array((string) $otherFieldValue, $acceptedValues, false)) {
+                return true;
+            }
+
+            return $this->validateRequired($field, $value);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate required_with rule
+     * The field is required when any of the specified fields are present.
+     * Usage: required_with:field1,field2
+     */
+    private function validateRequiredwith(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (empty($params)) {
+                return true;
+            }
+
+            $anyPresent = false;
+            foreach ($params as $otherField) {
+                $otherValue = $this->getFieldValue(trim($otherField));
+                if ($otherValue !== null && $otherValue !== '' && $otherValue !== []) {
+                    $anyPresent = true;
+                    break;
+                }
+            }
+
+            if (!$anyPresent) {
+                return true;
+            }
+
+            return $this->validateRequired($field, $value);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate required_without rule
+     * The field is required when any of the specified fields are NOT present.
+     * Usage: required_without:field1,field2
+     */
+    private function validateRequiredwithout(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (empty($params)) {
+                return true;
+            }
+
+            $anyMissing = false;
+            foreach ($params as $otherField) {
+                $otherValue = $this->getFieldValue(trim($otherField));
+                if ($otherValue === null || $otherValue === '' || $otherValue === []) {
+                    $anyMissing = true;
+                    break;
+                }
+            }
+
+            if (!$anyMissing) {
+                return true;
+            }
+
+            return $this->validateRequired($field, $value);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate required_without_all rule
+     * The field is required when ALL of the specified fields are NOT present.
+     * Usage: required_without_all:field1,field2
+     */
+    private function validateRequiredwithoutall(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (empty($params)) {
+                return true;
+            }
+
+            $allMissing = true;
+            foreach ($params as $otherField) {
+                $otherValue = $this->getFieldValue(trim($otherField));
+                if ($otherValue !== null && $otherValue !== '' && $otherValue !== []) {
+                    $allMissing = false;
+                    break;
+                }
+            }
+
+            if (!$allMissing) {
+                return true;
+            }
+
+            return $this->validateRequired($field, $value);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate exclude_if rule
+     * Exclude the field from validation if another field has a specific value.
+     * Usage: exclude_if:other_field,value
+     */
+    private function validateExcludeif(string $field, $value, array $params = []): bool
+    {
+        // Always returns true — exclusion is handled in validateField()
+        return true;
+    }
+
+    /**
+     * Validate exclude_unless rule
+     * Exclude the field from validation unless another field has a specific value.
+     * Usage: exclude_unless:other_field,value
+     */
+    private function validateExcludeunless(string $field, $value, array $params = []): bool
+    {
+        // Always returns true — exclusion is handled in validateField()
+        return true;
+    }
+
+    // ─── New Validation Rules ────────────────────────────────────────
+
+    /**
+     * Validate json rule — the value must be a valid JSON string.
+     * Usage: json
+     */
+    private function validateJson(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (!is_string($value)) {
+                return false;
+            }
+
+            json_decode($value);
+            return json_last_error() === JSON_ERROR_NONE;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate uuid rule — the value must be a valid UUID (v1–v5 or nil).
+     * Usage: uuid
+     */
+    private function validateUuid(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (!is_string($value)) {
+                return false;
+            }
+
+            return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $value) === 1;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate digits rule — the value must be numeric and have exactly N digits.
+     * Usage: digits:5
+     */
+    private function validateDigits(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (empty($params)) {
+                return false;
+            }
+
+            $length = (int) $params[0];
+            return is_numeric($value) && !str_contains((string) $value, '.') && strlen((string) $value) === $length;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate digits_between rule — numeric value with digit count between min and max.
+     * Usage: digits_between:3,10
+     */
+    private function validateDigitsbetween(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (count($params) < 2) {
+                return false;
+            }
+
+            $min = (int) $params[0];
+            $max = (int) $params[1];
+            $strValue = (string) $value;
+
+            return is_numeric($value) && !str_contains($strValue, '.') && strlen($strValue) >= $min && strlen($strValue) <= $max;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate prohibited rule — the field must be empty or not present.
+     * Usage: prohibited
+     */
+    private function validateProhibited(string $field, $value, array $params = []): bool
+    {
+        try {
+            return $value === null || $value === '' || $value === [];
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate prohibited_if rule — the field is prohibited when another field has a value.
+     * Usage: prohibited_if:other_field,value1,value2
+     */
+    private function validateProhibitedif(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (count($params) < 2) {
+                return true;
+            }
+
+            $otherField = $params[0];
+            $otherValues = array_slice($params, 1);
+            $otherFieldValue = $this->getFieldValue($otherField);
+
+            // If the condition matches, field must be empty
+            if (in_array((string) $otherFieldValue, $otherValues, false)) {
+                return $this->validateProhibited($field, $value);
+            }
+
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate not_regex rule — the value must NOT match the given regex.
+     * Usage: not_regex:/pattern/
+     */
+    private function validateNotregex(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (empty($params)) {
+                return false;
+            }
+
+            $pattern = $params[0];
+
+            if (@preg_match($pattern, '') === false) {
+                return false;
+            }
+
+            if (is_string($value) && strlen($value) > 10000) {
+                return false;
+            }
+
+            $oldLimit = ini_get('pcre.backtrack_limit');
+            ini_set('pcre.backtrack_limit', '50000');
+
+            $result = preg_match($pattern, (string) $value);
+
+            ini_set('pcre.backtrack_limit', $oldLimit);
+
+            if ($result === false) {
+                return false;
+            }
+
+            return $result === 0;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate current_password rule — check password against the authenticated user.
+     * Usage: current_password
+     */
+    private function validateCurrentpassword(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (!is_string($value) || empty($value)) {
+                return false;
+            }
+
+            $userId = $_SESSION['userID'] ?? null;
+            if (empty($userId)) {
+                return false;
+            }
+
+            $user = db()->table('users')->select('password')->where('id', $userId)->fetch();
+            if (!$user || empty($user['password'])) {
+                return false;
+            }
+
+            return password_verify($value, $user['password']);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate filled rule — when present, the field must not be empty.
+     * Usage: filled
+     */
+    private function validateFilled(string $field, $value, array $params = []): bool
+    {
+        try {
+            // If the field is not present at all, it passes
+            if (!$this->fieldExists($field)) {
+                return true;
+            }
+
+            // If it IS present, it must have a value
+            return $value !== null && $value !== '' && $value !== [];
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate distinct rule — all values in an array must be unique.
+     * Typically used with wildcard rules like 'items.*.email' => 'distinct'
+     * Usage: distinct
+     */
+    private function validateDistinct(string $field, $value, array $params = []): bool
+    {
+        try {
+            // Get the parent array to check for duplicates
+            $parts = explode('.', $field);
+            array_pop($parts); // Remove the index
+            $parentField = implode('.', $parts);
+            $siblingValues = [];
+
+            // If dealing with wildcard values, collect all sibling field values
+            if (!empty($parentField)) {
+                $wildcardField = preg_replace('/\.\d+\./', '.*.', $field);
+                $allValues = $this->getWildcardValues($wildcardField);
+                $siblingValues = array_values($allValues);
+            }
+
+            if (empty($siblingValues)) {
+                return true;
+            }
+
+            $strict = in_array('strict', $params, true);
+            $ignoreCase = in_array('ignore_case', $params, true);
+
+            $normalised = array_map(function ($v) use ($ignoreCase) {
+                return $ignoreCase && is_string($v) ? strtolower($v) : $v;
+            }, $siblingValues);
+
+            return count($normalised) === count(array_unique($normalised, $strict ? SORT_REGULAR : SORT_STRING));
         } catch (Exception $e) {
             return false;
         }

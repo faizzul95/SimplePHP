@@ -1,23 +1,5 @@
 <?php
 
-if (!function_exists('runController')) {
-    function runController($fileName, $functionName, $params = [])
-    {
-        $controllerPath = __DIR__ . '/../../controllers/' . $fileName . '.php';
-        if (!file_exists($controllerPath) || !is_readable($controllerPath)) {
-            throw new RuntimeException("Controller file not found or not readable: $controllerPath");
-        }
-        
-        require_once $controllerPath;
-
-        if (!function_exists($functionName)) {
-            throw new RuntimeException("Function $functionName does not exist in controller $fileName.");
-        }
-
-        return call_user_func_array($functionName, $params);
-    }
-}
-
 /*
 |--------------------------------------------------------------------------
 | VIEW RENDERING  
@@ -31,14 +13,9 @@ if (!function_exists('render')) {
             throw new InvalidArgumentException('No view file specified.');
         }
 
-        $path = ROOT_DIR . $file ?? $file;
-
-        if (!file_exists($path) || !is_readable($path)) {
-            throw new RuntimeException("View file not found or not readable: $path");
-        }
-
-        if (!empty($params)) extract($params, EXTR_SKIP);
-        include $path;
+        $target = (string) $file;
+        $content = blade_engine()->render($target, is_array($params) ? $params : []);
+        echo $content;
     }
 }
 
@@ -57,7 +34,7 @@ if (!function_exists('show_404')) {
     function show_404()
     {
         render(REDIRECT_404, [
-            'image' => 'sneat/img/illustrations/page-misc-error-light.png',
+            'image' => 'general/images/nodata/403.png',
             'title' => '404 Page Not Found',
             'message' => 'Oops! 😖 The requested URL was not found on this server.',
         ]);
@@ -75,7 +52,7 @@ if (!function_exists('isLogin')) {
     {
         $isCurrentLogin = hasData($_SESSION, $param);
         if (!$isCurrentLogin && $redirect) {
-            $path = !empty($path) ? $path : '?_p=' . REDIRECT_LOGIN;
+            $path = !empty($path) ? $path : url(REDIRECT_LOGIN);
             redirect($path, true);
         }
 
@@ -140,8 +117,8 @@ if (!function_exists('permission')) {
  * @param bool $render Whether to render the 403 error page and exit on failure (default: true).
  * @return bool Returns true if permission is granted, false otherwise.
  */
-if (!function_exists('requirePagePermission ')) {
-    function requirePagePermission ($render = true)
+if (!function_exists('requirePagePermission')) {
+    function requirePagePermission($render = true)
     {
         global $permission;
 

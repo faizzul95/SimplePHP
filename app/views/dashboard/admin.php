@@ -83,9 +83,7 @@
 
         async function getDashboardData() {
 
-            const res = await callApi('post', "controllers/DashboardController.php", {
-                'action': 'countAdminDashboard'
-            });
+            const res = await callApi('post', "<?= route('dashboard.count-admin') ?>", {});
 
             if (isSuccess(res)) {
                 const data = res.data.data;

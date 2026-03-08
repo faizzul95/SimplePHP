@@ -185,7 +185,7 @@ class DatabaseCache
             } else {
                 $decompressed = base64_decode($compressedData);
             }
-            return unserialize($decompressed);
+            return unserialize($decompressed, ['allowed_classes' => false]);
         } catch (\Exception $e) {
             // Handle the error (log it, notify, etc.)
             return false;

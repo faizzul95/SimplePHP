@@ -1485,10 +1485,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         if (is_array($columns)) {
             foreach ($columns as $column => $dir) {
                 $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir);
-                $this->orderBy[] = "$column $direction"; // Push to the order by array
+                $safeCol = $this->_sanitizeColumnName($column);
+                $this->orderBy[] = "$safeCol $direction"; // Push to the order by array
             }
         } else {
-            $this->orderBy[] = "$columns $direction"; // Push a single order by clause
+            $safeCol = $this->_sanitizeColumnName($columns);
+            $this->orderBy[] = "$safeCol $direction"; // Push a single order by clause
         }
 
         return $this;
@@ -2065,6 +2067,28 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
+     * Sanitize a column name to prevent SQL injection.
+     *
+     * Allows: alphanumeric, underscores, dots (table.column), backtick-quoted identifiers,
+     * and common SQL expressions (e.g., COALESCE, COUNT, etc.).
+     *
+     * @param string $column The column name to sanitize.
+     * @return string The sanitized column name.
+     * @throws \InvalidArgumentException If column name contains invalid characters.
+     */
+    protected function _sanitizeColumnName(string $column): string
+    {
+        $col = trim($column);
+
+        // Allow expressions that are already backtick-quoted or contain SQL functions
+        if (preg_match('/^[`a-zA-Z0-9_.(), *]+$/', $col)) {
+            return $col;
+        }
+
+        throw new \InvalidArgumentException("Invalid column name: {$column}");
+    }
+
+    /**
      * Builds a WHERE clause fragment based on provided conditions.
      *
      * This function is used internally to construct WHERE clause parts based on
@@ -2134,7 +2158,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 break;
         }
 
-        if ($value !== null && $value !== '') {
+        if ($value !== null && !($value === '' && ($operator === '=' || $operator === '!='))) {
             if (is_array($value)) {
                 // Use spread operator instead of array_merge for better performance
                 $this->_binds = [...$this->_binds, ...$value];
@@ -4494,10 +4518,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $executionTime = $endTime - $profilerEntry['start'];
 
         if (isset($profilerEntry['memory_usage'])) {
-            $profilerEntry['memory_usage'] = $this->_formatBytes(memory_get_usage() - $profilerEntry['memory_usage'], 2);
+            $memDelta = memory_get_usage() - $profilerEntry['memory_usage'];
+            $profilerEntry['memory_usage'] = $this->_formatBytes(max(0, $memDelta), 2);
         }
         if (isset($profilerEntry['memory_usage_peak'])) {
-            $profilerEntry['memory_usage_peak'] = $this->_formatBytes(memory_get_peak_usage() - $profilerEntry['memory_usage_peak'], 4);
+            $peakDelta = memory_get_peak_usage() - $profilerEntry['memory_usage_peak'];
+            $profilerEntry['memory_usage_peak'] = $this->_formatBytes(max(0, $peakDelta), 4);
         }
 
         $profilerEntry['end'] = $endTime;
@@ -5052,7 +5078,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             // Log the error with comprehensive details
             try {
-                $logger = new Logger(__DIR__ . '/../../../logs/database/error.log');
+                $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR;
+                $logger = new Logger($rootDir . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log');
 
                 $logData = [
                     'level' => $logLevel,
@@ -5077,14 +5104,16 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
                 // Also log to system error log for critical errors
                 if ($isCritical) {
-                    $errorLogPath = __DIR__ . '/../../../logs/database/error.log';
-                    error_log("Critical Database Error: " . $this->_error['message'] . PHP_EOL, 3, $errorLogPath);
+                    $dbLogDir = (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR;
+                    if (!is_dir($dbLogDir)) { @mkdir($dbLogDir, 0775, true); }
+                    error_log("Critical Database Error: " . $this->_error['message'] . PHP_EOL, 3, $dbLogDir . 'error.log');
                 }
             } catch (\Throwable $logException) {
-                // Fallback to system error log if custom logger fails - use same file
-                $errorLogPath = __DIR__ . '/../../../logs/database/error.log';
-                error_log("Database error logging failed: " . $logException->getMessage() . PHP_EOL, 3, $errorLogPath);
-                error_log("Original error: " . $e->getMessage() . PHP_EOL, 3, $errorLogPath);
+                // Fallback to system error log if custom logger fails
+                $dbLogDir = (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR;
+                if (!is_dir($dbLogDir)) { @mkdir($dbLogDir, 0775, true); }
+                error_log("Database error logging failed: " . $logException->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
+                error_log("Original error: " . $e->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
             }
 
             // Optionally rethrow the exception with appropriate type
@@ -5118,9 +5147,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             ];
 
             // Fallback to system error log
-            $errorLogPath = __DIR__ . '/../../../logs/database/error.log';
-            error_log("Database error processing failed: " . $loggingError->getMessage() . PHP_EOL, 3, $errorLogPath);
-            error_log("Original database error: " . $e->getMessage() . PHP_EOL, 3, $errorLogPath);
+            $dbLogDir = (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR;
+            if (!is_dir($dbLogDir)) { @mkdir($dbLogDir, 0775, true); }
+            error_log("Database error processing failed: " . $loggingError->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
+            error_log("Original database error: " . $e->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
 
             // Still throw the original exception if rethrowing is enabled
             if ($rethrow) {

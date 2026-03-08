@@ -214,12 +214,13 @@ class LazyCollection implements \Iterator, \Countable
      */
     public function map(callable $callback)
     {
-        $this->operations[] = [
+        $clone = clone $this;
+        $clone->operations[] = [
             'type' => 'map',
             'callback' => $callback
         ];
 
-        return $this;
+        return $clone;
     }
 
     /**
@@ -230,12 +231,13 @@ class LazyCollection implements \Iterator, \Countable
      */
     public function filter(callable $callback)
     {
-        $this->operations[] = [
+        $clone = clone $this;
+        $clone->operations[] = [
             'type' => 'filter',
             'callback' => $callback
         ];
 
-        return $this;
+        return $clone;
     }
 
     /**

@@ -74,7 +74,6 @@
         </div>
     </div>
 
-    <input type="hidden" name="action" value="save" readonly>
     <button id="submitBtn" type="submit" class="btn btn-md btn-info mb-3" style="position: absolute;bottom: 0;"> <i class='bx bx-save'></i> Save </button>
 </form>
 

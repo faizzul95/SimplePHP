@@ -1432,7 +1432,35 @@ const currencySymbol = (currencyCode = null) => {
 
 // API CALLBACK HELPER 
 
-const loginApi = async (url, formID = null) => {
+/**
+ * Resolve a Bearer token from various sources.
+ * @param {string|boolean|null} token - A token string, `true` to auto-detect from localStorage + meta,
+ *                                       `null` to auto-detect from localStorage only,
+ *                                       or `false` to disable.
+ * @returns {string|null}
+ */
+const _resolveToken = (token = null) => {
+	// Explicit disable
+	if (token === false) {
+		return null;
+	}
+	// Explicit string token
+	if (typeof token === 'string' && token.length > 0) {
+		return token;
+	}
+	// Auto-detect from localStorage (for both null and true)
+	const stored = localStorage.getItem('api_token');
+	if (stored) {
+		return stored;
+	}
+	// When true, also check meta tag as fallback
+	if (token === true) {
+		return (document.querySelector('meta[name="api_token"]') || {}).content || null;
+	}
+	return null;
+};
+
+const loginApi = async (url, formID = null, token = null) => {
 	const submitBtnText = $('#loginBtn').html();
 
 	var btnSubmitIDs = $('#' + formID + ' button[type=submit]').attr("id");
@@ -1446,12 +1474,16 @@ const loginApi = async (url, formID = null) => {
 		var frm = $('#' + formID);
 		const dataArr = new FormData(frm[0]);
 
+		const loginHeaders = {
+			'X-Requested-With': 'XMLHttpRequest',
+			'content-type': 'application/x-www-form-urlencoded',
+		};
+		const loginBearer = _resolveToken(token);
+		if (loginBearer) loginHeaders['Authorization'] = 'Bearer ' + loginBearer;
+
 		return axios({
 			method: 'POST',
-			headers: {
-				'X-Requested-With': 'XMLHttpRequest',
-				'content-type': 'application/x-www-form-urlencoded',
-			},
+			headers: loginHeaders,
 			url: url,
 			data: dataArr
 		})
@@ -1503,7 +1535,7 @@ const loginApi = async (url, formID = null) => {
 
 }
 
-const submitApi = async (url, dataObj, formID = null, reloadFunction = null, closedModal = true) => {
+const submitApi = async (url, dataObj, formID = null, reloadFunction = null, closedModal = true, token = null) => {
 	const submitBtnText = $('#submitBtn').html();
 
 	var btnSubmitIDs = $('#' + formID + ' button[type=submit]').attr("id");
@@ -1525,12 +1557,16 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 				dataArr.append(csrf_token_name, secureTokenMeta.content);
 			}
 
+			const submitHeaders = {
+				'X-Requested-With': 'XMLHttpRequest',
+				'content-type': 'application/x-www-form-urlencoded',
+			};
+			const submitBearer = _resolveToken(token);
+			if (submitBearer) submitHeaders['Authorization'] = 'Bearer ' + submitBearer;
+
 			return axios({
 				method: 'POST',
-				headers: {
-					'X-Requested-With': 'XMLHttpRequest',
-					'content-type': 'application/x-www-form-urlencoded',
-				},
+				headers: submitHeaders,
 				url: url,
 				data: dataArr
 			})
@@ -1605,16 +1641,20 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 	}
 }
 
-const deleteApi = async (id, url, reloadFunction = null) => {
+const deleteApi = async (id, url, reloadFunction = null, token = null) => {
 	if (id != '') {
 		url = urls(url + '/' + id);
 		try {
+			const deleteHeaders = {
+				'X-Requested-With': 'XMLHttpRequest',
+				'content-type': 'application/x-www-form-urlencoded',
+			};
+			const deleteBearer = _resolveToken(token);
+			if (deleteBearer) deleteHeaders['Authorization'] = 'Bearer ' + deleteBearer;
+
 			return axios({
 				method: 'DELETE',
-				headers: {
-					'X-Requested-With': 'XMLHttpRequest',
-					'content-type': 'application/x-www-form-urlencoded',
-				},
+				headers: deleteHeaders,
 				url: url,
 			})
 				.then(result => {
@@ -1666,21 +1706,54 @@ const deleteApi = async (id, url, reloadFunction = null) => {
 	}
 }
 
-const callApi = async (method = 'POST', url, dataObj = null, option = {}) => {
+/**
+ * Generic API call with optional Bearer token support.
+ *
+ * @param {string}  method   HTTP method (GET, POST, PUT, PATCH, DELETE)
+ * @param {string}  url      API endpoint (relative or absolute)
+ * @param {object}  dataObj  Request payload (key/value pairs)
+ * @param {object}  option   Extra axios options
+ * @param {string|null} token  Bearer token. If provided, an `Authorization: Bearer <token>` header is sent.
+ *                              Pass `true` to auto-read from localStorage key 'api_token' or a <meta name="api_token"> tag.
+ * @returns {Promise}
+ */
+const callApi = async (method = 'POST', url, dataObj = null, option = {}, token = null) => {
 	url = urls(url);
 	let dataSent = null;
+	const lowerMethod = method.toLowerCase();
 
-	if (method == 'post' || method == 'put') {
-		dataSent = new URLSearchParams(dataObj);
+	// Resolve Bearer token
+	const bearerToken = _resolveToken(token);
+
+	// Append CSRF token for state-changing methods
+	const secureTokenMeta = document.querySelector('meta[name="secure_token"]');
+	const csrfToken = secureTokenMeta ? secureTokenMeta.content : null;
+
+	if (['post', 'put', 'patch', 'delete'].includes(lowerMethod)) {
+		const params = new URLSearchParams(dataObj);
+		if (csrfToken) {
+			params.append(csrf_token_name, csrfToken);
+		}
+		dataSent = params;
+	} else if (lowerMethod === 'get' && dataObj && Object.keys(dataObj).length > 0) {
+		// Append query params for GET requests
+		const params = new URLSearchParams(dataObj);
+		url += (url.includes('?') ? '&' : '?') + params.toString();
+	}
+
+	// Build headers
+	const headers = {
+		'X-Requested-With': 'XMLHttpRequest',
+		'content-type': 'application/x-www-form-urlencoded',
+	};
+	if (bearerToken) {
+		headers['Authorization'] = 'Bearer ' + bearerToken;
 	}
 
 	try {
 		return axios({
 			method: method,
-			headers: {
-				'X-Requested-With': 'XMLHttpRequest',
-				'content-type': 'application/x-www-form-urlencoded',
-			},
+			headers: headers,
 			url: url,
 			data: dataSent,
 		},
@@ -1709,13 +1782,6 @@ const callApi = async (method = 'POST', url, dataObj = null, option = {}) => {
 			noti(res.status, "Unauthorized: Access is denied");
 		} else {
 			if (isError(res.status)) {
-				// var error_count = 0;
-				// for (var error in res.data.errors) {
-				// 	if (error_count == 0) {
-				// 		noti(500, res.data.errors[error][0]);
-				// 	}
-				// 	error_count++;
-				// }
 				noti(res.response.status, res.response.data.message);
 			} else {
 				noti(500, 'Something went wrong');
@@ -1725,7 +1791,7 @@ const callApi = async (method = 'POST', url, dataObj = null, option = {}) => {
 	}
 }
 
-const uploadApi = async (url, formID = null, idProgressBar = null, reloadFunction = null, permissions = null) => {
+const uploadApi = async (url, formID = null, idProgressBar = null, reloadFunction = null, permissions = null, token = null) => {
 	try {
 		url = urls(url);
 		var frm = $('#' + formID);
@@ -1733,12 +1799,16 @@ const uploadApi = async (url, formID = null, idProgressBar = null, reloadFunctio
 
 		var timeStarted = new Date().getTime();
 
+		const uploadHeaders = {
+			'X-Requested-With': 'XMLHttpRequest',
+			'content-type': 'multipart/form-data',
+			'X-Permission': permissions,
+		};
+		const uploadBearer = _resolveToken(token);
+		if (uploadBearer) uploadHeaders['Authorization'] = 'Bearer ' + uploadBearer;
+
 		let axiosConfig = {
-			headers: {
-				'X-Requested-With': 'XMLHttpRequest',
-				'content-type': 'multipart/form-data',
-				'X-Permission': permissions,
-			},
+			headers: uploadHeaders,
 			onUploadProgress: function (progressEvent) {
 				if (idProgressBar != null) {
 					const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -2343,15 +2413,18 @@ const loadFileContent = (fileName, idToLoad, sizeModal = 'lg', title = 'Default 
 	}
 
 	$('#' + idContent).empty(); // reset
+	const modalContentUrl = $('meta[name="route.modal.content"]').attr('content') || 'modal/content';
 
 	return $.ajax({
 		type: "POST",
-		url: $('meta[name="base_url"]').attr('content') + 'bootstrap.php',
+		url: urls(modalContentUrl),
 		data: {
-			action: 'modal',
-			baseUrl: $('meta[name="base_url"]').attr('content'),
 			fileName: fileName,
 			dataArray: dataArray,
+		},
+		headers: {
+			'X-Requested-With': 'XMLHttpRequest',
+			'content-type': 'application/x-www-form-urlencoded',
 		},
 		dataType: "html",
 		success: function (data) {
@@ -2390,15 +2463,18 @@ const loadFormContent = (fileName, idToLoad, sizeModal = 'lg', urlFunc = null, t
 	}
 
 	$('#' + idContent).empty(); // reset
+	const modalContentUrl = $('meta[name="route.modal.content"]').attr('content') || 'modal/content';
 
 	return $.ajax({
 		type: "POST",
-		url: $('meta[name="base_url"]').attr('content') + 'bootstrap.php',
+		url: urls(modalContentUrl),
 		data: {
-			action: 'modal',
-			baseUrl: $('meta[name="base_url"]').attr('content'),
 			fileName: fileName,
 			dataArray: dataArray,
+		},
+		headers: {
+			'X-Requested-With': 'XMLHttpRequest',
+			'content-type': 'application/x-www-form-urlencoded',
 		},
 		dataType: "html",
 		success: function (response) {

@@ -83,9 +83,7 @@
         });
 
         async function getProfileList(id, includeAll = true) {
-            const res = await callApi('post', "controllers/RoleController.php", {
-                'action': 'listSelectOptionRole'
-            });
+            const res = await callApi('post', "<?= route('roles.options') ?>", {});
 
             if (isSuccess(res)) {
 
@@ -108,8 +106,7 @@
 
         // GET DATATABLE (SERVER-SIDE)
         async function getDataList() {
-            generateDatatableServer('dataList', 'controllers/UserController.php', 'nodataDiv', {
-                    'action': 'listUserDatatable',
+            generateDatatableServer('dataList', '<?= route('users.list') ?>', 'nodataDiv', {
                     'user_status_filter': $("#filter_user_status").val(),
                     'user_gender_filter': $("#filter_gender_status").val(),
                     'user_profile_filter': $("#filter_profile").val(),
@@ -155,17 +152,14 @@
         }
 
         function addUser() {
-            loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Add User', {}, 'offcanvas');
+            loadFormContent('views/directory/_userForm.php', 'userForm', '550px', '<?= route('users.save') ?>', 'Add User', {}, 'offcanvas');
         }
 
         async function editRecord(id) {
-            const res = await callApi('post', "controllers/UserController.php", {
-                'action': 'show',
-                'id': id
-            });
+            const res = await callApi('get', "<?= route('users.show') ?>".replace('{id}', id));
 
             if (isSuccess(res)) {
-                loadFormContent('views/directory/_userForm.php', 'userForm', '550px', 'controllers/UserController.php', 'Update User', res.data.data, 'offcanvas');
+                loadFormContent('views/directory/_userForm.php', 'userForm', '550px', '<?= route('users.save') ?>', 'Update User', res.data.data, 'offcanvas');
             }
         }
 
@@ -184,10 +178,7 @@
                 },
             }).then(async (result) => {
                 if (result.isConfirmed) {
-                    const res = await callApi('post', "controllers/UserController.php", {
-                        'action': 'destroy',
-                        'id': id
-                    });
+                    const res = await callApi('delete', "<?= route('users.delete') ?>".replace('{id}', id));
 
                     if (isSuccess(res)) {
                         const response = res.data;
@@ -214,8 +205,7 @@
                 },
             }).then(async (result) => {
                 if (result.isConfirmed) {
-                    const res = await callApi('post', "controllers/AuthController.php", {
-                        'action': 'resetPassword',
+                    const res = await callApi('post', "<?= route('auth.reset-password') ?>", {
                         'id': id
                     });
 

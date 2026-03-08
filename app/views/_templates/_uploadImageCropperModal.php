@@ -1,5 +1,5 @@
 <div class="row">
-	<form id="changePictureUpload" method="POST" action="controllers/UploadController.php">
+	<form id="changePictureUpload" method="POST" action="<?= route('uploads.image-cropper') ?>">
 		<div class="col-12">
 			<input id="change_image" type="file" name="change_image" class="form-control mb-4" accept="image/x-png,image/jpeg,image/jpg">
 
@@ -44,7 +44,6 @@
 				<input type="hidden" name="entity_id" id="entity_id" placeholder="entity_id">
 				<input type="hidden" name="entity_type" id="entity_type" placeholder="entity_type">
 				<input type="hidden" name="entity_file_type" id="entity_file_type" placeholder="entity_file_type">
-				<input type="hidden" name="action" value="uploadImageCropper" readonly>
 				<input type="hidden" name="folder_group" id="folder_group" placeholder="folder_group" readonly>
 				<input type="hidden" name="folder_type" id="folder_type" placeholder="folder_type" readonly>
 				<input type="hidden" name="_whitelist_field" value="image" readonly>
@@ -331,8 +330,7 @@
 			},
 		}).then(async (result) => {
 			if (result.isConfirmed) {
-				const res = await callApi('post', "controllers/UploadController.php", {
-					'action': 'removeUploadFiles',
+				const res = await callApi('post', "<?= route('uploads.delete') ?>", {
 					'id': id
 				});
 

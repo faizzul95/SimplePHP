@@ -1,0 +1,44 @@
+<?php
+
+namespace App\Http;
+
+use Core\Http\Request;
+use Core\Http\Response;
+use Core\Routing\RouteServiceProvider;
+use Core\Routing\Router;
+
+class Kernel
+{
+    private array $frameworkConfig;
+
+    public function __construct()
+    {
+        $this->frameworkConfig = config('framework') ?? [];
+    }
+
+    public function handle(Request $request): void
+    {
+        $router = new Router();
+        $router->aliasMiddleware((array) ($this->frameworkConfig['middleware_aliases'] ?? []));
+        $router->middlewareGroup((array) ($this->frameworkConfig['middleware_groups'] ?? []));
+
+        $routeProvider = new RouteServiceProvider($this->frameworkConfig);
+        $routeProvider->map($request, $router);
+
+        $result = $router->dispatch($request);
+
+        if ($result === null) {
+            return;
+        }
+
+        if (is_array($result)) {
+            $status = isset($result['code']) ? (int) $result['code'] : 200;
+            Response::json($result, $status);
+            return; // Response::json exits, but added for clarity
+        }
+
+        if (is_string($result)) {
+            echo $result;
+        }
+    }
+}

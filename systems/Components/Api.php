@@ -33,15 +33,33 @@ class Api
         $this->requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
         $this->requestUri = $this->parseRequestUri();
         $this->headers = $this->getAllHeaders();
-
-        $this->initializeDatabase();
     }
 
     /**
-     * Default configuration
+     * Sanitize table name to prevent SQL injection
+     */
+    private function safeTable(string $name): string
+    {
+        return preg_replace('/[^a-zA-Z0-9_]/', '', $name) ?: 'users_access_tokens';
+    }
+
+    /**
+     * Default configuration — token_table resolved from api or auth config
      */
     private function getDefaultConfig(): array
     {
+        // Single source of truth: prefer api config, fall back to auth config
+        $tokenTable = 'users_access_tokens';
+        $apiToken = \config('api.token_table');
+        if (is_string($apiToken) && trim($apiToken) !== '') {
+            $tokenTable = $apiToken;
+        } else {
+            $authToken = \config('auth.token_table');
+            if (is_string($authToken) && trim($authToken) !== '') {
+                $tokenTable = $authToken;
+            }
+        }
+
         return [
             'cors' => [
                 'allow_origin' => ['*'],
@@ -58,42 +76,10 @@ class Api
             'auth' => [
                 'required' => true,
             ],
-            'token_table' => 'users_access_tokens',
+            'token_table' => $tokenTable,
             'rate_limit_table' => 'api_rate_limits',
             'log_errors' => true
         ];
-    }
-
-    /**
-     * Initialize database tables if they don't exist
-     */
-    private function initializeDatabase(): void
-    {
-        // Create tokens table
-        $this->pdo->exec("
-            CREATE TABLE IF NOT EXISTS {$this->config['token_table']} (
-                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                user_id BIGINT UNSIGNED NOT NULL,
-                name VARCHAR(255) NOT NULL,
-                token VARCHAR(255) NOT NULL UNIQUE,
-                abilities TEXT,
-                expires_at DATETIME NULL,
-                last_used_at DATETIME NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            )
-        ");
-
-        // Create rate limiting table
-        $this->pdo->exec("
-            CREATE TABLE IF NOT EXISTS {$this->config['rate_limit_table']} (
-                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                ip_address VARCHAR(45) NOT NULL,
-                requests_count INT DEFAULT 1,
-                window_start DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_ip_window (ip_address, window_start)
-            )
-        ");
     }
 
     /**
@@ -147,8 +133,9 @@ class Api
         $expiresAtFormatted = $expiresAt ? date('Y-m-d H:i:s', $expiresAt) : null;
         $abilitiesJson = json_encode($abilities);
 
+        $tokenTable = $this->safeTable($this->config['token_table']);
         $stmt = $this->pdo->prepare("
-            INSERT INTO {$this->config['token_table']} 
+            INSERT INTO {$tokenTable} 
             (user_id, name, token, abilities, expires_at) 
             VALUES (?, ?, ?, ?, ?)
         ");
@@ -172,8 +159,9 @@ class Api
         $plainToken = $matches[1];
         $hashedToken = hash('sha256', $plainToken);
 
+        $tokenTable = $this->safeTable($this->config['token_table']);
         $stmt = $this->pdo->prepare("
-            SELECT * FROM {$this->config['token_table']} 
+            SELECT * FROM {$tokenTable} 
             WHERE token = ? AND (expires_at IS NULL OR expires_at > NOW())
         ");
 
@@ -186,7 +174,7 @@ class Api
 
         // Update last used timestamp
         $updateStmt = $this->pdo->prepare("
-            UPDATE {$this->config['token_table']} 
+            UPDATE {$tokenTable} 
             SET last_used_at = NOW() 
             WHERE id = ?
         ");
@@ -205,7 +193,7 @@ class Api
      */
     private function isIpWhitelisted(): bool
     {
-        $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
+        $clientIp = $this->getClientIp();
         return in_array($clientIp, $this->config['ip_whitelist']);
     }
 
@@ -225,9 +213,13 @@ class Api
         $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
         $allowedOrigins = $this->config['cors']['allow_origin'];
 
-        // Check if origin is allowed
-        if (in_array('*', $allowedOrigins) || in_array($origin, $allowedOrigins)) {
-            header('Access-Control-Allow-Origin: ' . ($origin ?: '*'));
+        if (in_array('*', $allowedOrigins)) {
+            // Wildcard: allow all origins (cannot be used with credentials)
+            header('Access-Control-Allow-Origin: *');
+        } elseif ($origin !== '' && in_array($origin, $allowedOrigins)) {
+            // Reflect the specific allowed origin (safe with credentials)
+            header('Access-Control-Allow-Origin: ' . $origin);
+            header('Vary: Origin');
         }
 
         header('Access-Control-Allow-Methods: ' . implode(', ', $this->config['cors']['allow_methods']));
@@ -260,14 +252,15 @@ class Api
             return true;
         }
 
-        $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
+        $clientIp = $this->getClientIp();
         $maxRequests = $this->config['rate_limit']['max_requests'];
         $windowSeconds = $this->config['rate_limit']['window_seconds'];
         $windowStart = date('Y-m-d H:i:s', time() - $windowSeconds);
+        $rateLimitTable = $this->safeTable($this->config['rate_limit_table']);
 
         // Clean old entries
         $cleanStmt = $this->pdo->prepare("
-            DELETE FROM {$this->config['rate_limit_table']} 
+            DELETE FROM {$rateLimitTable} 
             WHERE window_start < ?
         ");
         $cleanStmt->execute([$windowStart]);
@@ -275,7 +268,7 @@ class Api
         // Check current request count
         $checkStmt = $this->pdo->prepare("
             SELECT SUM(requests_count) as total_requests 
-            FROM {$this->config['rate_limit_table']} 
+            FROM {$rateLimitTable} 
             WHERE ip_address = ? AND window_start >= ?
         ");
         $checkStmt->execute([$clientIp, $windowStart]);
@@ -286,11 +279,10 @@ class Api
             return false;
         }
 
-        // Record this request
+        // Record this request - simple insert per window
         $recordStmt = $this->pdo->prepare("
-            INSERT INTO {$this->config['rate_limit_table']} (ip_address, requests_count) 
-            VALUES (?, 1) 
-            ON DUPLICATE KEY UPDATE requests_count = requests_count + 1
+            INSERT INTO {$rateLimitTable} (ip_address, requests_count) 
+            VALUES (?, 1)
         ");
         $recordStmt->execute([$clientIp]);
 
@@ -335,15 +327,59 @@ class Api
     private function addRoute(string $method, string $uri, callable $callback): void
     {
         $uri = trim($uri, '/') ?: '/';
-        $this->routes[$method][$uri] = $callback;
+        $this->routes[$method][$uri] = [
+            'callback' => $callback,
+            'regex' => $this->compileRoutePattern($uri),
+        ];
     }
 
     /**
      * Find matching route
      */
-    private function findRoute(): ?callable
+    private function findRoute(): ?array
     {
-        return $this->routes[$this->requestMethod][$this->requestUri] ?? null;
+        $methodRoutes = $this->routes[$this->requestMethod] ?? [];
+
+        if (isset($methodRoutes[$this->requestUri])) {
+            return [
+                'callback' => $methodRoutes[$this->requestUri]['callback'],
+                'params' => [],
+            ];
+        }
+
+        foreach ($methodRoutes as $route) {
+            $matches = [];
+            if (preg_match($route['regex'], $this->requestUri, $matches) === 1) {
+                $params = [];
+                foreach ($matches as $key => $value) {
+                    if (!is_string($key)) {
+                        continue;
+                    }
+                    $params[$key] = $value;
+                }
+
+                return [
+                    'callback' => $route['callback'],
+                    'params' => $params,
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Compile route URI pattern into regex.
+     * Example: /v1/users/{id} => #^v1/users/(?P<id>[A-Za-z0-9_-]+)$#
+     */
+    private function compileRoutePattern(string $uri): string
+    {
+        $pattern = preg_replace_callback('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', function ($matches) {
+            $paramName = $matches[1];
+            return '(?P<' . $paramName . '>[A-Za-z0-9_-]+)';
+        }, $uri);
+
+        return '#^' . $pattern . '$#';
     }
 
     /**
@@ -396,10 +432,13 @@ class Api
             }
 
             // Find route
-            $callback = $this->findRoute();
-            if (!$callback) {
+            $route = $this->findRoute();
+            if (!$route) {
                 $this->sendError('Route not found', 404);
             }
+
+            $callback = $route['callback'];
+            $routeParams = array_values($route['params'] ?? []);
 
             // Check authentication requirements
             $authRequired = $this->config['auth']['required'] &&
@@ -415,8 +454,8 @@ class Api
 
             // Execute route callback
             $result = $this->currentUser ?
-                $callback($this->currentUser) :
-                $callback();
+                $callback($this->currentUser, ...$routeParams) :
+                $callback(...$routeParams);
 
             // Send successful response
             if (is_array($result)) {
@@ -469,9 +508,10 @@ class Api
     public function revokeToken(string $plainToken): bool
     {
         $hashedToken = hash('sha256', $plainToken);
+        $tokenTable = $this->safeTable($this->config['token_table']);
 
         $stmt = $this->pdo->prepare("
-            DELETE FROM {$this->config['token_table']} 
+            DELETE FROM {$tokenTable} 
             WHERE token = ?
         ");
 
@@ -483,8 +523,9 @@ class Api
      */
     public function revokeAllUserTokens(int $userId): int
     {
+        $tokenTable = $this->safeTable($this->config['token_table']);
         $stmt = $this->pdo->prepare("
-            DELETE FROM {$this->config['token_table']} 
+            DELETE FROM {$tokenTable} 
             WHERE user_id = ?
         ");
 
@@ -497,14 +538,35 @@ class Api
      */
     public function getUserTokens(int $userId): array
     {
+        $tokenTable = $this->safeTable($this->config['token_table']);
         $stmt = $this->pdo->prepare("
             SELECT id, name, abilities, last_used_at, expires_at, created_at
-            FROM {$this->config['token_table']} 
+            FROM {$tokenTable} 
             WHERE user_id = ? AND (expires_at IS NULL OR expires_at > NOW())
             ORDER BY created_at DESC
         ");
 
         $stmt->execute([$userId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Get the client IP address.
+     *
+     * Uses the framework's request()->ip() when available (respects trusted
+     * proxies), otherwise falls back to REMOTE_ADDR.
+     */
+    private function getClientIp(): string
+    {
+        if (function_exists('request')) {
+            try {
+                return request()->ip();
+            } catch (\Throwable $e) {
+                // Silently fall back
+            }
+        }
+
+        $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+        return filter_var($remoteAddr, FILTER_VALIDATE_IP) ? $remoteAddr : '127.0.0.1';
     }
 }

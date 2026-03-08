@@ -19,7 +19,7 @@ class Files
     /**
      * @var string The path
      */
-    private $path = '../../';
+    private $path;
 
     /**
      * @var string The upload directory path.
@@ -35,6 +35,19 @@ class Files
      * @var string Allowed MIME types. Can be a string MIME type, or '*'.
      */
     private $allowedMimeTypes = 'image/jpeg, image/png, application/pdf';
+
+    /**
+     * @var array Blocked file extensions that could be executed on the server.
+     */
+    private $blockedExtensions = ['php', 'phtml', 'phar', 'php3', 'php4', 'php5', 'php7', 'phps', 'cgi', 'pl', 'asp', 'aspx', 'jsp', 'sh', 'bat', 'exe', 'dll', 'htaccess', 'htpasswd'];
+
+    /**
+     * Constructor - Initializes the path.
+     */
+    public function __construct()
+    {
+        $this->path = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR;
+    }
 
     /**
      * Sets the upload directory.
@@ -110,21 +123,29 @@ class Files
             return $response;
         }
 
-        // Handle file upload
-        $targetFile = $targetDir . basename($file["name"]);
-
         // Check file size
         if ($file["size"] > ($this->maxFileSize * 1024 * 1024)) {
             $response['message'] = "Sorry, your file exceeds the maximum file size of {$this->maxFileSize}MB.";
             return $response;
         }
 
-        // Check file type
-        $fileType = mime_content_type($file["tmp_name"]);
+        // Block dangerous file extensions
+        $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+        if (in_array($extension, $this->blockedExtensions, true)) {
+            $response['message'] = "Sorry, files with the .{$extension} extension are not allowed.";
+            return $response;
+        }
+
+        // Check file type using finfo for more reliable MIME detection
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $fileType = $finfo->file($file["tmp_name"]);
+        if ($fileType === false) {
+            $fileType = mime_content_type($file["tmp_name"]);
+        }
         if ($this->allowedMimeTypes !== '*') {
             $allowedTypes = $this->allowedMimeTypes;
             // Check if the file type is not in the allowed MIME types
-            if (!in_array($fileType, explode(',', $allowedTypes))) {
+            if (!in_array($fileType, array_map('trim', explode(',', $allowedTypes)))) {
                 $response['message'] = "Sorry, only files of type(s) {$allowedTypes} are allowed.";
                 return $response;
             }

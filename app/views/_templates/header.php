@@ -31,6 +31,7 @@
 
     <base href="<?= BASE_URL ?>">
     <meta name="base_url" content="<?= BASE_URL ?>" />
+    <meta name="route.modal.content" content="<?= route('modal.content') ?>" />
     <meta name="description" content="" />
     <meta name="secure_token" content="<?= csrf_value(); ?>" />
 

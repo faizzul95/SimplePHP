@@ -122,7 +122,6 @@
                             <div class="mb-3"></div>
                             <div class="mb-3">
                                 <input type="hidden" id="captcha-response" name="g-recaptcha-response" class="form-control" />
-                                <input type="hidden" name="action" value="authorize" class="form-control" />
                                 <button id="loginBtn" class="btn btn-primary w-100" type="submit">Sign in</button>
                             </div>
                         </form>
@@ -164,7 +163,7 @@
             const rules = { 'username': 'required|min_length:3|max_length:20', 'password': 'required|min_length:5' };
            
             if (validationJs(this, rules)) {
-                const res = await loginApi('controllers/AuthController.php', 'formAuthentication');
+                const res = await loginApi('<?= route('auth.login') ?>', 'formAuthentication');
 
                 if (isSuccess(res)) {
                     const data = res.data;

@@ -214,9 +214,6 @@ class Request
         // Remove CDATA sections
         $str = preg_replace('#<!\[CDATA\[.*?\]\]>#s', '', $str);
 
-        // Remove backslashes that might be used for escaping
-        $str = str_replace('\\', '', $str);
-
         // Additional cleaning for specific attack vectors
         $str = preg_replace('#<\s*/?[a-z]+[^>]*>#i', '', $str); // Remove any remaining HTML tags
 
@@ -326,12 +323,15 @@ class Request
      */
     public function post($key, $default = null, $secure = true)
     {
-        // Set the request security mode
+        // Use local variable instead of mutating instance state
+        $originalSecure = $this->secureRequest;
         $this->secureRequest = $secure;
 
         // If no segments provided, just check if the data contains the key directly
         if (strpos($key, '.') === false) {
-            return $this->sanitizeInput($_POST[$key] ?? $default);
+            $result = $this->sanitizeInput($_POST[$key] ?? $default);
+            $this->secureRequest = $originalSecure;
+            return $result;
         }
 
         // Split the key by dots to handle nested arrays
@@ -352,11 +352,14 @@ class Request
                 $data = $data[$segment]; // If the segment exists, go deeper
             } else {
                 // If the segment doesn't exist, return the default value
+                $this->secureRequest = $originalSecure;
                 return $default;
             }
         }
 
-        return $this->sanitizeInput($data ?? $default);
+        $result = $this->sanitizeInput($data ?? $default);
+        $this->secureRequest = $originalSecure;
+        return $result;
     }
 
     /**
@@ -369,12 +372,15 @@ class Request
      */
     public function get($key, $default = null, $secure = true)
     {
-        // Set the request security mode
+        // Use local variable instead of mutating instance state
+        $originalSecure = $this->secureRequest;
         $this->secureRequest = $secure;
 
         // If no segments provided, just check if the data contains the key directly
         if (strpos($key, '.') === false) {
-            return $this->sanitizeInput($_GET[$key] ?? $default);
+            $result = $this->sanitizeInput($_GET[$key] ?? $default);
+            $this->secureRequest = $originalSecure;
+            return $result;
         }
 
         // Split the key by dots to handle nested arrays
@@ -395,11 +401,14 @@ class Request
                 $data = $data[$segment]; // If the segment exists, go deeper
             } else {
                 // If the segment doesn't exist, return the default value
+                $this->secureRequest = $originalSecure;
                 return $default;
             }
         }
 
-        return $this->sanitizeInput($data ?? $default);
+        $result = $this->sanitizeInput($data ?? $default);
+        $this->secureRequest = $originalSecure;
+        return $result;
     }
 
     /**
@@ -632,10 +641,21 @@ class Request
     /**
      * Get the IP address of the request
      * 
+     * Only trusts forwarded headers when REMOTE_ADDR is in the configured
+     * trusted_proxies list. Falls back to REMOTE_ADDR otherwise.
+     * 
      * @return string The IP address
      */
     public function ip()
     {
+        $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+
+        // Only trust forwarded headers when behind a known reverse proxy
+        $trustedProxies = \config('security.trusted_proxies', []);
+        if (empty($trustedProxies) || (is_array($trustedProxies) && !in_array($remoteAddr, $trustedProxies, true))) {
+            return filter_var($remoteAddr, FILTER_VALIDATE_IP) ? $remoteAddr : '0.0.0.0';
+        }
+
         // Define trusted IP headers in priority order
 		$ipKeys = [
 			'HTTP_CF_CONNECTING_IP',     // Cloudflare
@@ -645,7 +665,6 @@ class Request
 			'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster environments
 			'HTTP_FORWARDED_FOR',        // Legacy proxy header
 			'HTTP_FORWARDED',            // RFC 7239 standard
-			'REMOTE_ADDR'                // Direct connection (always available)
 		];
 
 		foreach ($ipKeys as $key) {

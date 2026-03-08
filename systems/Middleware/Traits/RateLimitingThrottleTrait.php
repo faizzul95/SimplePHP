@@ -121,7 +121,8 @@ trait RateLimitingThrottleTrait
 		// If the X-Forwarded-For header is present, use it to get the client IP address
 		if ($this->spoofProtection && isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
 			$ipChain = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-			return trim(end($ipChain));
+			// First IP in chain is the original client; last is the nearest proxy
+			return trim($ipChain[0]);
 		}
 
 		// Otherwise, use the remote address
@@ -273,7 +274,7 @@ trait RateLimitingThrottleTrait
 		$data['last_update'] = time();
 
 		if (hasData($fileName))
-			@file_put_contents($filePath, json_encode($data));
+			@file_put_contents($filePath, json_encode($data), LOCK_EX);
 	}
 
 	/**
@@ -372,12 +373,26 @@ trait RateLimitingThrottleTrait
 
 		$filePath = $this->throttleBlackListDir . $filename;
 
-		$data[$ip]['time_unix'] = time();
-		$data[$ip]['timestamp'] = timestamp();
-		$data[$ip]['reason'] = 'abuse rate limiting';
-		$data[$ip]['logs'] = $this->loadThrottleData($ip);
+		// Load existing blacklist to avoid overwriting previous entries
+		$data = [];
+		if (file_exists($filePath)) {
+			$existing = @file_get_contents($filePath);
+			if ($existing !== false) {
+				$decoded = json_decode($existing, true);
+				if (is_array($decoded)) {
+					$data = $decoded;
+				}
+			}
+		}
 
-		@file_put_contents($filePath, json_encode($data));
+		$data[$ip] = [
+			'time_unix' => time(),
+			'timestamp' => timestamp(),
+			'reason'    => 'abuse rate limiting',
+			'logs'      => $this->loadThrottleData($ip),
+		];
+
+		@file_put_contents($filePath, json_encode($data), LOCK_EX);
 		@unlink($this->throttleDir . $this->getThrottleFileName($ip)); // remove cache
 	}
 
@@ -522,9 +537,9 @@ trait RateLimitingThrottleTrait
 			return;
 		} else {
 
-			// check if ip is currently in permanent blocked
+		// check if ip is currently in permanent blocked
 			if ($this->isPermanentBlocked($ip)) {
-				return jsonResponse(['code' => 403, 'message' => 'You are permanently blocked'], 403);
+				jsonResponse(['code' => 403, 'message' => 'You are permanently blocked'], 403);
 				exit;
 			}
 
@@ -539,8 +554,7 @@ trait RateLimitingThrottleTrait
 				// check if temporary blocked has reached, then block the ip permanently
 				if ($this->isMaxTemporaryBlockedReached($throttleData)) {
 					$this->blockIpPermanent($ip);
-					// log_message('error', "IP {$ip} is permanently blocked");
-					return jsonResponse(['code' => 403, 'message' => 'You are permanently blocked, Please contact support to further information'], 403);
+					jsonResponse(['code' => 403, 'message' => 'You are permanently blocked, Please contact support to further information'], 403);
 					exit;
 				}
 
@@ -548,16 +562,14 @@ trait RateLimitingThrottleTrait
 				if (time() >= $throttleData['temp_blocked_until_time']) {
 					$throttleData = $this->unblockIp($ip, $throttleData); // get the latest throttle data
 				} else {
-					return jsonResponse(['code' => 429, 'message' => 'Too many requests, You are temporarily blocked. Please try again in ' . $this->elapsedTime($throttleData['temp_blocked_until_time'])], 429);
+					jsonResponse(['code' => 429, 'message' => 'Too many requests, You are temporarily blocked. Please try again in ' . $this->elapsedTime($throttleData['temp_blocked_until_time'])], 429);
 					exit;
 				}
 			}
 
-			// Check if ip is spoofing
 			if ($this->isSpoofedIP($ip)) {
 				$this->blockIpTemporary($ip, $throttleData);
-				// log_message('error', "IP {$ip} is spoofed");
-				return jsonResponse(['code' => 400, 'message' => 'IP addresses do not match, IP has been temporary blocked'], 400);
+				jsonResponse(['code' => 400, 'message' => 'IP addresses do not match, IP has been temporary blocked'], 400);
 				exit;
 			}
 
@@ -569,15 +581,14 @@ trait RateLimitingThrottleTrait
 			// Check if request limit is reached
 			if ($this->isMaxRequestsExceeded($throttleData)) {
 
-				// check if warning has reach
 				if ($this->isMaxWarningsReached($throttleData)) {
 					$this->blockIpTemporary($ip, $throttleData);
-					return jsonResponse(['code' => 429, 'message' => 'You are temporarily blocked, Please try again later'], 429);
+					jsonResponse(['code' => 429, 'message' => 'You are temporarily blocked, Please try again later'], 429);
 					exit;
 				}
 
 				$this->incrementWarningCount($ip, $throttleData);
-				return jsonResponse(['code' => 429, 'message' => 'Too many requests'], 429);
+				jsonResponse(['code' => 429, 'message' => 'Too many requests'], 429);
 				exit;
 			}
 

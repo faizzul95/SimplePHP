@@ -21,7 +21,7 @@ interface ForgeInterface
 
     public function alter($schema);
 
-    public function up();
+    public function up(): void;
 
-    public function down();
+    public function down(): void;
 }

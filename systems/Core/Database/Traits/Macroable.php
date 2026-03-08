@@ -212,7 +212,8 @@ trait Macroable
     {
         try {
             if (class_exists(Logger::class)) {
-                $logger = new Logger(__DIR__ . '/../../../../logs/database/error.log');
+                $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR;
+                $logger = new Logger($rootDir . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log');
                 $logger->logWithContext($message, $context, Logger::LOG_LEVEL_ERROR);
             }
         } catch (Throwable $e) {

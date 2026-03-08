@@ -51,7 +51,7 @@ class Logger
         $this->rotateLogIfNeeded();
 
         $logMessage = $this->formatLogMessage($message, $level);
-        if (!file_put_contents($this->logPath, $logMessage, FILE_APPEND | LOCK_EX)) {
+        if (file_put_contents($this->logPath, $logMessage, FILE_APPEND | LOCK_EX) === false) {
             throw new RuntimeException("Failed to write to log file: {$this->logPath}");
         }
     }
@@ -171,8 +171,16 @@ class Logger
             return 0;
         }
 
-        $lines = file($this->logPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        return count($lines);
+        // Use SplFileObject to count lines without loading entire file into memory
+        $count = 0;
+        $file = new \SplFileObject($this->logPath, 'r');
+        $file->setFlags(\SplFileObject::READ_AHEAD | \SplFileObject::SKIP_EMPTY | \SplFileObject::DROP_NEW_LINE);
+        while (!$file->eof()) {
+            $file->current();
+            $file->next();
+            $count++;
+        }
+        return $count;
     }
 
     /**

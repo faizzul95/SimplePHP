@@ -1,81 +1,93 @@
 <?php
 
-$menuType = request()->input('_mt', 'main');
-$page = request()->input('_p');
-$spage = request()->input('_sp');
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\MasterEmailTemplateController;
+use App\Http\Controllers\RoleController;
+use App\Http\Controllers\UserController;
+use Core\Http\Request;
 
-if (empty($page)) {
-    if (!isLogin(false))
-        redirect('?_p=' . REDIRECT_LOGIN, true);
-    else
-        header('Location: ' . $redirectAuth, true, 301);
-    exit;
-}
+/*
+|--------------------------------------------------------------------------
+| Web Routes — Page Rendering Only
+|--------------------------------------------------------------------------
+|
+| These routes serve HTML views. All data operations (AJAX/JSON) are
+| handled by API routes in api.php under the /api/v1/ prefix.
+|
+*/
 
-// default value
-$configRoute = [
-    'page' => null,
-    'subpage' => null,
-    'permission' => null,
-    'desc' => null,
-    'url' => null,
-    'file' => null,
-    'icon' => null,
-    'active' => false,
-    'authenticate' => false
-];
+$router->get('/', [DashboardController::class, 'index'])
+    ->middleware('auth.web')
+    ->name('home');
 
-// Handle for main menu list config from bootstrap.php
-if (isset($menuList) && is_array($menuList)) {
+$router->get('/login', [AuthController::class, 'showLogin'])
+    ->middleware('guest')
+    ->name('login');
 
-    $configList = $menuList[$menuType] ?? [];
-    $configRoute = [
-        'page' => $page ?? null,
-        'subpage' => $spage ?? null,
-        'desc' => !empty($page) ? (
-            !empty($spage) && isset($configList[$page]['subpage'][$spage]['desc'])
-            ? $configList[$page]['subpage'][$spage]['desc']
-            : ($configList[$page]['desc'] ?? null)
-        ) : null,
-        'url' => !empty($page) ? (
-            !empty($spage) && isset($configList[$page]['subpage'][$spage]['url'])
-            ? $configList[$page]['subpage'][$spage]['url']
-            : ($configList[$page]['url'] ?? null)
-        ) : null,
-        'file' => !empty($page) ? (
-            !empty($spage) && isset($configList[$page]['subpage'][$spage]['file'])
-            ? $configList[$page]['subpage'][$spage]['file']
-            : ($configList[$page]['file'] ?? null)
-        ) : null,
-        'icon' => !empty($page) ? (
-            !empty($spage) && isset($configList[$page]['subpage'][$spage]['icon'])
-            ? $configList[$page]['subpage'][$spage]['icon']
-            : ($configList[$page]['icon'] ?? null)
-        ) : null,
-        'permission' => !empty($page) ? (
-            !empty($spage) && isset($configList[$page]['subpage'][$spage]['permission'])
-            ? $configList[$page]['subpage'][$spage]['permission']
-            : ($configList[$page]['permission'] ?? null)
-        ) : null,
-        'active' => !empty($page) ? (
-            // First check if main page is active
-            ($configList[$page]['active'] ?? false) ? (
-                // If main page is active, then check subpage if it exists
-                !empty($spage) && isset($configList[$page]['subpage'][$spage]['active'])
-                ? $configList[$page]['subpage'][$spage]['active']
-                : true
-            ) : false // If main page is not active, force all to false
-        ) : false,
-        'authenticate' => !empty($page) ? (
-            !empty($spage) && isset($configList[$page]['subpage'][$spage]['authenticate'])
-            ? $configList[$page]['subpage'][$spage]['authenticate']
-            : ($configList[$page]['authenticate'] ?? false)
-        ) : false,
-        'mainDesc' => !empty($spage) && isset($configList[$page]['subpage'][$spage]) && isset($configList[$page]['desc'])
-            ? $configList[$page]['desc']
-            : null
-    ];
-}
+$router->post('/auth/login', [AuthController::class, 'authorize'])
+    ->middleware('guest')
+    ->middleware('xss')
+    ->name('auth.login');
 
-$router = new \Components\PageRouter($configRoute);
-$router->route();
+$router->post('/auth/logout', [AuthController::class, 'logout'])
+    ->middleware('auth.web')
+    ->name('auth.logout');
+
+$router->group(['middleware' => ['auth.web']], function ($router) {
+
+    $router->get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    $router->get('/directory', [UserController::class, 'index'])
+        ->middleware('permission:user-view')
+        ->name('directory');
+    $router->get('/rbac/roles', [RoleController::class, 'index'])
+        ->middleware('permission:rbac-roles-view')
+        ->name('rbac.roles');
+    $router->get('/rbac/email', [MasterEmailTemplateController::class, 'index'])
+        ->middleware('permission:rbac-email-view')
+        ->name('rbac.email');
+});
+
+$router->post('/modal/content', function (Request $request): void {
+    $filePath = (string) $request->input('fileName', '');
+    $dataArray = $request->input('dataArray', []);
+
+    $normalizedPath = str_replace('\\', '/', trim($filePath));
+
+    if ($normalizedPath === '' || str_contains($normalizedPath, '..') || !str_starts_with($normalizedPath, 'views/')) {
+        http_response_code(422);
+        echo '<div class="alert alert-danger" role="alert">Invalid modal file path.</div>';
+        return;
+    }
+
+    // Enforce .php extension only
+    if (!str_ends_with($normalizedPath, '.php')) {
+        http_response_code(422);
+        echo '<div class="alert alert-danger" role="alert">Invalid file type.</div>';
+        return;
+    }
+
+    $viewPath = 'app/' . ltrim($normalizedPath, '/');
+    $absolute = realpath(ROOT_DIR . $viewPath);
+
+    // Verify the resolved path is within the expected views directory
+    $allowedDir = realpath(ROOT_DIR . 'app/views');
+    if ($absolute === false || $allowedDir === false || !str_starts_with($absolute, $allowedDir)) {
+        http_response_code(404);
+        echo '<div class="alert alert-danger" role="alert">File not found.</div>';
+        return;
+    }
+
+    if (!is_readable($absolute)) {
+        http_response_code(404);
+        echo '<div class="alert alert-danger" role="alert">File <b><i>' . htmlspecialchars($viewPath, ENT_QUOTES, 'UTF-8') . '</i></b> does not exist.</div>';
+        return;
+    }
+
+    // Pass only sanitized, scalar values to the view — no extract()
+    $__modalData = is_array($dataArray) ? array_map(function ($v) {
+        return is_scalar($v) ? $v : null;
+    }, $dataArray) : [];
+
+    include $absolute;
+})->middleware('auth.web')->name('modal.content');

@@ -77,7 +77,7 @@ class StatementCache
 
     /**
      * Generate cache key for a statement
-     * Uses crc32 for speed — no need for cryptographic hashing here
+     * Uses md5 for reliable uniqueness — crc32 has higher collision risk
      *
      * @param string $sql SQL query
      * @param string $connectionName Connection name
@@ -85,7 +85,7 @@ class StatementCache
      */
     protected static function generateKey($sql, $connectionName)
     {
-        return $connectionName . ':' . crc32($sql);
+        return $connectionName . ':' . md5($sql);
     }
 
     /**

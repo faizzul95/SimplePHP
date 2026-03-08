@@ -246,7 +246,8 @@ if (!function_exists('encode_base64')) {
 			$sBase64 = base64_encode($sData);
 
 			// Replace URL-unsafe characters (+ and /) with URL-safe characters (- and _)
-			return strtr($sBase64, '+/', '-_');
+			// Strip = padding — it causes 404 in route parameter matching
+			return rtrim(strtr($sBase64, '+/', '-_'), '=');
 		} else {
 			// Return an empty string if input data is empty or not provided
 			return '';
@@ -266,6 +267,9 @@ if (!function_exists('decode_base64')) {
 		if (hasData($sData)) {
 			// Replace URL-safe characters (- and _) with Base64 characters (+ and /)
 			$sBase64 = strtr($sData, '-_', '+/');
+
+			// Re-add padding stripped by encode_base64()
+			$sBase64 = str_pad($sBase64, (int) (ceil(strlen($sBase64) / 4) * 4), '=');
 
 			// Decode the Base64-encoded data
 			return base64_decode($sBase64);
@@ -383,8 +387,16 @@ if (!function_exists('asset')) {
 if (!function_exists('redirect')) {
 	function redirect($path, $permanent = false)
 	{
+		$target = (string) $path;
+
+		// If already absolute URL, use it directly
+		if (preg_match('/^https?:\/\//i', $target) === 1) {
+			header('Location: ' . $target, true, $permanent ? 301 : 302);
+			exit();
+		}
+
 		// Perform the redirection and exit.
-		header('Location: ' . url($path), true, $permanent ? 301 : 302);
+		header('Location: ' . url($target), true, $permanent ? 301 : 302);
 		exit();
 	}
 }
@@ -406,6 +418,25 @@ if (!function_exists('url')) {
 
 		// Return the complete URL with sanitized parameters.
 		return base_url($param);
+	}
+}
+
+if (!function_exists('route')) {
+	function route($name, $params = [], $absolute = false)
+	{
+		$path = \Core\Routing\Router::urlFor((string) $name, (array) $params);
+
+		if ($path === null) {
+			return $absolute ? base_url() : '';
+		}
+
+		$relative = ltrim((string) $path, '/');
+
+		if ($absolute) {
+			return url($relative);
+		}
+
+		return $relative;
 	}
 }
 

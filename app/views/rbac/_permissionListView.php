@@ -6,7 +6,7 @@
     </div>
 
     <div class="col-xl-12 mb-4">
-        <form id="permissionForm" method="post" action="controllers/PermissionController.php">
+        <form id="permissionForm" method="post" action="<?= route('permissions.save') ?>">
             <div class="row">
                 <div class="col-xl-8 mb-3">
                     <label for="abilities_name" class="form-label"> Name <span class="text-danger">*</span></label>
@@ -27,7 +27,6 @@
 
             <center>
                 <input type="hidden" id="perm_id" name="id">
-                <input type="hidden" name="action" value="saveAbilities">
                 <button id="submitBtn" type="submit" class="btn btn-md btn-info mb-3"> <i class='bx bx-save'></i> Save </button>
             </center>
         </form>
@@ -77,9 +76,7 @@
 
     // GET DATATABLE (SERVER-SIDE)
     async function getListPermission() {
-        generateDatatableServer('dataListPerm', 'controllers/PermissionController.php', 'nodataPermDiv', {
-                'action': 'listPermissionDatatable',
-            },
+        generateDatatableServer('dataListPerm', '<?= route('permissions.list') ?>', 'nodataPermDiv', {},
             [{
                     "data": "name",
                     "width": "20%",
@@ -115,10 +112,7 @@
     }
 
     async function editPermRecord(id) {
-        const res = await callApi('post', "controllers/PermissionController.php", {
-            'action': 'show',
-            'id': id
-        });
+        const res = await callApi('get', "<?= route('permissions.show') ?>".replace('{id}', id));
 
         if (isSuccess(res)) {
             const response = res.data;
@@ -144,10 +138,7 @@
             },
         }).then(async (result) => {
             if (result.isConfirmed) {
-                const res = await callApi('post', "controllers/PermissionController.php", {
-                    'action': 'destroy',
-                    'id': id
-                });
+                const res = await callApi('delete', "<?= route('permissions.delete') ?>".replace('{id}', id));
 
                 if (isSuccess(res)) {
                     const response = res.data;
