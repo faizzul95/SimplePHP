@@ -3502,8 +3502,18 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $records = array_merge($conditions, $data);
 
             if (isset($records[$primaryKey]) && !empty($records[$primaryKey])) {
-                $updateRecs = array_merge($data, ['updated_at' => date('Y-m-d H:i:s')]);
-                return $this->where($primaryKey, $records[$primaryKey])->update($updateRecs);
+                $query = $this->createSubQueryBuilder();
+                $query->table = $this->table;
+                $existingByPk = $query->where($primaryKey, $records[$primaryKey])->fetch();
+                unset($query);
+
+                if ($existingByPk) {
+                    $updateRecs = array_merge($data, ['updated_at' => date('Y-m-d H:i:s')]);
+                    return $this->where($primaryKey, $records[$primaryKey])->update($updateRecs);
+                }
+
+                $insertRecs = array_merge($records, ['created_at' => date('Y-m-d H:i:s')]);
+                return $this->insert($insertRecs);
             }
 
             // If no condition to check, then insert as a new records
