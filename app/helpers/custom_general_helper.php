@@ -576,8 +576,8 @@ if (!function_exists('paramUrl')) {
 		// Build the new query string
 		$newQuery = http_build_query($mergedParams, '', '&', PHP_QUERY_RFC3986);
 
-		// Construct the final URL
-		$finalUrl = base_url();
+		// Construct the final URL — preserve the current path
+		$finalUrl = base_url(ltrim($path, '/'));
 
 		if (!empty($newQuery)) {
 			$finalUrl .= '?' . $newQuery;

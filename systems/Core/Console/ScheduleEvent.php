@@ -369,6 +369,15 @@ class ScheduleEvent
         return $this;
     }
 
+    /**
+     * Laravel-compatible alias for naming scheduled events.
+     * In this framework, event name maps to description.
+     */
+    public function name(string $name): self
+    {
+        return $this->description($name);
+    }
+
     public function timezone(string $timezone): self
     {
         $this->timezone = $timezone;

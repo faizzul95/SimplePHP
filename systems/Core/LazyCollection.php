@@ -308,17 +308,19 @@ class LazyCollection implements \Iterator, \Countable
      */
     public function take($limit)
     {
-        $self = $this;
-        return new LazyCollection(function ($size, $offset) use ($self, $limit) {
+        $clone = clone $this;
+        $originalSource = $this->source;
+        $clone->source = function ($size, $offset) use ($originalSource, $limit) {
             if ($offset >= $limit) {
                 return [];
             }
 
-            $source = $this->source;
-            $items = $source($size, $offset);
+            $items = $originalSource($size, $offset);
 
             return array_slice($items, 0, min(count($items), $limit - $offset));
-        });
+        };
+        $clone->rewind();
+        return $clone;
     }
 
     /**
@@ -554,10 +556,13 @@ class LazyCollection implements \Iterator, \Countable
      */
     public function skip($count)
     {
-        return new LazyCollection(function ($size, $offset) use ($count) {
-            $source = $this->source;
-            return $source($size, $offset + $count);
-        });
+        $clone = clone $this;
+        $originalSource = $this->source;
+        $clone->source = function ($size, $offset) use ($originalSource, $count) {
+            return $originalSource($size, $offset + $count);
+        };
+        $clone->rewind();
+        return $clone;
     }
 
     /**

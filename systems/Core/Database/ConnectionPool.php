@@ -94,6 +94,14 @@ class ConnectionPool
 
         self::$stats['cache_misses']++;
 
+        // Enforce max connections limit — clean up idle ones first
+        if (count(self::$pool) >= self::$maxConnections) {
+            self::cleanupIdleConnections();
+            if (count(self::$pool) >= self::$maxConnections) {
+                throw new \Exception("Connection pool limit reached ({$name}): maximum " . self::$maxConnections . " connections allowed");
+            }
+        }
+
         // Create new connection
         return self::createConnection($name);
     }

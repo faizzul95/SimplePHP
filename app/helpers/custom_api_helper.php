@@ -56,8 +56,8 @@ if (!function_exists('jsonResponse')) {
     function jsonResponse($data, $response_code = 200)
     {
         // Check if $data is an array and has a 'code' key
-        if (is_array($data) && (isset($data['code']))) {
-            $response_code = (int) isset($data['code']) ? $data['code'] : $response_code;
+        if (is_array($data) && isset($data['code'])) {
+            $response_code = (int) $data['code'];
         }
 
         // Check if the provided HTTP status code is valid, otherwise default to 400 Bad Request
@@ -148,7 +148,7 @@ if (!function_exists('isSuccess')) {
     function isSuccess($code = 200)
     {
         // Define an array of HTTP status codes that represent success access.
-        $successStatus = [200, 201, 302];
+        $successStatus = [200, 201];
 
         // Convert the input response code to an integer if it's a string.
         $code = is_string($code) ? (int) $code : $code;

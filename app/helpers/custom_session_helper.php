@@ -12,6 +12,10 @@ function allSession($die = false)
 
 function startSession($param = NULL)
 {
+    if (!is_array($param) || empty($param)) {
+        return $_SESSION;
+    }
+
     foreach ($param as $sessionName => $sessionValue) {
         $_SESSION[$sessionName] = is_string($sessionValue) ? trim($sessionValue) : $sessionValue;
     }
@@ -35,7 +39,7 @@ function getSession($param = NULL)
     if (is_array($param)) {
         $sessiondata = [];
         foreach ($param as $sessionName) {
-            array_push($sessiondata, $_SESSION[$sessionName]);
+            array_push($sessiondata, $_SESSION[$sessionName] ?? null);
         }
         return $sessiondata;
     } else {

@@ -216,6 +216,11 @@ function moveFile($filesName, $currentPath, $folder, $data = NULL, $type = 'rena
     $path = $folder . '/' . $saveName;
     $fileSize = filesize($currentPath);
 
+    $allowedOps = ['rename', 'copy'];
+    if (!in_array($type, $allowedOps, true)) {
+        throw new \InvalidArgumentException("Invalid file operation type: {$type}");
+    }
+
     if ($type($currentPath, ROOT_DIR . $path)) {
 
         $entity_type = $entity_file_type = $entity_id = $user_id = 0;
@@ -362,7 +367,7 @@ function getFilesCompression($data, $compression = null)
 // Quality: quality is optional, and ranges from 0 (worst quality, smaller file) to 100 (best quality, biggest file),
 function compress($source, $destination, $quality = '100')
 {
-    if (!file_exists($source) && !is_readable($source)) {
+    if (!file_exists($source) || !is_readable($source)) {
         throw new Exception("Source file does not exist or is not readable: " . $source);
     }
 
@@ -386,7 +391,7 @@ function compress($source, $destination, $quality = '100')
 // Compress on the go
 function compressImageonthego($source, $quality)
 {
-    if (!file_exists($source) && !is_readable($source)) {
+    if (!file_exists($source) || !is_readable($source)) {
         throw new Exception("Source file does not exist or is not readable: " . $source);
     }
 
@@ -799,10 +804,10 @@ if (!function_exists('containsMalicious')) {
             '\b__proto__\b|' .                    // prototype pollution with word boundaries
             '\bprototype\[|' .                    // prototype manipulation
             '\[\s*"prototype"\s*\]|' .           // prototype access
-            '\bwith\s*\(/ix';                    // with statement with word boundaries
+            '\bwith\s*\(|' .                      // with statement with word boundaries
 
         // XML dangerous patterns - actual attack vectors only
-        '<!\[CDATA\[.*?<.*?>.*?\]\]>|' .       // CDATA containing HTML tags
+            '<!\[CDATA\[.*?<.*?>.*?\]\]>|' .       // CDATA containing HTML tags
             '<!ENTITY.*?SYSTEM|' .                 // External entity declarations only
             '<!DOCTYPE.*?SYSTEM|' .                // DOCTYPE with SYSTEM
 

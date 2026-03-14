@@ -1827,8 +1827,8 @@ class Debug
         $encoding = mb_detect_encoding($str, "UTF-8, ASCII, ISO-8859-1, Windows-1252", true);
         $output .= '<p><strong>Encoding:</strong> ' . ($encoding ?: 'Unknown') . '</p>';
 
-        // Check if it's a serialized string
-        if (@unserialize($str) !== false) {
+        // Check if it's a serialized string (safe mode: no object instantiation)
+        if (@unserialize($str, ['allowed_classes' => false]) !== false) {
             $output .= '<p><strong>Format:</strong> Serialized PHP data</p>';
         }
 

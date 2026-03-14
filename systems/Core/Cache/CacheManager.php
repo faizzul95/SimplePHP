@@ -106,10 +106,8 @@ class CacheManager
      */
     public function remember(string $key, int $seconds, \Closure $callback): mixed
     {
-        $value = $this->get($key);
-
-        if ($value !== null) {
-            return $value;
+        if ($this->has($key)) {
+            return $this->get($key);
         }
 
         $value = $callback();

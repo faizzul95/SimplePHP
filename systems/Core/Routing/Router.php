@@ -572,7 +572,7 @@ class Router
      * @param string[] $middleware
      * @return string[]
      */
-    private function expandMiddlewareGroups(array $middleware): array
+    private function expandMiddlewareGroups(array $middleware, array $seen = []): array
     {
         $result = [];
 
@@ -582,8 +582,12 @@ class Router
             $baseName = str_contains($name, ':') ? explode(':', $name, 2)[0] : $name;
 
             if (isset($this->middlewareGroups[$baseName])) {
+                // Prevent infinite recursion from circular group references
+                if (in_array($baseName, $seen, true)) {
+                    continue;
+                }
                 // Recursively expand in case groups reference other groups
-                $result = array_merge($result, $this->expandMiddlewareGroups($this->middlewareGroups[$baseName]));
+                $result = array_merge($result, $this->expandMiddlewareGroups($this->middlewareGroups[$baseName], array_merge($seen, [$baseName])));
             } else {
                 $result[] = $name;
             }

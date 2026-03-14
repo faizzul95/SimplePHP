@@ -131,6 +131,9 @@ class Worker
                 return $row;
             });
         } catch (\Throwable $e) {
+            if (function_exists('logger')) {
+                logger()->log_error('Queue pop error: ' . $e->getMessage());
+            }
             return null;
         }
     }
@@ -154,7 +157,12 @@ class Worker
                 throw new \RuntimeException("Job class [{$className}] not found.");
             }
 
-            // Only allow the specific expected class to be unserialized (prevents RCE)
+            // Validate job class is a subclass of Job before deserialization (prevents RCE)
+            if (!is_subclass_of($className, Job::class)) {
+                throw new \RuntimeException("Invalid job class [{$className}]: must extend Job.");
+            }
+
+            // Only allow the specific expected class to be unserialized
             $jobInstance = unserialize($payload['data'], ['allowed_classes' => [$className]]);
 
             if (!$jobInstance instanceof Job) {
@@ -165,6 +173,9 @@ class Worker
             $jobTimeout = $payload['timeout'] ?? $timeout;
 
             if ($jobTimeout > 0 && function_exists('pcntl_alarm')) {
+                pcntl_signal(SIGALRM, function () use ($className) {
+                    throw new \RuntimeException("Job [{$className}] timed out.");
+                });
                 pcntl_alarm($jobTimeout);
             }
 
@@ -172,6 +183,7 @@ class Worker
 
             if (function_exists('pcntl_alarm')) {
                 pcntl_alarm(0); // Cancel alarm
+                pcntl_signal(SIGALRM, SIG_DFL); // Restore default handler
             }
 
             // Job succeeded — remove from queue

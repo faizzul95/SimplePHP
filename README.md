@@ -1996,6 +1996,98 @@ Run the scheduler every minute via crontab:
 * * * * * php /path/to/myth schedule:run >> /dev/null 2>&1
 ```
 
+### Myth Facade (Programmatic Commands)
+
+Use the `\Core\Console\Myth` static facade to call commands programmatically — from controllers, helpers, scheduled task hooks, or anywhere in your application code. This mirrors Laravel's `Artisan` facade.
+
+```php
+use Core\Console\Myth;
+
+// ─── Command Execution ──────────────────────────────────────
+
+// Call a command (output goes to STDOUT)
+Myth::call('cache:clear');
+Myth::call('db:backup');
+
+// Call silently (output captured, not printed)
+Myth::callSilently('down', ['secret' => 'my-bypass-token', 'refresh' => 60]);
+Myth::callSilently('up');
+
+// callSilent() is an alias (matches Laravel's Artisan::callSilent)
+Myth::callSilent('cache:clear');
+
+// Queue a command for background execution via the queue system
+Myth::queue('backup:run --only-db');
+Myth::queue('mail:send', ['user' => 42], 'emails'); // specify queue name
+
+// Get the output of the last call
+Myth::callSilently('route:list');
+$output = Myth::output();
+
+// ─── Introspection ──────────────────────────────────────────
+
+// Check if a command exists before calling
+if (Myth::has('backup:run')) {
+    Myth::call('backup:run --only-db');
+}
+
+// List all available commands
+$commands = Myth::all(); // ['backup:clean', 'cache:clear', 'db:backup', ...]
+
+// ─── Command Registration ───────────────────────────────────
+
+// Register a closure-based command via the facade
+Myth::command('inspire', function ($args, $opts) {
+    echo "Be yourself; everyone else is taken.\n";
+}, 'Display an inspiring quote');
+
+// ─── Lifecycle Hooks ────────────────────────────────────────
+
+// Register a callback that runs when the Kernel bootstraps
+// (useful for packages/plugins that need to register commands)
+Myth::starting(function (\Core\Console\Kernel $kernel) {
+    $kernel->command('plugin:sync', function () {
+        // ...
+    }, 'Sync plugin data');
+});
+
+// Terminate / reset facade state (for testing or long-running processes)
+Myth::terminate();
+```
+
+The Myth facade reuses the same Kernel instance that the CLI bootstraps — it will never create a duplicate Kernel or double-load your `console.php` routes.
+
+**API Reference:**
+
+| Method | Description | Laravel Equivalent |
+|--------|-------------|-------------------|
+| `Myth::call($cmd, $params)` | Run command, output to STDOUT | `Artisan::call()` |
+| `Myth::callSilently($cmd, $params)` | Run command, capture output | `Artisan::callSilently()` |
+| `Myth::callSilent($cmd, $params)` | Alias for `callSilently()` | `Artisan::callSilent()` |
+| `Myth::queue($cmd, $params, $queue)` | Dispatch command to queue | `Artisan::queue()` |
+| `Myth::output()` | Get last captured output | `Artisan::output()` |
+| `Myth::has($cmd)` | Check if command exists | — |
+| `Myth::all()` | List all command names | `Artisan::all()` |
+| `Myth::command($name, $fn, $desc)` | Register closure command | `Artisan::command()` |
+| `Myth::starting($callback)` | Hook into Kernel bootstrap | `Artisan::starting()` |
+| `Myth::terminate($code)` | Reset facade state | `Artisan::terminate()` |
+
+**Using Myth in scheduled task hooks:**
+
+```php
+// app/routes/console.php
+$schedule->command('backup:run')
+    ->dailyAt('04:30')
+    ->before(function () {
+        // Put app in maintenance mode before backup
+        \Core\Console\Myth::callSilently('down', ['refresh' => 60]);
+    })
+    ->after(function () {
+        // Bring app back up after backup completes
+        \Core\Console\Myth::callSilently('up');
+    });
+```
+
 ## Collection
 
 A fluent wrapper for arrays with 60+ methods, inspired by Laravel's Collection:

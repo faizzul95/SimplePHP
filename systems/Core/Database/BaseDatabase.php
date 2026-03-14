@@ -428,6 +428,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->_secureOutput = $state['secureOutput'];
         $this->returnType = $state['returnType'];
         $this->_isRawQuery = $state['isRawQuery'];
+        $this->limit = $state['limit'];
+        $this->offset = $state['offset'];
     }
 
     protected function createSubQueryBuilder()
@@ -485,8 +487,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     public function reset()
     {
-        $this->driver = 'mysql';
-        $this->connectionName = 'default';
+        // Note: driver and connectionName are connection-level properties
+        // set by connect() and should NOT be reset here.
         $this->table = null;
         $this->column = '*';
         $this->limit = null;

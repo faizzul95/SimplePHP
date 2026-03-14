@@ -15,6 +15,10 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
 
 require_once __DIR__ . '/systems/hooks.php';
 
+if (!class_exists('Myth', false)) {
+    class_alias(\Core\Console\Myth::class, 'Myth');
+}
+
 /*
 |--------------------------------------------------------------------------
 | LOAD CONFIG FILES

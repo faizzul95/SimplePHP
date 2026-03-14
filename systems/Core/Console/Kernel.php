@@ -11,13 +11,23 @@ namespace Core\Console;
  * - Groups for organizing commands
  * - Colorized output
  * - Schedule registration for cron jobs
- * - Built-in commands: list, help, schedule:run, schedule:list
+ * - Built-in commands: list, help, schedule:run, schedule:work, schedule:list
  */
 class Kernel
 {
     protected array $commands = [];
     protected Schedule $schedule;
     protected bool $bootstrapped = false;
+    protected string $lastOutput = '';
+
+    /** @var array<string, string> */
+    private array $builtInCommands = [
+        'list' => 'List all available commands',
+        'help' => 'Show help for a command',
+        'schedule:run' => 'Run all due scheduled commands',
+        'schedule:work' => 'Run the scheduler worker in foreground [--once] [--max-cycles=N] [--max-memory=MB]',
+        'schedule:list' => 'List all scheduled commands',
+    ];
 
     /**
      * Bootstrap the console application.
@@ -31,10 +41,12 @@ class Kernel
 
         $this->bootstrapped = true;
 
-        // Register built-in framework commands first
+        // Register this Kernel with the Myth facade so it reuses
+        // the same instance instead of creating a duplicate.
+        Myth::setKernel($this);
+
         Commands::register($this);
 
-        // Then load user-defined commands from console route file
         $console = $this;
         $framework = config('framework') ?? [];
         $consoleRouteFile = ROOT_DIR . ($framework['route_files']['console'] ?? 'app/routes/console.php');
@@ -65,6 +77,121 @@ class Kernel
     }
 
     /**
+     * Call a console command programmatically (Laravel-like Artisan::call style)
+     */
+    public function call(string $commandLine, array $parameters = []): int
+    {
+        $this->bootstrap();
+        return $this->executeCall($commandLine, $parameters, false);
+    }
+
+    /**
+     * Call a console command programmatically without writing output to STDOUT.
+     */
+    public function callSilently(string $commandLine, array $parameters = []): int
+    {
+        $this->bootstrap();
+        return $this->executeCall($commandLine, $parameters, true);
+    }
+
+    /**
+     * Get output captured from the last call()/callSilently() invocation.
+     */
+    public function output(): string
+    {
+        return $this->lastOutput;
+    }
+
+    /**
+     * Determine if a command exists (built-in or registered).
+     */
+    public function has(string $command): bool
+    {
+        return isset($this->builtInCommands[$command]) || isset($this->commands[$command]);
+    }
+
+    /**
+     * Get all available command names (built-in + registered).
+     *
+     * @return array<int, string>
+     */
+    public function all(): array
+    {
+        $all = array_unique(array_merge(array_keys($this->builtInCommands), array_keys($this->commands)));
+        sort($all);
+        return $all;
+    }
+
+    /**
+     * Execute a command line with optional silent output mode.
+     */
+    private function executeCall(string $commandLine, array $parameters, bool $silent): int
+    {
+        $parts = $this->tokenizeCommandLine($commandLine);
+        $commandName = $parts[0] ?? '';
+
+        if ($commandName === '') {
+            $this->error('Command cannot be empty.');
+            return 1;
+        }
+
+        $tokens = $parts;
+
+        foreach ($parameters as $key => $value) {
+            if (is_int($key)) {
+                $tokens[] = (string) $value;
+                continue;
+            }
+
+            $optionName = '--' . trim((string) $key);
+            if ($value === true) {
+                $tokens[] = $optionName;
+                continue;
+            }
+
+            if ($value === false || $value === null) {
+                continue;
+            }
+
+            if (is_scalar($value)) {
+                $tokens[] = $optionName . '=' . (string) $value;
+            } else {
+                $tokens[] = $optionName . '=' . json_encode($value, JSON_UNESCAPED_SLASHES);
+            }
+        }
+
+        ob_start();
+        $exitCode = $this->run(array_merge(['myth'], $tokens));
+        $captured = (string) ob_get_clean();
+
+        $this->lastOutput = $captured;
+
+        if (!$silent && $captured !== '') {
+            echo $captured;
+        }
+
+        return $exitCode;
+    }
+
+    /**
+     * Tokenize command line while preserving quoted values.
+     *
+     * @return array<int, string>
+     */
+    private function tokenizeCommandLine(string $commandLine): array
+    {
+        $trimmed = trim($commandLine);
+        if ($trimmed === '') {
+            return [];
+        }
+
+        $tokens = str_getcsv($trimmed, ' ', '"');
+        return array_values(array_filter($tokens, static function ($token) {
+            return $token !== null && $token !== '';
+        }));
+    }
+
+    /**
      * Register a console command
      */
     public function command(string $name, callable $handler, string $description = ''): self
@@ -79,9 +206,6 @@ class Kernel
 
     /**
      * Register a scheduled command (backward-compatible shorthand)
-     *
-     * Usage:
-     *   $console->scheduleCommand('backup:run', '0 2 * * *', 'Daily backup');
      */
     public function scheduleCommand(string $command, string $cron = '', string $description = ''): self
     {
@@ -117,10 +241,8 @@ class Kernel
         $commandName = $argv[1] ?? 'list';
         $rawArgs = array_slice($argv, 2);
 
-        // Parse arguments and options
         $parsed = $this->parseArguments($rawArgs);
 
-        // Built-in commands
         if ($commandName === 'list') {
             $this->printList();
             return 0;
@@ -134,6 +256,10 @@ class Kernel
 
         if ($commandName === 'schedule:run') {
             return $this->runSchedule();
+        }
+
+        if ($commandName === 'schedule:work') {
+            return $this->runScheduleWork($parsed['options']);
         }
 
         if ($commandName === 'schedule:list') {
@@ -151,19 +277,13 @@ class Kernel
             $result = call_user_func($this->commands[$commandName]['handler'], $parsed['args'], $parsed['options']);
             return is_int($result) ? $result : 0;
         } catch (\Throwable $e) {
-            $this->error("Error: " . $e->getMessage());
+            $this->error('Error: ' . $e->getMessage());
             return 1;
         }
     }
 
     /**
      * Parse CLI arguments into positional args and named options
-     *
-     * Supports:
-     *   --key=value  → options['key'] = 'value'
-     *   --flag       → options['flag'] = true
-     *   -v           → options['v'] = true
-     *   positional   → args[] = 'positional'
      */
     public function parseArguments(array $rawArgs): array
     {
@@ -224,21 +344,21 @@ class Kernel
     private function runSchedule(): int
     {
         if ($this->schedule->isEmpty()) {
-            $this->info("No scheduled commands registered.");
+            $this->info('No scheduled commands registered.');
             return 0;
         }
 
         $dueEvents = $this->schedule->dueEvents();
 
         if (empty($dueEvents)) {
-            $this->info("No scheduled commands are due.");
+            $this->info('No scheduled commands are due.');
             return 0;
         }
 
-        $this->info("Running " . count($dueEvents) . " due command(s)...");
+        $this->info('Running ' . count($dueEvents) . ' due command(s)...');
         $this->line('');
 
-        $result = $this->schedule->runDueEvents($this);
+        $result = $this->schedule->runDueEvents($this, $dueEvents);
 
         foreach ($result['results'] as $entry) {
             $label = $entry['command'];
@@ -273,41 +393,92 @@ class Kernel
         return $result['failed'] > 0 ? 1 : 0;
     }
 
-    // Cron matching is now handled by ScheduleEvent::isDue() and ScheduleEvent::cronFieldMatches()
+    /**
+     * Run the scheduler worker in foreground (Laravel-like schedule:work)
+     *
+     * Options:
+     *   --once               Run a single schedule check then exit
+     *   --max-cycles=N       Stop after N minute-cycles (safe for supervisor restarts)
+     *   --max-memory=MB      Stop when memory reaches MB limit
+     */
+    private function runScheduleWork(array $options = []): int
+    {
+        if (isset($options['once'])) {
+            return $this->runSchedule();
+        }
+
+        $maxCycles = isset($options['max-cycles']) ? max(1, (int) $options['max-cycles']) : 0;
+        $maxMemoryMb = isset($options['max-memory']) ? max(32, (int) $options['max-memory']) : 0;
+        $cycles = 0;
+
+        if (function_exists('gc_enable')) {
+            gc_enable();
+        }
+
+        $this->info('Running scheduled tasks worker. Press Ctrl+C to stop.');
+
+        $lastMinute = null;
+
+        while (true) {
+            $currentMinute = date('Y-m-d H:i');
+
+            if ($currentMinute !== $lastMinute) {
+                $lastMinute = $currentMinute;
+                $this->comment('[' . date('Y-m-d H:i:s') . '] schedule:run');
+                $this->runSchedule();
+                $cycles++;
+
+                if ($maxCycles > 0 && $cycles >= $maxCycles) {
+                    $this->info("Reached max cycles ({$maxCycles}). Stopping scheduler worker.");
+                    return 0;
+                }
+
+                if ($maxMemoryMb > 0) {
+                    $usageMb = memory_get_usage(true) / 1024 / 1024;
+                    if ($usageMb >= $maxMemoryMb) {
+                        $this->warn("Memory limit reached ({$maxMemoryMb} MB). Stopping scheduler worker for safe restart.");
+                        return 0;
+                    }
+                }
+
+                if (function_exists('gc_collect_cycles')) {
+                    gc_collect_cycles();
+                }
+            }
+
+            sleep(1);
+        }
+    }
 
     /**
      * Print the command list
      */
     private function printList(): void
     {
-        $this->line("");
-        $this->info("SimplePHP Console");
-        $this->line("");
-        $this->warn("Usage:");
-        $this->line("  php myth <command> [arguments] [options]");
-        $this->line("");
+        $this->line('');
+        $this->info('SimplePHP Console');
+        $this->line('');
+        $this->warn('Usage:');
+        $this->line('  php myth <command> [arguments] [options]');
+        $this->line('');
 
-        // Group commands by prefix
         $groups = [];
         foreach ($this->commands as $name => $cmd) {
             $prefix = str_contains($name, ':') ? explode(':', $name, 2)[0] : 'general';
             $groups[$prefix][$name] = $cmd;
         }
 
-        // Add built-in commands
-        $groups['_builtin'] = [
-            'list' => ['description' => 'List all available commands'],
-            'help' => ['description' => 'Show help for a command'],
-            'schedule:run' => ['description' => 'Run all due scheduled commands'],
-            'schedule:list' => ['description' => 'List all scheduled commands'],
-        ];
+        $groups['_builtin'] = [];
+        foreach ($this->builtInCommands as $command => $description) {
+            $groups['_builtin'][$command] = ['description' => $description];
+        }
 
         ksort($groups);
 
-        $this->warn("Available commands:");
+        $this->warn('Available commands:');
         foreach ($groups as $group => $commands) {
             if ($group !== '_builtin' && $group !== 'general') {
-                $this->line("");
+                $this->line('');
                 $this->info(" {$group}");
             }
 
@@ -318,7 +489,7 @@ class Kernel
             }
         }
 
-        $this->line("");
+        $this->line('');
     }
 
     /**
@@ -331,21 +502,32 @@ class Kernel
             return;
         }
 
+        if (isset($this->builtInCommands[$command])) {
+            $this->line('');
+            $this->info("Command: {$command}");
+            $this->line('  ' . $this->builtInCommands[$command]);
+            $this->line('');
+            $this->warn('Usage:');
+            $this->line("  php myth {$command} [arguments] [options]");
+            $this->line('');
+            return;
+        }
+
         if (!isset($this->commands[$command])) {
             $this->error("Command '{$command}' not found.");
             return;
         }
 
         $cmd = $this->commands[$command];
-        $this->line("");
+        $this->line('');
         $this->info("Command: {$command}");
         if (!empty($cmd['description'])) {
-            $this->line("  {$cmd['description']}");
+            $this->line('  ' . $cmd['description']);
         }
-        $this->line("");
-        $this->warn("Usage:");
+        $this->line('');
+        $this->warn('Usage:');
         $this->line("  php myth {$command} [arguments] [options]");
-        $this->line("");
+        $this->line('');
     }
 
     /**
@@ -354,7 +536,7 @@ class Kernel
     private function suggest(string $input): void
     {
         $suggestions = [];
-        foreach (array_keys($this->commands) as $name) {
+        foreach ($this->all() as $name) {
             $distance = levenshtein($input, $name);
             if ($distance <= 3) {
                 $suggestions[] = $name;
@@ -362,8 +544,8 @@ class Kernel
         }
 
         if (!empty($suggestions)) {
-            $this->line("");
-            $this->warn("Did you mean?");
+            $this->line('');
+            $this->warn('Did you mean?');
             foreach ($suggestions as $s) {
                 $this->line("  {$s}");
             }
@@ -371,14 +553,14 @@ class Kernel
     }
 
     /**
-     * Print the schedule list with next run time
+     * Print the schedule list with status
      */
     private function printScheduleList(): void
     {
         $events = $this->schedule->events();
 
         if (empty($events)) {
-            $this->info("No scheduled commands registered.");
+            $this->info('No scheduled commands registered.');
             return;
         }
 
@@ -400,8 +582,6 @@ class Kernel
         $this->table(['Expression', 'Command', 'Description', 'Status'], $rows);
         $this->line('');
     }
-
-    // ─── Colorized Output Helpers ────────────────────────────────
 
     public function info(string $message): void
     {
@@ -428,42 +608,26 @@ class Kernel
         echo $message . PHP_EOL;
     }
 
-    /**
-     * Output a blank line
-     */
     public function newLine(int $count = 1): void
     {
         echo str_repeat(PHP_EOL, $count);
     }
 
-    /**
-     * Output a comment (dimmed/gray text)
-     */
     public function comment(string $message): void
     {
         echo "\033[90m{$message}\033[0m" . PHP_EOL;
     }
 
-    /**
-     * Display a task result line (similar to Laravel)
-     *
-     * Output: "  Label ......... DONE" or "  Label ......... FAIL"
-     */
     public function task(string $label, bool $success = true, string $extra = ''): void
     {
         $maxWidth = 50;
         $dots = str_repeat('.', max(1, $maxWidth - strlen($label)));
-        $status = $success
-            ? "\033[32mDONE\033[0m"
-            : "\033[31mFAIL\033[0m";
+        $status = $success ? "\033[32mDONE\033[0m" : "\033[31mFAIL\033[0m";
         $suffix = $extra !== '' ? " \033[90m({$extra})\033[0m" : '';
 
         echo "  {$label} {$dots} {$status}{$suffix}" . PHP_EOL;
     }
 
-    /**
-     * Ask a question and return the answer
-     */
     public function ask(string $question, ?string $default = null): string
     {
         $defaultHint = $default !== null ? " [{$default}]" : '';
@@ -473,9 +637,6 @@ class Kernel
         return $answer !== '' ? $answer : ($default ?? '');
     }
 
-    /**
-     * Ask a yes/no confirmation
-     */
     public function confirm(string $question, bool $default = false): bool
     {
         $hint = $default ? '[Y/n]' : '[y/N]';
@@ -490,9 +651,6 @@ class Kernel
         return in_array($answer, ['y', 'yes'], true);
     }
 
-    /**
-     * Display a table of data
-     */
     public function table(array $headers, array $rows): void
     {
         $widths = [];
@@ -530,9 +688,6 @@ class Kernel
         $this->line($separator);
     }
 
-    /**
-     * Show a progress indicator
-     */
     public function progress(int $current, int $total, string $label = ''): void
     {
         $percent = $total > 0 ? round(($current / $total) * 100) : 0;

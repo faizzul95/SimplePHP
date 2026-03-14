@@ -214,9 +214,10 @@ trait RateLimitingThrottleTrait
 			return false;
 		}
 
-		// Get the IP address of the server
+		// Get the IP address using same extraction logic as getClientIp()
 		if ($this->spoofProtection && isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-			$serverIP = $_SERVER['HTTP_X_FORWARDED_FOR'];
+			$ipChain = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+			$serverIP = trim($ipChain[0]);
 		} else {
 			$serverIP = $_SERVER['REMOTE_ADDR'];
 		}
@@ -351,7 +352,7 @@ trait RateLimitingThrottleTrait
 		$countSettingIncrease = count($this->blockedTimeIncrease);
 
 		// get increase time for temporary blocked, default is 30 seconds
-		$increaseTime = $blockedCount > $countSettingIncrease ? 30 : $this->blockedTimeIncrease[$blockedCount];
+		$increaseTime = $blockedCount >= $countSettingIncrease ? 30 : $this->blockedTimeIncrease[$blockedCount];
 
 		$throttleData['is_temp_block'] = true;
 		$throttleData['temp_blocked_received_count'] = $blockedCount + 1;

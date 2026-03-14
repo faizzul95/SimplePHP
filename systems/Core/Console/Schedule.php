@@ -75,11 +75,12 @@ class Schedule
      * Run all due scheduled events
      *
      * @param Kernel $kernel The console kernel (to look up command handlers)
+     * @param ScheduleEvent[]|null $dueEvents Optional precomputed due events to avoid re-scanning
      * @return array{ran: int, failed: int, skipped: int, results: array}
      */
-    public function runDueEvents(Kernel $kernel): array
+    public function runDueEvents(Kernel $kernel, ?array $dueEvents = null): array
     {
-        $dueEvents = $this->dueEvents();
+        $dueEvents = $dueEvents ?? $this->dueEvents();
         $results = [];
         $ran = 0;
         $failed = 0;
@@ -87,6 +88,17 @@ class Schedule
 
         foreach ($dueEvents as $event) {
             $commandName = $event->getCommand();
+
+            // Skip when app is in maintenance mode unless explicitly allowed
+            if ($this->isInMaintenanceMode() && !$event->runsInMaintenanceMode()) {
+                $skipped++;
+                $results[] = [
+                    'command' => $commandName,
+                    'status' => 'skipped',
+                    'reason' => 'maintenance mode',
+                ];
+                continue;
+            }
 
             // Check overlap lock
             if (!$event->acquireLock()) {
@@ -107,12 +119,16 @@ class Schedule
                 if (isset($this->closureCallbacks[$commandName])) {
                     // Closure-based event
                     call_user_func($this->closureCallbacks[$commandName]);
-                } elseif ($kernel->hasCommand($commandName)) {
-                    // Registered console command
-                    $commands = $kernel->getCommands();
-                    call_user_func($commands[$commandName]['handler'], [], []);
                 } else {
-                    throw new \RuntimeException("Scheduled command not found: {$commandName}");
+                    // Registered console command (supports inline args/options)
+                    [$resolvedCommand, $args, $options] = $this->parseScheduledCommandLine($commandName, $kernel);
+
+                    if (!$kernel->hasCommand($resolvedCommand)) {
+                        throw new \RuntimeException("Scheduled command not found: {$commandName}");
+                    }
+
+                    $commands = $kernel->getCommands();
+                    call_user_func($commands[$resolvedCommand]['handler'], $args, $options);
                 }
 
                 $event->flushOutput();
@@ -170,5 +186,35 @@ class Schedule
     public function getClosureCallback(string $name): ?callable
     {
         return $this->closureCallbacks[$name] ?? null;
+    }
+
+    /**
+     * Determine if the application is currently in maintenance mode.
+     */
+    private function isInMaintenanceMode(): bool
+    {
+        return file_exists(ROOT_DIR . 'storage/framework/down');
+    }
+
+    /**
+     * Parse scheduled command string into command, args, and options.
+     * Example: "backup:run --only-files" => ["backup:run", [], ["only-files" => true]]
+     *
+     * @return array{0: string, 1: array, 2: array}
+     */
+    private function parseScheduledCommandLine(string $commandLine, Kernel $kernel): array
+    {
+        $parts = str_getcsv(trim($commandLine), ' ', '"');
+        $parts = array_values(array_filter($parts, static function ($part) {
+            return $part !== null && $part !== '';
+        }));
+        $resolvedCommand = $parts[0] ?? '';
+
+        if ($resolvedCommand === '') {
+            return ['', [], []];
+        }
+
+        $parsed = $kernel->parseArguments(array_slice($parts, 1));
+        return [$resolvedCommand, $parsed['args'], $parsed['options']];
     }
 }
