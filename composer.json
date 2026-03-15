@@ -1,6 +1,6 @@
 {
-    "description": "The SimplePHP using PHP native",
-    "name": "SimplePHP",
+    "description": "MythPHP using native PHP",
+    "name": "faizzul95/mythphp",
     "type": "project",
     "license": "MIT",
     "autoload": {

@@ -168,6 +168,26 @@ class EagerLoadOptimizer
     }
 
     /**
+     * Yield optimized chunks lazily to avoid large temporary arrays.
+     *
+     * @param array  $array Array to split
+     * @param string $table Table name for adaptive sizing
+     * @return \Generator<int, array>
+     */
+    public static function yieldOptimalChunks(array $array, $table = null): \Generator
+    {
+        $totalRecords = count($array);
+        if ($totalRecords === 0) {
+            return;
+        }
+
+        $chunkSize = max(1, (int) self::getOptimalChunkSize($totalRecords, $table));
+        for ($offset = 0; $offset < $totalRecords; $offset += $chunkSize) {
+            yield array_slice($array, $offset, $chunkSize);
+        }
+    }
+
+    /**
      * Optimize eager loading query strategy
      *
      * @param array $primaryKeys Primary keys to load

@@ -14,11 +14,13 @@
 | `aggressive-throttle` | `ThrottleRequests` | Aggressive IP-based blocking |
 | `xss` | `XssProtection` | XSS pattern detection |
 | `api.log` | `ApiRequestLogger` | API request/response logging |
+| `cache.headers` | `SetResponseCache` | Route-level Cache-Control/ETag policy |
+| `request.safety` | `ValidateRequestSafety` | Request hardening (method/URI/body/host/content-type checks) |
 
 ## Middleware Groups
 
-- `web` => `['headers', 'throttle:web']`
-- `api` => `['headers', 'throttle:api', 'xss', 'api.log']`
+- `web` => `['headers', 'request.safety', 'throttle:web']`
+- `api` => `['headers', 'request.safety', 'throttle:api', 'xss', 'api.log']`
 
 ## Middleware Details
 
@@ -132,9 +134,24 @@ Blocks authenticated users. Used on login/register pages to redirect already-log
 ## Security Config (`app/config/security.php`)
 
 - CSRF protection settings + include/exclude URIs.
+- CSRF Origin/Referer verification for state-changing browser requests.
+- Request hardening policy (`request_hardening`) to constrain URI/body/host/content-type.
 - CSP directives (configuration-driven).
 - Permissions-Policy (configuration-driven).
 - Trusted proxy IP list (controls forwarded-IP trust in `Request::ip()`).
+
+## Security Audit Command
+
+Use the built-in security checker to validate OWASP-oriented baseline settings:
+
+```bash
+php myth security:audit
+php myth security:audit --ci
+```
+
+- `security:audit` reports pass/warn/fail checks.
+- `--ci` (or `--strict`) makes warnings fail the command with non-zero exit code.
+- Typical checks include CSRF origin protection, request hardening middleware registration, CSP safety, CORS credentials/origin compatibility, and trusted proxy wildcard misuse.
 
 ## Examples
 

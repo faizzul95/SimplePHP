@@ -2,7 +2,7 @@
 
 /**
  * Scope functions for database queries for general system function
- * File: controllers/ScopeMacroQuery/Scope.php
+ * File: app/http/controllers/ScopeControllers/Scope.php
  */
 
 // Single Scope Registration

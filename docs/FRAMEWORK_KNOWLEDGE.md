@@ -1,4 +1,4 @@
-# SimplePHP Framework Knowledge (Verified)
+# MythPHP Framework Knowledge (Verified)
 
 Use the verified knowledge base as the canonical source.
 

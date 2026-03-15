@@ -19,7 +19,7 @@ use App\Http\Controllers\Api\UserApiController;
 | Web views call these via route('name') which resolves transparently.
 |
 | Two sections:
-|   1. External API   — token-only auth (auth.api) for third-party consumers
+|   1. External API   — configurable API auth (auth.api, token by default)
 |   2. Application API — session+token auth (auth) for the web front-end
 |
 */

@@ -1,0 +1,40 @@
+name: Security and Performance Guardrails
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Validate composer manifest
+        run: composer validate --no-check-all --strict
+
+      - name: Lint PHP sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            php -l "$file"
+          done < <(git ls-files '*.php')
+
+      - name: MythPHP security audit (strict)
+        run: php myth security:audit --ci
+
+      - name: MythPHP auth security tests (strict)
+        run: php myth auth:security:test --ci
+
+      - name: MythPHP performance smoke benchmark
+        run: php myth perf:benchmark --iterations=80 --routes=120 --db-iterations=40

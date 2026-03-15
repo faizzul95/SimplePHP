@@ -13,9 +13,9 @@ This means route behavior is both code-driven (Router) and config-driven (`app/c
 
 ## Supported Route Registration
 
-- HTTP verbs: `get`, `post`, `put`, `patch`, `delete`
+- HTTP verbs: `get`, `post`, `put`, `patch`, `delete`, `options`
 - Resource routes: `resource`, `apiResource` (actions: `index`, `store`, `show`, `update`, `destroy`)
-- Multi-verb helpers: `match([...])`, `any(...)`
+- Multi-verb helpers: `match([...])`, `any(...)` (`any` includes `OPTIONS`)
 - Convenience routes: `redirect(...)`, `view(...)`
 - Groups: nested `group(['prefix' => ..., 'middleware' => [...]])`
 - Fallback route registration via `fallback(...)`
@@ -81,7 +81,9 @@ $router->post('/login', [AuthController::class, 'authorize'])
 
 - Route names are indexed at dispatch.
 - URL resolution uses named route map (`urlFor` / helper layer).
-- Unresolved optional placeholders are removed.
+- Required placeholders must be provided, otherwise URL resolution returns `null`.
+- Optional placeholders are included when provided and omitted when missing.
+- Unmatched extra params are appended as query string.
 
 Practical usage:
 
@@ -92,6 +94,7 @@ $router->get('/login', [AuthController::class, 'showLogin'])->name('login');
 
 ## Error & Not Found Flow
 
+- `OPTIONS` preflight requests auto-return `204` + `Allow` when URI exists for other methods.
 - 405 handling is automatic when URI exists for other methods.
 - 404 handling distinguishes JSON vs browser requests.
 - Browser no-match redirect uses `framework.not_found_redirect.web` (default `login`).

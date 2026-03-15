@@ -1,4 +1,4 @@
-# SimplePHP
+# MythPHP
 
 A lightweight PHP 8.0+ framework with modern features for rapid web application development, combining procedural simplicity with Laravel-inspired architecture.
 
@@ -6,10 +6,13 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 
 - **Organized File Structure** - Clean separation of controllers, helpers, and core components
 - **Database Query Builder** - Fluent, expressive database interactions with Laravel-style eager loading — no models required
-- **Modern HTTP Router** - Fast indexed routing with middleware pipeline, named routes, route groups, multi-parameter routes, `where()` constraints, middleware groups, and 405 Method Not Allowed detection
+- **Large Dataset Eager Loading** - Adaptive chunking plus incremental relation attach to keep memory usage stable on high-cardinality datasets
+- **Modern HTTP Router** - Fast indexed routing with middleware pipeline, named routes, route groups, multi-parameter routes, `where()` constraints, explicit `options()` support, and 405 Method Not Allowed detection
 - **API Versioning** - Support for versioned (`/api/v1/users`) and non-versioned (`/api/users`) API routes via route group prefixing
 - **Blade-like Template Engine** - Template compilation with caching, includes `@forelse`, `@method`, `@error`, `@checked`, `@class`, and more
 - **Artisan-like Console** - CLI command system with argument parsing, scheduling (cron expressions), colored output, progress bars, and scaffolding generators
+- **Security Audit Command** - OWASP baseline checks with CI-friendly strict mode via `php myth security:audit --ci`
+- **Auth Security Test Command** - Automated JWT tamper, Digest replay, and API-key leakage checks via `php myth auth:security:test --ci`
 - **Laravel-like Auth** - Configurable session keys, `login()`, `attempt()`, OAuth/Socialite support, dual session + API token authentication
 - **RBAC Permissions** - Role-based access control with abilities, checked for both session and token auth
 - **Collection Class** - Fluent array wrapper with 60+ methods (map, filter, where, pluck, groupBy, reduce, etc.) inspired by Laravel Collection
@@ -20,7 +23,7 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 - **Migration System** - Versioned database schema changes with `up()`/`down()`, deploy.json tracking (no migration table needed), seeders, and `timestamps()`/`softDeletes()` shortcuts
 - **Backup System** - Spatie-like backup component for database and file backups with cron scheduling and automatic cleanup
 - **Request Handling** - Modern request/response utilities with FormRequest validation
-- **API Component** - Token-based API authentication with rate limiting, CORS, and SQL injection protection
+- **API Component** - Configurable multi-auth API authentication (session/token/JWT/API key/OAuth/Basic/Digest) with rate limiting, strict CORS preflight handling (`OPTIONS`), and SQL injection protection
 - **Middleware Traits** - Composable security traits (XSS protection, rate limiting, permissions) usable in custom middleware
 - **Environment Configuration** - Multi-environment support
 - **Helper Functions** - Extensive collection of utility functions including `collect()`, `cache()`, `dispatch()`
@@ -29,8 +32,8 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 
 1. Clone or download the project:
 ```bash
-git clone https://github.com/faizzul95/simplephp.git
-cd simplephp
+git clone https://github.com/faizzul95/MythPHP.git
+cd MythPHP
 ```
 2. Edit `app/config/*.php` with your database and mail settings
 
@@ -97,7 +100,7 @@ $config['mail'] = [
 
 ### Routing
 
-SimplePHP uses a clean URL router. Define routes in `app/routes/web.php` (web) or `app/routes/api.php` (API):
+MythPHP uses a clean URL router. Define routes in `app/routes/web.php` (web) or `app/routes/api.php` (API):
 
 ```php
 // app/routes/web.php
@@ -107,6 +110,11 @@ $router->get('/users', [UserController::class, 'index'])->name('users.index');
 $router->post('/users/save', [UserController::class, 'store'])->name('users.store');
 $router->get('/users/{id}', [UserController::class, 'show'])->name('users.show');
 $router->delete('/users/{id}', [UserController::class, 'destroy'])->name('users.delete');
+
+// Explicit OPTIONS route for custom preflight behavior
+$router->options('/users', function () {
+    return ['code' => 200, 'message' => 'OK'];
+});
 
 // Multi-parameter routes
 $router->get('/users/{id}/posts/{postId}', [PostController::class, 'show']);
@@ -132,7 +140,12 @@ $router->group(['prefix' => 'admin', 'middleware' => ['auth.web']], function ($r
 $router->group(['prefix' => '/api/v1', 'middleware' => ['auth.api']], function ($router) {
     $router->get('/users', [UserApiController::class, 'index']);
     $router->resource('/posts', PostApiController::class);
+    $router->options('/users', [UserApiController::class, 'options']);
 });
+
+// app/config/auth.php
+// `auth.api` default methods (token-only unless expanded)
+$config['auth']['api_methods'] = ['token', 'jwt', 'api_key'];
 
 // Non-versioned API (internal use)
 $router->group(['prefix' => '/api', 'middleware' => ['auth.api']], function ($router) {
@@ -163,6 +176,9 @@ const saved = await callApi('post', "/api/v1/users", {
     name: 'John Doe',
     email: 'john@example.com'
 });
+
+// Preflight check endpoint (if exposed)
+const preflight = await callApi('options', '/api/v1/users');
 ```
 
 ### Controller Structure (Class-Based)
@@ -263,17 +279,17 @@ class SaveUserRequest extends FormRequest
 
 ## Database Usage
 
-SimplePHP provides an elegant query builder for database operations with Laravel-style Query Scopes and Macros:
+MythPHP provides an elegant query builder for database operations with Laravel-style Query Scopes and Macros:
 
 ### Basic Queries
 
 ### Query Scopes and Macros
 
-SimplePHP provides Laravel-style query scopes and macros to help you reuse common query patterns:
+MythPHP provides Laravel-style query scopes and macros to help you reuse common query patterns:
 
 #### Built-in Query Scopes
 
-Here are the built-in scopes available in SimplePHP:
+Here are the built-in scopes available in MythPHP:
 
 1. **Soft Delete Scopes**:
 ```php
@@ -306,7 +322,7 @@ $recentDeletedUsers = db()->table('users')
 
 ### Registering Query Scopes
 
-SimplePHP offers multiple ways to register and configure query scopes. Here are the different approaches:
+MythPHP offers multiple ways to register and configure query scopes. Here are the different approaches:
 
 #### 1. Global Scope Registration
 
@@ -317,7 +333,7 @@ if (!empty($conn_db)) {
     loadScopeMacroDBFunctions(
         $conn_db,
         [], // Individual scope files
-        ['ScopeMacroQuery'], // Folder containing scope definitions
+        ['ScopeControllers'], // Folder containing scope definitions
         '../controllers/', 
         false
     );
@@ -345,7 +361,7 @@ db()->scopes([
 
 #### 3. File-based Scope Registration
 
-Create your scopes in `controllers/ScopeMacroQuery/Scope.php`:
+Create your scopes in `app/http/controllers/ScopeControllers/Scope.php`:
 
 ```php
 // Scope.php
@@ -466,7 +482,7 @@ $scopes = [
 
 #### 2. Scope Definition Structure
 
-Create your scopes in `controllers/ScopeMacroQuery/Scope.php`:
+Create your scopes in `app/http/controllers/ScopeControllers/Scope.php`:
 
 ```php
 function scopeQuery($db)
@@ -629,7 +645,7 @@ $users = db()->table('users')
 
 ### How to Define Custom Scopes and Macros
 
-Create a new file in `controllers/ScopeMacroQuery/Scope.php` for scopes:
+Create a new file in `app/http/controllers/ScopeControllers/Scope.php` for scopes:
 
 ```php
 function scopeQuery($db)
@@ -656,7 +672,7 @@ function scopeQuery($db)
 }
 ```
 
-Create a new file in `controllers/ScopeMacroQuery/Macro.php` for macros:
+Create a new file in `app/http/controllers/ScopeControllers/Macro.php` for macros:
 
 ```php
 function macroQuery($db)
@@ -1353,7 +1369,7 @@ Both methods support parameter binding for security:
 
 ## Controllers (Class-Based)
 
-Controllers in SimplePHP use class methods routed via the HTTP Router:
+Controllers in MythPHP use class methods routed via the HTTP Router:
 
 ### Web Controller Example
 
@@ -1504,7 +1520,7 @@ return [
 ## File Structure
 
 ```
-simplephp/
+MythPHP/
 ├── app/                           
 │   ├── database/                   # Database migrations & seeders
 │   │    ├── migrations/            # Migration files (YYYYMMDD_00x_name.php)
@@ -1579,7 +1595,7 @@ simplephp/
 
 ## Helper Functions
 
-SimplePHP includes various helper functions organized by category:
+MythPHP includes various helper functions organized by category:
 
 - **API Helpers**: API response utilities
 - **Array Helpers**: Array manipulation utilities  
@@ -1747,7 +1763,7 @@ SimplePHP includes various helper functions organized by category:
 
 ## Modern HTTP Router
 
-SimplePHP includes a fast, indexed HTTP router with middleware pipeline support:
+MythPHP includes a fast, indexed HTTP router with middleware pipeline support:
 
 ```php
 // app/routes/web.php
@@ -1779,6 +1795,7 @@ $router->get('/users/{id}', [UserController::class, 'show'])
 // API versioning via group prefix
 $router->group(['prefix' => '/api/v1', 'middleware' => ['auth.api']], function ($router) {
     $router->resource('/users', UserApiController::class);
+    $router->options('/users', [UserApiController::class, 'options']);
 });
 ```
 
@@ -1786,6 +1803,8 @@ $router->group(['prefix' => '/api/v1', 'middleware' => ['auth.api']], function (
 - Static routes use O(1) hashmap lookup
 - Dynamic routes use pre-compiled regex patterns
 - Automatic 405 Method Not Allowed responses with `Allow` header
+- Automatic `OPTIONS` preflight response (`204`) for existing route paths
+- `any()` includes `OPTIONS` for preflight-friendly API route registration
 
 ## Schema Builder & Migrations
 
@@ -2264,6 +2283,12 @@ auth()->revokeAllTokens($userId);
 
 // Session helpers
 auth()->check();    // true/false
+auth()->check(['session', 'token']); // check specific methods in order
+auth()->via(['web', 'api']); // returns 'session' or 'token'
+
+// Full multi-auth checks
+auth()->check(['jwt', 'api_key', 'oauth', 'basic', 'digest']);
+auth()->user(['jwt', 'api_key', 'basic', 'digest']);
 auth()->id();       // user ID
 auth()->user();     // session/token user data
 auth()->logout();   // destroys session
@@ -2271,7 +2296,7 @@ auth()->logout();   // destroys session
 
 ### Unified Auth Middleware
 
-SimplePHP supports both session and API token authentication through a unified `auth` middleware:
+MythPHP supports unified multi-method authentication through `auth` middleware:
 
 ```php
 // Accept either session or token auth
@@ -2280,8 +2305,18 @@ $router->get('/profile', [ProfileController::class, 'show'])->middleware('auth')
 // Session-only (web pages)
 $router->get('/dashboard', [DashboardController::class, 'index'])->middleware('auth:session');
 
-// Token-only (API endpoints)
+// Token auth (common for API endpoints)
 $router->get('/api/users', [ApiUserController::class, 'index'])->middleware('auth:token');
+
+// JWT / API key / Basic / Digest
+$router->get('/api/v2/reports', [ReportController::class, 'index'])->middleware('auth:jwt');
+$router->get('/api/v2/integrations', [IntegrationController::class, 'index'])->middleware('auth:api_key');
+$router->get('/api/v2/internal-basic', [InternalController::class, 'basic'])->middleware('auth:basic');
+$router->get('/api/v2/internal-digest', [InternalController::class, 'digest'])->middleware('auth:digest');
+
+// Multi-method guard chain (first valid method wins)
+$router->get('/api/v2/fallback-auth', [FallbackController::class, 'index'])
+    ->middleware('auth:jwt,api_key,token');
 
 // Permission checking works with both auth types
 $router->get('/admin', [AdminController::class, 'index'])->middleware('permission:admin-access');
@@ -2292,13 +2327,58 @@ $router->get('/admin', [AdminController::class, 'index'])->middleware('permissio
 |-------|-------|-------------|
 | `auth` | `RequireAuth` | Session or token authentication |
 | `auth.web` | `RequireSessionAuth` | Session-only authentication |
-| `auth.api` | `RequireApiToken` | Token-only (Bearer) authentication |
+| `auth.api` | `RequireApiToken` | Configurable API auth methods from `auth.api_methods` (token default) |
+| `auth:jwt` | `RequireAuth` | JWT authentication |
+| `auth:api_key` | `RequireAuth` | API Key authentication |
+| `auth:oauth` | `RequireAuth` | OAuth-backed session authentication |
+| `auth:basic` | `RequireAuth` | HTTP Basic authentication |
+| `auth:digest` | `RequireAuth` | HTTP Digest authentication |
 | `guest` | `EnsureGuest` | Redirect authenticated users |
 | `permission` | `RequirePermission` | Check RBAC permission (session + token) |
 | `throttle` | `RateLimit` | Laravel-style rate limiting |
 | `aggressive-throttle` | `ThrottleRequests` | Aggressive IP-based throttling with blocking |
 | `xss` | `XssProtection` | XSS pattern detection on input |
 | `headers` | `SetSecurityHeaders` | CSP, HSTS, and security headers |
+
+### Auth Headers By Type (API)
+
+```http
+Authorization: Bearer <personal_access_token>   # token
+Authorization: Bearer <jwt_token>               # jwt
+X-API-KEY: <api_key>                            # api_key
+Authorization: ApiKey <api_key>                 # api_key (alternative)
+Authorization: Basic <base64(username:password)># basic
+Authorization: Digest username="...", ...      # digest
+```
+
+For OAuth in this framework, authenticated state is session-backed after social login callback.
+
+### Standalone API Component Multi-Auth Example
+
+```php
+// app/config/api.php
+$config['api']['auth'] = [
+    'required' => true,
+    'methods' => ['jwt', 'api_key', 'token'], // first valid method wins
+];
+
+// systems/Components/Api usage
+$api = new \Components\Api(db()->getPdo(), config('api'));
+
+$api->get('/v1/secure/profile', function ($currentUser) use ($api) {
+    if (!$api->hasAbility('profile.read')) {
+        return ['code' => 403, 'message' => 'Forbidden'];
+    }
+
+    return [
+        'code' => 200,
+        'auth_type' => $currentUser['auth_type'] ?? 'unknown',
+        'user' => $currentUser,
+    ];
+});
+
+$api->handleRequest();
+```
 
 ### Middleware Groups
 
@@ -2339,8 +2419,8 @@ Router fallback behavior is config-driven in `app/config/framework.php`:
 
 // Scope/macro auto-loading used by db()
 'scope_macro' => [
-    'base_path' => 'app/database/',
-    'folders'   => ['ScopeMacroQuery'],
+    'base_path' => 'app/http/controllers/',
+    'folders'   => ['ScopeControllers'],
     'files'     => [],
 ],
 ```
@@ -2348,7 +2428,7 @@ Router fallback behavior is config-driven in `app/config/framework.php`:
 Notes:
 - Browser HTML requests with unmatched routes redirect to `login` (or your configured target).
 - API/AJAX/JSON requests continue to receive JSON `404` responses.
-- Scope/macro files are loaded from `app/database/ScopeMacroQuery/` by default.
+- Scope/macro files are loaded from `app/http/controllers/ScopeControllers/` by default.
 
 ### Middleware Traits
 
@@ -2441,7 +2521,7 @@ CSP and Permissions-Policy are configured in `app/config/security.php` — no ha
 
 ### CSRF Protection
 
-CSRF protection is enabled by default for all state-changing requests (POST, PUT, PATCH, DELETE). API routes are excluded since they use Bearer token authentication.
+CSRF protection is enabled by default for all state-changing requests (POST, PUT, PATCH, DELETE). API routes are excluded because they are protected by stateless API credentials (token/JWT/API key/Basic/Digest) instead of browser cookies.
 
 **In Blade forms:**
 ```blade
@@ -2501,4 +2581,4 @@ callApi('post', '/users', { csrf_token: token, name: 'John' });
 
 ---
 
-**SimplePHP** - Simple PHP structure for modern web applications
+**MythPHP** - Simple PHP structure for modern web applications

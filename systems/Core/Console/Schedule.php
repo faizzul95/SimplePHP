@@ -127,8 +127,15 @@ class Schedule
                         throw new \RuntimeException("Scheduled command not found: {$commandName}");
                     }
 
-                    $commands = $kernel->getCommands();
-                    call_user_func($commands[$resolvedCommand]['handler'], $args, $options);
+                    if ($event->shouldRunInBackground()) {
+                        $this->runCommandInBackground($commandName);
+                    } else {
+                        $commands = $kernel->getCommands();
+                        $exitCode = call_user_func($commands[$resolvedCommand]['handler'], $args, $options);
+                        if (is_int($exitCode) && $exitCode !== 0) {
+                            throw new \RuntimeException("Scheduled command failed with exit code {$exitCode}: {$commandName}");
+                        }
+                    }
                 }
 
                 $event->flushOutput();
@@ -216,5 +223,32 @@ class Schedule
 
         $parsed = $kernel->parseArguments(array_slice($parts, 1));
         return [$resolvedCommand, $parsed['args'], $parsed['options']];
+    }
+
+    /**
+     * Dispatch a scheduled command in the background (best effort, cross-platform).
+     */
+    private function runCommandInBackground(string $commandLine): void
+    {
+        $phpBinary = PHP_BINARY ?: 'php';
+        $mythScript = ROOT_DIR . 'myth';
+
+        $parts = str_getcsv(trim($commandLine), ' ', '"');
+        $parts = array_values(array_filter($parts, static function ($part) {
+            return $part !== null && $part !== '';
+        }));
+
+        $escapedParts = array_map('escapeshellarg', $parts);
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($mythScript);
+        if (!empty($escapedParts)) {
+            $command .= ' ' . implode(' ', $escapedParts);
+        }
+
+        if (stripos(PHP_OS_FAMILY, 'Windows') === 0) {
+            @pclose(@popen('start /B "" ' . $command, 'r'));
+            return;
+        }
+
+        @exec($command . ' > /dev/null 2>&1 &');
     }
 }

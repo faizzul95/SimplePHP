@@ -216,7 +216,7 @@ class Backup
     {
         $startTime = microtime(true);
         $timestamp = date('Y-m-d_H-i-s');
-        $tempDir = sys_get_temp_dir() . '/simplephp_backup_' . $timestamp;
+        $tempDir = sys_get_temp_dir() . '/MythPHP_backup_' . $timestamp;
 
         try {
             if (!is_dir($tempDir)) {
@@ -432,7 +432,7 @@ class Backup
         }
 
         // Header
-        fwrite($handle, "-- SimplePHP Database Backup\n");
+        fwrite($handle, "-- MythPHP Database Backup\n");
         fwrite($handle, "-- Generated: " . date('Y-m-d H:i:s') . "\n");
         fwrite($handle, "-- Database: {$config['database']}\n");
         fwrite($handle, "-- --------------------------------------------------------\n\n");

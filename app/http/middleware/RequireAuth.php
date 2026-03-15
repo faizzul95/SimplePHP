@@ -29,37 +29,22 @@ class RequireAuth implements MiddlewareInterface
 
     public function handle(Request $request, callable $next)
     {
-        $authenticated = false;
-
-        // Normalize guard names
         $guards = $this->guards;
         if (empty($guards)) {
-            // No guard specified: accept either
             $guards = ['session', 'token'];
         }
 
-        $guardMap = [
-            'web' => 'session',
-            'api' => 'token',
-            'session' => 'session',
-            'token' => 'token',
-        ];
+        if (!auth()->check($guards)) {
+            $normalizedGuards = array_map('strtolower', $guards);
 
-        foreach ($guards as $guard) {
-            $resolved = $guardMap[strtolower($guard)] ?? $guard;
-
-            if ($resolved === 'session' && auth()->checkSession()) {
-                $authenticated = true;
-                break;
+            if (in_array('basic', $normalizedGuards, true)) {
+                header('WWW-Authenticate: ' . auth()->basicChallengeHeader());
             }
 
-            if ($resolved === 'token' && auth()->checkToken()) {
-                $authenticated = true;
-                break;
+            if (in_array('digest', $normalizedGuards, true)) {
+                header('WWW-Authenticate: ' . auth()->digestChallengeHeader());
             }
-        }
 
-        if (!$authenticated) {
             if ($request->expectsJson()) {
                 Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
             }

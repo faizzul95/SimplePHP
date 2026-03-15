@@ -206,6 +206,8 @@
 
 > **Note:** All aggregate eager loaders (`withCount`/`withSum`/etc.) automatically append the aggregate keyword to the alias if not already present. E.g., `withCount('posts', ...)` becomes `posts_count`. The callback receives a sub-query builder to add extra conditions.
 
+> **Large-dataset behavior:** when eager loading runs in batched mode, MythPHP uses adaptive chunk sizes and lazy chunk iteration to avoid building huge chunk arrays in memory. Related rows are attached incrementally per chunk, which lowers peak memory pressure on large tables.
+
 ### Fetch / Retrieval
 
 | Method | Signature | Return | Description |

@@ -4,6 +4,8 @@
 
 ### Routing & HTTP
 - Web + API routing with middleware groups, alias params, and regex constraints
+- Explicit `OPTIONS` routes plus `any()` multi-verb registration including `OPTIONS`
+- Automatic `OPTIONS` preflight fallback (`204` + `Allow`) when path exists on other methods
 - FormRequest auto-validation and typed controller injection via Router reflection
 - Request capture with JSON body merge, trusted proxy IP resolution, browser/platform detection
 - Response with JSON output and redirect (header injection prevention)
@@ -14,13 +16,15 @@
 - Social login (OAuth) via `socialite()` with auto-create callback
 - RBAC permission middleware and controller-level `can()`/`cannot()`/`setPageState()`
 
-### Middleware & Security (10 built-in classes)
+### Middleware & Security
 - Security headers (CSP, Permissions-Policy) via config
+- Request hardening middleware for URI/body/host/content-type constraints
 - Standard rate limiting with named profiles, numeric syntax, 6 scope modes
 - Aggressive IP-based throttling with temporary/permanent blocking
 - XSS pattern detection on state-changing requests with field exclusion
 - API request/response logging with sensitive field masking
-- CSRF protection with include/exclude URI patterns
+- CSRF protection with include/exclude URI patterns and optional Origin/Referer checks
+- Route-level response cache-control middleware support
 
 ### Validation (40+ built-in rules)
 - Type, format, size, comparison, date, security, file, array, and conditional rules
@@ -65,7 +69,7 @@
 - Output capture: sendOutputTo, appendOutputTo
 
 ### Console CLI (`php myth`)
-- 28 built-in commands: cache, routes, generators, backup, app runtime, queue, scheduler
+- 33 built-in commands: cache, routes, generators, security/performance, backup, app runtime, queue, scheduler
 - Custom command registration via `make:command` + `console.php`
 
 ### File Upload

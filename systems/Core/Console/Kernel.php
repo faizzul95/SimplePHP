@@ -456,7 +456,7 @@ class Kernel
     private function printList(): void
     {
         $this->line('');
-        $this->info('SimplePHP Console');
+        $this->info('MythPHP Console');
         $this->line('');
         $this->warn('Usage:');
         $this->line('  php myth <command> [arguments] [options]');

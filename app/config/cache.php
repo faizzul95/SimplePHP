@@ -42,5 +42,5 @@ return [
     |
     */
 
-    'prefix' => 'simplephp_',
+    'prefix' => 'MythPHP_',
 ];

@@ -8,6 +8,7 @@ class Request
     private string $path;
     private array $query;
     private array $request;
+    private array $server;
     private array $headers;
     private array $routeParams = [];
 
@@ -15,6 +16,7 @@ class Request
     {
         $this->query = $query;
         $this->request = $request;
+        $this->server = $server;
         $this->headers = $this->extractHeaders($server);
         $this->method = strtoupper($server['REQUEST_METHOD'] ?? 'GET');
         $this->path = $this->resolvePath($server);
@@ -24,8 +26,7 @@ class Request
     {
         $request = new self($_GET, $_POST, $_SERVER);
 
-        $contentType = strtolower((string) ($request->header('Content-Type', '')));
-        if (str_contains($contentType, 'application/json')) {
+        if ($request->isJson()) {
             $raw = file_get_contents('php://input');
             $json = json_decode((string) $raw, true);
             if (is_array($json)) {
@@ -128,10 +129,15 @@ class Request
      */
     public function bearerToken(): ?string
     {
-        $header = (string) $this->header('authorization', '');
-        if (str_starts_with($header, 'Bearer ')) {
-            return substr($header, 7);
+        $header = trim((string) $this->header('authorization', ''));
+        if ($header === '') {
+            return null;
         }
+
+        if (stripos($header, 'Bearer ') === 0) {
+            return trim(substr($header, 7));
+        }
+
         return null;
     }
 
@@ -140,9 +146,9 @@ class Request
      */
     public function fullUrl(): string
     {
-        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-        return $scheme . '://' . $host . ($_SERVER['REQUEST_URI'] ?? '/');
+        $scheme = $this->isSecureRequest() ? 'https' : 'http';
+        $host = $this->server['HTTP_HOST'] ?? 'localhost';
+        return $scheme . '://' . $host . ($this->server['REQUEST_URI'] ?? '/');
     }
 
     /**
@@ -150,8 +156,8 @@ class Request
      */
     public function url(): string
     {
-        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $scheme = $this->isSecureRequest() ? 'https' : 'http';
+        $host = $this->server['HTTP_HOST'] ?? 'localhost';
         return $scheme . '://' . $host . $this->path;
     }
 
@@ -163,17 +169,17 @@ class Request
 
     public function userAgent(): string
     {
-        return (string) ($this->header('user-agent', $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown'));
+        return (string) ($this->header('user-agent', $this->server['HTTP_USER_AGENT'] ?? 'Unknown'));
     }
 
     public function ip(): string
     {
-        $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+        $remoteAddr = $this->server['REMOTE_ADDR'] ?? '127.0.0.1';
 
         // Only trust forwarded headers when behind a known reverse proxy
         $trustedProxies = config('security.trusted_proxies', []);
 
-        if (!empty($trustedProxies) && in_array($remoteAddr, $trustedProxies, true)) {
+        if (!empty($trustedProxies) && $this->isTrustedProxy($remoteAddr, $trustedProxies)) {
             $keys = [
                 'HTTP_CF_CONNECTING_IP',
                 'HTTP_CLIENT_IP',
@@ -185,11 +191,11 @@ class Request
             ];
 
             foreach ($keys as $key) {
-                if (empty($_SERVER[$key])) {
+                if (empty($this->server[$key])) {
                     continue;
                 }
 
-                $ips = explode(',', (string) $_SERVER[$key]);
+                $ips = explode(',', (string) $this->server[$key]);
                 foreach ($ips as $ip) {
                     $candidate = trim($ip);
                     if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
@@ -200,6 +206,82 @@ class Request
         }
 
         return filter_var($remoteAddr, FILTER_VALIDATE_IP) ? $remoteAddr : '127.0.0.1';
+    }
+
+    private function isSecureRequest(): bool
+    {
+        if (!empty($this->server['HTTPS']) && strtolower((string) $this->server['HTTPS']) !== 'off') {
+            return true;
+        }
+
+        $port = (int) ($this->server['SERVER_PORT'] ?? 0);
+        if ($port === 443) {
+            return true;
+        }
+
+        return strtolower((string) ($this->header('x-forwarded-proto', ''))) === 'https';
+    }
+
+    private function isTrustedProxy(string $remoteAddr, array $trustedProxies): bool
+    {
+        foreach ($trustedProxies as $proxy) {
+            $proxy = trim((string) $proxy);
+            if ($proxy === '') {
+                continue;
+            }
+
+            if ($proxy === '*' || $remoteAddr === $proxy) {
+                return true;
+            }
+
+            if (str_contains($proxy, '/') && $this->ipInCidr($remoteAddr, $proxy)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function ipInCidr(string $ip, string $cidr): bool
+    {
+        if (!str_contains($cidr, '/')) {
+            return false;
+        }
+
+        [$subnet, $maskBits] = explode('/', $cidr, 2);
+        $subnet = trim($subnet);
+        $maskBits = (int) $maskBits;
+
+        $ipBinary = @inet_pton($ip);
+        $subnetBinary = @inet_pton($subnet);
+
+        if ($ipBinary === false || $subnetBinary === false) {
+            return false;
+        }
+
+        $byteLength = strlen($ipBinary);
+        if ($byteLength !== strlen($subnetBinary)) {
+            return false;
+        }
+
+        $maxBits = $byteLength * 8;
+        if ($maskBits < 0 || $maskBits > $maxBits) {
+            return false;
+        }
+
+        $fullBytes = intdiv($maskBits, 8);
+        $remainingBits = $maskBits % 8;
+
+        if ($fullBytes > 0 && substr($ipBinary, 0, $fullBytes) !== substr($subnetBinary, 0, $fullBytes)) {
+            return false;
+        }
+
+        if ($remainingBits === 0) {
+            return true;
+        }
+
+        $mask = (~((1 << (8 - $remainingBits)) - 1)) & 0xFF;
+        return ((ord($ipBinary[$fullBytes]) & $mask) === (ord($subnetBinary[$fullBytes]) & $mask));
     }
 
     public function platform(): string

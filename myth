@@ -2,7 +2,7 @@
 <?php
 
 /**
- * SimplePHP Console (Myth)
+ * MythPHP Console (Myth)
  *
  * Usage: php myth <command> [arguments] [options]
  *

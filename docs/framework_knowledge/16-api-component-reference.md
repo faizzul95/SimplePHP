@@ -2,7 +2,7 @@
 
 ## Overview
 
-`Components\Api` is a standalone PDO-based API utility with internal route registry, bearer token authentication, CORS, rate limiting, and JSON response handling. It operates independently from the main Router — designed for lightweight tokenized API endpoints.
+`Components\Api` is a standalone PDO-based API utility with internal route registry, configurable multi-auth authentication (session/token/JWT/API key/OAuth/Basic/Digest), CORS, rate limiting, and JSON response handling. It operates independently from the main Router.
 
 Source: `systems/Components/Api.php` (~540 lines).  
 Config: `app/config/api.php`.
@@ -16,7 +16,9 @@ Config: `app/config/api.php`.
 | `get` | `get(string $uri, callable $callback): void` | Register GET route |
 | `post` | `post(string $uri, callable $callback): void` | Register POST route |
 | `put` | `put(string $uri, callable $callback): void` | Register PUT route |
+| `patch` | `patch(string $uri, callable $callback): void` | Register PATCH route |
 | `delete` | `delete(string $uri, callable $callback): void` | Register DELETE route |
+| `options` | `options(string $uri, callable $callback): void` | Register OPTIONS route |
 
 Routes support `{param}` patterns (converted to named regex groups internally).
 
@@ -32,7 +34,7 @@ Routes support `{param}` patterns (converted to named regex groups internally).
 | Method | Signature | Return | Description |
 |--------|-----------|--------|-------------|
 | `generateToken` | `generateToken(int $userId, string $name, ?int $expiresAt = null, array $abilities = []): string` | `string` | Create 80-char hex token. Hashes with SHA-256 before storage. Returns plain token. |
-| `getCurrentUser` | `getCurrentUser(): ?array` | `?array` | Get authenticated user data (resolved from bearer token) |
+| `getCurrentUser` | `getCurrentUser(): ?array` | `?array` | Get authenticated user data (resolved from configured auth methods) |
 | `hasAbility` | `hasAbility(string $ability): bool` | `bool` | Check if current token grants ability. Supports wildcard `*`. |
 | `revokeToken` | `revokeToken(string $plainToken): bool` | `bool` | Revoke a specific token by its plain-text value |
 | `revokeAllUserTokens` | `revokeAllUserTokens(int $userId): int` | `int` | Revoke all tokens for a user. Returns count of deleted tokens. |
@@ -45,7 +47,7 @@ The `handleRequest()` method executes this sequence automatically:
 1. **CORS handling** — Sets `Access-Control-Allow-*` headers. Auto-responds to `OPTIONS` preflight.
 2. **Rate limiting** — Enforces per-IP request limits using configurable DB table. Skips whitelisted IPs/URLs.
 3. **Route matching** — Finds matching route (exact or regex with `{param}` extraction).
-4. **Authentication** — Resolves bearer token → user. Skips for whitelisted URLs.
+4. **Authentication** — Resolves configured auth methods (`auth.methods`) in order. Skips for whitelisted URLs.
 5. **Callback execution** — Runs route callback, captures return value.
 6. **JSON response** — Outputs JSON with appropriate status code.
 
@@ -55,11 +57,14 @@ The `handleRequest()` method executes this sequence automatically:
 $config['api'] = [
     'cors' => [
         'allow_origin' => ['*'],                    // Restrict in production
-        'allow_methods' => ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        'allow_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         'allow_headers' => ['Content-Type', 'Authorization', 'X-Requested-With'],
+        'allow_credentials' => false,               // true only with explicit origins
+        'allow_wildcard_with_auth' => false,        // keep false for authenticated APIs
     ],
     'auth' => [
-        'required' => true,                         // Require bearer token for all routes
+        'required' => true,
+        'methods' => ['token'],                    // Supported: session, token, jwt, api_key, oauth, basic, digest
     ],
     'token_table' => 'users_access_tokens',         // Token storage table
     'rate_limit_table' => 'api_rate_limits',        // Rate limit tracking table
@@ -82,7 +87,7 @@ Both tables are managed via database migrations (run `php myth migrate`):
 
 ## Examples
 
-### 1) Complete API setup with auth login endpoint
+### 1) Complete API setup with login endpoint
 
 ```php
 // app/routes/api.php
@@ -112,6 +117,27 @@ $api->post('/v1/auth/login', function () use ($api) {
 });
 
 $api->handleRequest();
+```
+
+### 1b) Configure API auth methods (all supported types)
+
+```php
+// app/config/api.php
+$config['api']['auth'] = [
+    'required' => true,
+    'methods' => ['jwt', 'api_key', 'token', 'basic', 'digest', 'session', 'oauth'],
+];
+```
+
+Header examples:
+
+```http
+Authorization: Bearer <personal_access_token>   # token
+Authorization: Bearer <jwt_token>               # jwt
+X-API-KEY: <api_key>                            # api_key
+Authorization: ApiKey <api_key>                 # api_key alternative
+Authorization: Basic <base64(username:password)># basic
+Authorization: Digest username="...", ...      # digest
 ```
 
 ### 2) Protected CRUD endpoints with ability checks
@@ -242,11 +268,12 @@ $api->get('/v2/products', function () use ($api) {
 ## How To Use
 
 1. Configure CORS, auth, rate limiting in `app/config/api.php`.
-2. Whitelist public endpoints (like login) in `url_whitelist`.
-3. Register routes with `$api->get/post/put/delete()`.
-4. Call `$api->handleRequest()` to execute the pipeline.
-5. Use `$api->hasAbility()` inside callbacks for fine-grained access control.
-6. Use `{param}` in URI patterns for route parameters.
+2. Set `api.auth.methods` in preferred order (first successful method wins).
+3. Whitelist public endpoints (like login) in `url_whitelist`.
+4. Register routes with `$api->get/post/put/patch/delete/options()`.
+5. Call `$api->handleRequest()` to execute the pipeline.
+6. Use `$api->hasAbility()` inside callbacks for fine-grained access control.
+7. Use `{param}` in URI patterns for route parameters.
 
 ## What To Avoid
 

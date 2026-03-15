@@ -96,7 +96,7 @@ if (!function_exists('db')) {
             loadScopeMacroDBFunctions(
                 $conn_db,
                 (array) ($scopeMacroConfig['files'] ?? []),
-                (array) ($scopeMacroConfig['folders'] ?? ['ScopeMacroQuery']),
+                (array) ($scopeMacroConfig['folders'] ?? ['ScopeControllers']),
                 $scopeMacroBasePath,
                 false // The error log message
             );

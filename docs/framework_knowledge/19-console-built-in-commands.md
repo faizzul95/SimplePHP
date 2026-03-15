@@ -1,6 +1,6 @@
 # 19. Console Built-in Commands
 
-## Complete Command List (28 commands)
+## Complete Command List (34 commands)
 
 ### Cache (3)
 
@@ -16,7 +16,7 @@
 |---------|-------------|
 | `route:list` | Display all registered routes (supports `--method`, `--path` filters) |
 
-### Generators (6)
+### Generators (8)
 
 | Command | Description |
 |---------|-------------|
@@ -26,6 +26,8 @@
 | `make:model` | Generate model class |
 | `make:job` | Generate queue job class |
 | `make:command` | Generate custom console command |
+| `make:repository` | Generate lightweight query-builder repository |
+| `make:dto` | Generate DTO/value object class |
 
 ### Database / Backup (4)
 
@@ -47,6 +49,15 @@
 | `up` | Bring application out of maintenance mode |
 | `env` | Display current environment |
 | `about` | Display application information |
+
+### Security & Performance (4)
+
+| Command | Description |
+|---------|-------------|
+| `security:audit` | Run OWASP-aligned baseline checks (`--strict`, `--ci`) |
+| `auth:security:test` | Run auth hardening tests (`--strict`, `--ci`) |
+| `perf:benchmark` | Run routing/validation/query benchmark workload |
+| `perf:report` | Show and optionally export performance monitor report |
 
 ### Queue (5)
 
@@ -100,12 +111,12 @@ php myth cache:clear --store=file           # Clear specific store
 
 ## Benefits
 
-- 28 built-in commands covering development, deployment, and operations.
+- 34 built-in commands covering development, security, performance, deployment, and operations.
 - Standardized developer workflow.
 - Faster setup for common tasks.
 - Reduced manual mistakes for repetitive operations.
 
 ## Evidence
 
-- `systems/Core/Console/Commands.php` (1001 lines — 26 commands)
+- `systems/Core/Console/Commands.php` (built-in command registry)
 - `systems/Core/Console/Kernel.php` (schedule:run, schedule:list, list, help)

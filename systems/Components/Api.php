@@ -29,8 +29,8 @@ class Api
     public function __construct(PDO $pdo, array $config = [])
     {
         $this->pdo = $pdo;
-        $this->config = array_merge($this->getDefaultConfig(), $config);
-        $this->requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+        $this->config = array_replace_recursive($this->getDefaultConfig(), $config);
+        $this->requestMethod = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
         $this->requestUri = $this->parseRequestUri();
         $this->headers = $this->getAllHeaders();
     }
@@ -63,8 +63,10 @@ class Api
         return [
             'cors' => [
                 'allow_origin' => ['*'],
-                'allow_methods' => ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+                'allow_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
                 'allow_headers' => ['Content-Type', 'Authorization', 'X-Requested-With'],
+                'allow_credentials' => false,
+                'allow_wildcard_with_auth' => false,
             ],
             'ip_whitelist' => [],
             'url_whitelist' => [],
@@ -75,6 +77,7 @@ class Api
             ],
             'auth' => [
                 'required' => true,
+                'methods' => ['token'],
             ],
             'token_table' => $tokenTable,
             'rate_limit_table' => 'api_rate_limits',
@@ -119,6 +122,23 @@ class Api
                 $headers[$header] = $value;
             }
         }
+
+        // Compatibility fallbacks for environments that don't expose Authorization as HTTP_AUTHORIZATION.
+        if (!isset($headers['Authorization'])) {
+            $authorization = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? null;
+            if (is_string($authorization) && $authorization !== '') {
+                $headers['Authorization'] = $authorization;
+            }
+        }
+
+        if (!isset($headers['Content-Type']) && isset($_SERVER['CONTENT_TYPE'])) {
+            $headers['Content-Type'] = (string) $_SERVER['CONTENT_TYPE'];
+        }
+
+        if (!isset($headers['Content-Length']) && isset($_SERVER['CONTENT_LENGTH'])) {
+            $headers['Content-Length'] = (string) $_SERVER['CONTENT_LENGTH'];
+        }
+
         return $headers;
     }
 
@@ -148,8 +168,33 @@ class Api
     /**
      * Authenticate request using bearer token
      */
-    private function authenticate(): ?array
+    private function authenticate(?array $methods = null): ?array
     {
+        $resolvedMethods = $this->normalizeAuthMethods($methods ?? ($this->config['auth']['methods'] ?? ['token']));
+
+        if (function_exists('auth')) {
+            try {
+                $auth = auth();
+                if (is_object($auth) && method_exists($auth, 'user') && method_exists($auth, 'via')) {
+                    $user = $auth->user($resolvedMethods);
+                    if (is_array($user) && !empty($user)) {
+                        $via = $auth->via($resolvedMethods);
+                        if (is_string($via) && $via !== '' && !isset($user['auth_type'])) {
+                            $user['auth_type'] = $via;
+                        }
+
+                        return $user;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Fall back to local token auth implementation.
+            }
+        }
+
+        if (!in_array('token', $resolvedMethods, true)) {
+            return null;
+        }
+
         $authHeader = $this->headers['Authorization'] ?? '';
 
         if (!preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
@@ -184,8 +229,84 @@ class Api
             'id' => $tokenRecord['user_id'],
             'token_id' => $tokenRecord['id'],
             'token_name' => $tokenRecord['name'],
+            'auth_type' => 'token',
             'abilities' => json_decode($tokenRecord['abilities'] ?? '[]', true)
         ];
+    }
+
+    private function normalizeAuthMethods(array|string|null $methods): array
+    {
+        if ($methods === null) {
+            $methods = ['token'];
+        }
+
+        if (is_string($methods)) {
+            $methods = str_contains($methods, ',')
+                ? array_map('trim', explode(',', $methods))
+                : [trim($methods)];
+        }
+
+        if (!is_array($methods) || empty($methods)) {
+            return ['token'];
+        }
+
+        $aliases = [
+            'web' => 'session',
+            'api' => 'token',
+            'session' => 'session',
+            'token' => 'token',
+            'jwt' => 'jwt',
+            'api_key' => 'api_key',
+            'apikey' => 'api_key',
+            'oauth' => 'oauth',
+            'basic' => 'basic',
+            'digest' => 'digest',
+        ];
+
+        $normalized = [];
+        foreach ($methods as $method) {
+            if (!is_string($method)) {
+                continue;
+            }
+
+            $name = strtolower(trim($method));
+            if ($name === '') {
+                continue;
+            }
+
+            $resolved = $aliases[$name] ?? null;
+            if ($resolved !== null) {
+                $normalized[] = $resolved;
+            }
+        }
+
+        if (empty($normalized)) {
+            return ['token'];
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
+    private function setAuthChallengeHeaders(array $methods): void
+    {
+        $normalized = $this->normalizeAuthMethods($methods);
+        if (!function_exists('auth')) {
+            return;
+        }
+
+        try {
+            $auth = auth();
+
+            if (in_array('basic', $normalized, true) && is_object($auth) && method_exists($auth, 'basicChallengeHeader')) {
+                header('WWW-Authenticate: ' . $auth->basicChallengeHeader());
+            }
+
+            if (in_array('digest', $normalized, true) && is_object($auth) && method_exists($auth, 'digestChallengeHeader')) {
+                header('WWW-Authenticate: ' . $auth->digestChallengeHeader());
+            }
+        } catch (\Throwable $e) {
+            // Best-effort challenge headers.
+        }
     }
 
     /**
@@ -211,15 +332,27 @@ class Api
     private function handleCors(): void
     {
         $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-        $allowedOrigins = $this->config['cors']['allow_origin'];
+        $allowedOrigins = (array) ($this->config['cors']['allow_origin'] ?? []);
+        $allowCredentials = (bool) ($this->config['cors']['allow_credentials'] ?? false);
+        $allowWildcardWithAuth = (bool) ($this->config['cors']['allow_wildcard_with_auth'] ?? false);
+        $authRequired = (bool) ($this->config['auth']['required'] ?? true);
 
-        if (in_array('*', $allowedOrigins)) {
-            // Wildcard: allow all origins (cannot be used with credentials)
-            header('Access-Control-Allow-Origin: *');
-        } elseif ($origin !== '' && in_array($origin, $allowedOrigins)) {
-            // Reflect the specific allowed origin (safe with credentials)
+        $originAllowed = false;
+
+        if (in_array('*', $allowedOrigins, true)) {
+            if (!$authRequired || $allowWildcardWithAuth) {
+                header('Access-Control-Allow-Origin: *');
+                $originAllowed = true;
+            }
+        } elseif ($origin !== '' && in_array($origin, $allowedOrigins, true)) {
+            // Reflect only explicitly allowed origin values.
             header('Access-Control-Allow-Origin: ' . $origin);
             header('Vary: Origin');
+            $originAllowed = true;
+        }
+
+        if ($allowCredentials && $originAllowed && !in_array('*', $allowedOrigins, true)) {
+            header('Access-Control-Allow-Credentials: true');
         }
 
         header('Access-Control-Allow-Methods: ' . implode(', ', $this->config['cors']['allow_methods']));
@@ -228,8 +361,19 @@ class Api
 
         // Handle preflight request
         if ($this->requestMethod === 'OPTIONS') {
+            // Reject preflight when an Origin is sent but not allowed.
+            if ($origin !== '' && !$originAllowed) {
+                http_response_code(403);
+                exit;
+            }
+
             http_response_code(200);
             exit;
+        }
+
+        // Reject actual cross-origin request when origin is not allowed.
+        if ($origin !== '' && !$originAllowed) {
+            $this->sendError('CORS origin not allowed', 403);
         }
     }
 
@@ -281,8 +425,8 @@ class Api
 
         // Record this request - simple insert per window
         $recordStmt = $this->pdo->prepare("
-            INSERT INTO {$rateLimitTable} (ip_address, requests_count) 
-            VALUES (?, 1)
+            INSERT INTO {$rateLimitTable} (ip_address, requests_count, window_start) 
+            VALUES (?, 1, NOW())
         ");
         $recordStmt->execute([$clientIp]);
 
@@ -314,11 +458,27 @@ class Api
     }
 
     /**
+     * Register a PATCH route
+     */
+    public function patch(string $uri, callable $callback): void
+    {
+        $this->addRoute('PATCH', $uri, $callback);
+    }
+
+    /**
      * Register a DELETE route
      */
     public function delete(string $uri, callable $callback): void
     {
         $this->addRoute('DELETE', $uri, $callback);
+    }
+
+    /**
+     * Register an OPTIONS route
+     */
+    public function options(string $uri, callable $callback): void
+    {
+        $this->addRoute('OPTIONS', $uri, $callback);
     }
 
     /**
@@ -446,8 +606,10 @@ class Api
                 !$this->isUrlWhitelisted();
 
             if ($authRequired) {
-                $this->currentUser = $this->authenticate();
+                $authMethods = $this->normalizeAuthMethods($this->config['auth']['methods'] ?? ['token']);
+                $this->currentUser = $this->authenticate($authMethods);
                 if (!$this->currentUser) {
+                    $this->setAuthChallengeHeaders($authMethods);
                     $this->sendError('Unauthorized', 401);
                 }
             }
@@ -499,7 +661,20 @@ class Api
         }
 
         $abilities = $this->currentUser['abilities'] ?? [];
-        return in_array($ability, $abilities) || in_array('*', $abilities);
+
+        if (!is_array($abilities) && isset($this->currentUser['jwt_claims']['scope']) && is_string($this->currentUser['jwt_claims']['scope'])) {
+            $abilities = preg_split('/\s+/', trim($this->currentUser['jwt_claims']['scope'])) ?: [];
+        }
+
+        if (!is_array($abilities) && isset($this->currentUser['jwt_claims']['scopes']) && is_array($this->currentUser['jwt_claims']['scopes'])) {
+            $abilities = $this->currentUser['jwt_claims']['scopes'];
+        }
+
+        if (!is_array($abilities)) {
+            $abilities = [];
+        }
+
+        return in_array($ability, $abilities, true) || in_array('*', $abilities, true);
     }
 
     /**

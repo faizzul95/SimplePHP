@@ -5,15 +5,15 @@
 Scopes and macros extend the query builder without modifying core files. They are loaded at bootstrap via `loadScopeMacroDBFunctions(...)` from `systems/hooks.php`.
 
 - Config source: `framework.scope_macro` in `app/config/framework.php`.
-- Default base path: `app/database/`.
-- Default folder: `ScopeMacroQuery`.
+- Default base path: `app/http/controllers/`.
+- Default folder: `ScopeControllers`.
 - Files: `Scope.php` (scopes), `Macro.php` (macros).
 
 ## How Scopes Work
 
 Scopes are pre-defined query modifiers registered on the `$db` builder via `$db->scopes(array $scopes)`. Once registered, they can be called fluently on any query.
 
-### Built-in Scopes (from `app/database/ScopeMacroQuery/Scope.php`)
+### Built-in Scopes (from `app/http/controllers/ScopeControllers/Scope.php`)
 
 | Scope | Signature | Description |
 |-------|-----------|-------------|
@@ -29,7 +29,7 @@ The `scopeSystemQuery($db)` function registers `latest`, `oldest`, and `recent` 
 
 Macros add custom chainable methods to the query builder via `$db->macros(array $macros)`. They extend the builder's vocabulary for project-specific patterns.
 
-### Built-in Macros (from `app/database/ScopeMacroQuery/Macro.php`)
+### Built-in Macros (from `app/http/controllers/ScopeControllers/Macro.php`)
 
 | Macro | Usage | Description |
 |-------|-------|-------------|
@@ -42,8 +42,8 @@ The `macroQuery($db, $includeOnly = ['*'])` function registers macros on the bui
 ```php
 // app/config/framework.php
 'scope_macro' => [
-    'base_path' => 'app/database/',
-    'folders' => ['ScopeMacroQuery'],
+    'base_path' => 'app/http/controllers/',
+    'folders' => ['ScopeControllers'],
     'files' => [],
 ],
 ```
@@ -76,7 +76,7 @@ $deletedUsers = db()->table('users')
 
 ### 2) Creating a custom scope file
 
-Create `app/database/ScopeMacroQuery/ProjectScope.php`:
+Create `app/http/controllers/ScopeControllers/ProjectScope.php`:
 
 ```php
 <?php
@@ -113,7 +113,7 @@ $users = db()->table('users')
 
 ### 3) Creating a custom macro file
 
-Create `app/database/ScopeMacroQuery/ProjectMacro.php`:
+Create `app/http/controllers/ScopeControllers/ProjectMacro.php`:
 
 ```php
 <?php
@@ -157,7 +157,7 @@ loadScopeMacroDBFunctions(
 
 ## How To Use
 
-1. Put scope/macro PHP files in `app/database/ScopeMacroQuery/`.
+1. Put scope/macro PHP files in `app/http/controllers/ScopeControllers/`.
 2. Name scope functions as `scopeYourName($db)` — use `$db->scopes([...])` inside.
 3. Name macro functions as `macroYourName($db, $includeOnly)` — use `$db->macros([...])` inside.
 4. Scopes and macros are loaded automatically at bootstrap from configured folders.
@@ -182,6 +182,6 @@ loadScopeMacroDBFunctions(
 
 - `systems/hooks.php` (`loadScopeMacroDBFunctions`)
 - `app/config/framework.php` (`scope_macro`)
-- `app/database/ScopeMacroQuery/Scope.php`
-- `app/database/ScopeMacroQuery/Macro.php`
+- `app/http/controllers/ScopeControllers/Scope.php`
+- `app/http/controllers/ScopeControllers/Macro.php`
 - `systems/app.php` (bootstrapping flow)

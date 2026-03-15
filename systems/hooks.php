@@ -510,6 +510,26 @@ if (!function_exists('view_raw')) {
     }
 }
 
+if (!function_exists('response_cache')) {
+    /**
+     * Apply HTTP cache policy to the current response.
+     *
+     * Examples:
+     *   response_cache(300);                    // public cache for 5 minutes
+     *   response_cache(0, false);               // private no-max-age
+     *   response_cache(0, false, false, true);  // no-store/no-cache
+     */
+    function response_cache(int $seconds, bool $public = true, bool $immutable = false, bool $noStore = false): void
+    {
+        if ($noStore) {
+            \Core\Http\Response::noCache();
+            return;
+        }
+
+        \Core\Http\Response::cache($seconds, $public, $immutable);
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | AUTH COMPONENT

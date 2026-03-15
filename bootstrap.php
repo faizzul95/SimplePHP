@@ -3,7 +3,7 @@
 ob_start();
 
 define('ROOT_DIR', realpath(__DIR__) . DIRECTORY_SEPARATOR);
-define('APP_NAME', "SimplePHP");
+define('APP_NAME', "MythPHP");
 
 define('REDIRECT_LOGIN', 'login');
 define('REDIRECT_403', 'app/views/errors/general_error.php');
@@ -27,7 +27,16 @@ if (!class_exists('Myth', false)) {
 foreach (glob(__DIR__ . '/app/config/*.php') as $file) {
     try {
         if (is_readable($file)) {
-            include_once $file;
+            $included = include_once $file;
+
+            // Support config files that return arrays (e.g., cache.php)
+            if (is_array($included)) {
+                $key = pathinfo($file, PATHINFO_FILENAME);
+                if (!isset($config[$key]) || !is_array($config[$key])) {
+                    $config[$key] = [];
+                }
+                $config[$key] = array_replace_recursive($config[$key], $included);
+            }
         } else {
             throw new Exception("File not readable: $file");
         }
@@ -37,6 +46,36 @@ foreach (glob(__DIR__ . '/app/config/*.php') as $file) {
 }
 
 define('ENVIRONMENT', $config['environment'] ?? 'development');
+
+// Apply security/performance presets for the current environment.
+if (!function_exists('applyConfigOverrides')) {
+    function applyConfigOverrides(array &$target, array $overrides): void
+    {
+        foreach ($overrides as $key => $value) {
+            if (is_array($value) && isset($target[$key]) && is_array($target[$key])) {
+                applyConfigOverrides($target[$key], $value);
+                continue;
+            }
+
+            $target[$key] = $value;
+        }
+    }
+}
+
+$environmentPresets = $config['security']['presets'][ENVIRONMENT] ?? [];
+if (is_array($environmentPresets) && !empty($environmentPresets)) {
+    foreach ($environmentPresets as $topLevelSection => $sectionOverrides) {
+        if (!is_array($sectionOverrides)) {
+            continue;
+        }
+
+        if (!isset($config[$topLevelSection]) || !is_array($config[$topLevelSection])) {
+            $config[$topLevelSection] = [];
+        }
+
+        applyConfigOverrides($config[$topLevelSection], $sectionOverrides);
+    }
+}
 
 /*
  *---------------------------------------------------------------
@@ -157,6 +196,14 @@ $menuList = [
                     'url' => url('rbac/email'),
                     'file' => 'app/views/rbac/emailTemplate.php',
                     'permission' => 'rbac-email-view',
+                    'active' => true,
+                    'authenticate' => true,
+                ],
+                'observability' => [
+                    'desc' => 'Observability',
+                    'url' => url('system/observability'),
+                    'file' => 'app/views/dashboard/observability.php',
+                    'permission' => 'management-view',
                     'active' => true,
                     'authenticate' => true,
                 ]

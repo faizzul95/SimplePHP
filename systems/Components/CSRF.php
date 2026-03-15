@@ -42,7 +42,10 @@ class CSRF
         'csrf_include_uris' => [],      // legacy opt-in (ignored when exclude list is non-empty)
         'csrf_secure_cookie' => true,
         'csrf_httponly' => true,
-        'csrf_samesite' => 'Lax'
+        'csrf_samesite' => 'Lax',
+        'csrf_origin_check' => true,
+        'csrf_allow_missing_origin' => true,
+        'csrf_trusted_origins' => [],
     ];
 
     /**
@@ -149,6 +152,10 @@ class CSRF
             }
 
             // Perform token validation
+            if (!$this->validateOrigin()) {
+                return false;
+            }
+
             return $this->validateToken();
         } catch (RuntimeException $e) {
             error_log('CSRF validation error: ' . $e->getMessage());
@@ -347,6 +354,59 @@ class CSRF
         }
 
         return true;
+    }
+
+    /**
+     * Validate Origin/Referer header for same-site CSRF protection.
+     */
+    private function validateOrigin(): bool
+    {
+        if (($this->config['csrf_origin_check'] ?? true) !== true) {
+            return true;
+        }
+
+        $origin = trim((string) ($_SERVER['HTTP_ORIGIN'] ?? ''));
+        $referer = trim((string) ($_SERVER['HTTP_REFERER'] ?? ''));
+        $allowMissing = ($this->config['csrf_allow_missing_origin'] ?? true) === true;
+
+        if ($origin === '' && $referer === '') {
+            return $allowMissing;
+        }
+
+        $allowed = [];
+        $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+        if ($host !== '') {
+            $scheme = $this->isHttps() ? 'https' : 'http';
+            $allowed[] = $scheme . '://' . $host;
+        }
+
+        $trusted = (array) ($this->config['csrf_trusted_origins'] ?? []);
+        foreach ($trusted as $item) {
+            $normalized = strtolower(trim((string) $item));
+            if ($normalized !== '') {
+                $allowed[] = rtrim($normalized, '/');
+            }
+        }
+
+        $allowed = array_values(array_unique($allowed));
+        if (empty($allowed)) {
+            return $allowMissing;
+        }
+
+        $source = $origin !== '' ? $origin : $referer;
+        $source = strtolower(trim($source));
+
+        $sourceParts = parse_url($source);
+        if (!is_array($sourceParts) || empty($sourceParts['scheme']) || empty($sourceParts['host'])) {
+            return false;
+        }
+
+        $candidate = $sourceParts['scheme'] . '://' . $sourceParts['host'];
+        if (isset($sourceParts['port'])) {
+            $candidate .= ':' . (int) $sourceParts['port'];
+        }
+
+        return in_array(rtrim($candidate, '/'), $allowed, true);
     }
 
     /**

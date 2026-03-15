@@ -7,9 +7,23 @@ trait SecurityHeadersTrait
 	public function set_security_headers()
 	{
 		$security = \config('security') ?? [];
+		$headersConfig = $security['headers'] ?? [];
 
-		// Strict-Transport-Security
-		header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
+		// Strict-Transport-Security (HSTS)
+		$hsts = $headersConfig['hsts'] ?? [];
+		$hstsEnabled = ($hsts['enabled'] ?? true) === true;
+		$hstsHttpsOnly = ($hsts['enforce_https_only'] ?? true) === true;
+		if ($hstsEnabled && (!$hstsHttpsOnly || $this->isHttpsRequest())) {
+			$hstsValue = 'max-age=' . (int) ($hsts['max_age'] ?? 31536000);
+			if (($hsts['include_subdomains'] ?? true) === true) {
+				$hstsValue .= '; includeSubDomains';
+			}
+			if (($hsts['preload'] ?? true) === true) {
+				$hstsValue .= '; preload';
+			}
+
+			header('Strict-Transport-Security: ' . $hstsValue);
+		}
 
 		// Content-Security-Policy (configurable via security.csp)
 		$csp = $security['csp'] ?? [];
@@ -17,7 +31,7 @@ trait SecurityHeadersTrait
 			$directives = [];
 			$cspDefaults = [
 				'default-src' => ["'self'"],
-				'script-src'  => ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+				'script-src'  => ["'self'", "'unsafe-inline'"],
 				'style-src'   => ["'self'", "'unsafe-inline'"],
 				'img-src'     => ["'self'", 'data:'],
 				'connect-src' => ["'self'"],
@@ -42,13 +56,18 @@ trait SecurityHeadersTrait
 		}
 
 		// X-Frame-Options
-		header('X-Frame-Options: SAMEORIGIN');
+		header('X-Frame-Options: ' . (string) ($headersConfig['x_frame_options'] ?? 'SAMEORIGIN'));
 
 		// X-Content-Type-Options
-		header('X-Content-Type-Options: nosniff');
+		header('X-Content-Type-Options: ' . (string) ($headersConfig['x_content_type_options'] ?? 'nosniff'));
 
 		// Referrer-Policy
-		header('Referrer-Policy: strict-origin-when-cross-origin');
+		header('Referrer-Policy: ' . (string) ($headersConfig['referrer_policy'] ?? 'strict-origin-when-cross-origin'));
+
+		// Cross-origin isolation helpers
+		header('Cross-Origin-Opener-Policy: ' . (string) ($headersConfig['cross_origin_opener_policy'] ?? 'same-origin'));
+		header('Cross-Origin-Resource-Policy: ' . (string) ($headersConfig['cross_origin_resource_policy'] ?? 'same-origin'));
+		header('X-DNS-Prefetch-Control: ' . (string) ($headersConfig['x_dns_prefetch_control'] ?? 'off'));
 
 		// Permissions-Policy (configurable via security.permissions_policy)
 		$permPolicy = $security['permissions_policy'] ?? [
@@ -68,5 +87,19 @@ trait SecurityHeadersTrait
 		if (!empty($policies)) {
 			header('Permissions-Policy: ' . implode(', ', $policies));
 		}
+	}
+
+	private function isHttpsRequest(): bool
+	{
+		if (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') {
+			return true;
+		}
+
+		if ((int) ($_SERVER['SERVER_PORT'] ?? 0) === 443) {
+			return true;
+		}
+
+		$forwardedProto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+		return $forwardedProto === 'https';
 	}
 }

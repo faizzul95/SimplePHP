@@ -606,6 +606,173 @@ PHP;
             $console->line("  → {$path}");
             $console->newLine();
         }, 'Generate a console command class');
+
+        $console->command('make:repository', function (array $args = [], array $options = []) use ($console) {
+            $name = $args[0] ?? null;
+
+            if (empty($name)) {
+                $console->newLine();
+                $console->error("  Usage: php myth make:repository UserRepository [--table=users]");
+                $console->newLine();
+                return;
+            }
+
+            $clean = preg_replace('/[^A-Za-z0-9_\/\\\\]/', '', $name);
+            $parts = explode('/', str_replace('\\\\', '/', $clean));
+            $className = array_pop($parts);
+            $subDir = !empty($parts) ? implode('/', $parts) . '/' : '';
+            $namespace = 'App\\Repositories' . (!empty($parts) ? '\\' . implode('\\', $parts) : '');
+
+            if (!str_ends_with($className, 'Repository')) {
+                $className .= 'Repository';
+            }
+
+            $path = ROOT_DIR . 'app/repositories/' . $subDir . $className . '.php';
+
+            if (file_exists($path)) {
+                $console->error("  Repository already exists: {$path}");
+                return;
+            }
+
+            $dir = dirname($path);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0775, true);
+            }
+
+            $table = trim((string) ($options['table'] ?? ''));
+            if ($table === '') {
+                $base = preg_replace('/Repository$/', '', $className);
+                $table = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $base)) . 's';
+            }
+
+            $content = <<<PHP
+<?php
+
+namespace {$namespace};
+
+class {$className}
+{
+    protected string \$table = '{$table}';
+
+    public function all(): array
+    {
+        return db()->table(\$this->table)->get();
+    }
+
+    public function find(int|string \$id): ?array
+    {
+        return db()->table(\$this->table)->where('id', \$id)->fetch() ?: null;
+    }
+
+    public function paginate(int \$start = 0, int \$limit = 20, int \$draw = 1): array
+    {
+        return db()->table(\$this->table)->paginate(\$start, \$limit, \$draw);
+    }
+
+    public function create(array \$data): array
+    {
+        return db()->table(\$this->table)->insert(\$data);
+    }
+
+    public function update(int|string \$id, array \$data): array
+    {
+        return db()->table(\$this->table)->where('id', \$id)->update(\$data);
+    }
+
+    public function delete(int|string \$id): array
+    {
+        return db()->table(\$this->table)->where('id', \$id)->delete();
+    }
+}
+PHP;
+
+            file_put_contents($path, $content);
+            $console->newLine();
+            $console->success("  Repository created successfully.");
+            $console->line("  → {$path}");
+            $console->newLine();
+        }, 'Generate a lightweight query-builder repository [--table=users]');
+
+        $console->command('make:dto', function (array $args = [], array $options = []) use ($console) {
+            $name = $args[0] ?? null;
+
+            if (empty($name)) {
+                $console->newLine();
+                $console->error("  Usage: php myth make:dto UserDTO");
+                $console->newLine();
+                return;
+            }
+
+            $clean = preg_replace('/[^A-Za-z0-9_\/\\\\]/', '', $name);
+            $parts = explode('/', str_replace('\\\\', '/', $clean));
+            $className = array_pop($parts);
+            $subDir = !empty($parts) ? implode('/', $parts) . '/' : '';
+            $namespace = 'App\\DTO' . (!empty($parts) ? '\\' . implode('\\', $parts) : '');
+
+            if (!str_ends_with($className, 'DTO')) {
+                $className .= 'DTO';
+            }
+
+            $path = ROOT_DIR . 'app/DTO/' . $subDir . $className . '.php';
+
+            if (file_exists($path)) {
+                $console->error("  DTO already exists: {$path}");
+                return;
+            }
+
+            $dir = dirname($path);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0775, true);
+            }
+
+            $content = <<<PHP
+<?php
+
+namespace {$namespace};
+
+class {$className} implements \JsonSerializable
+{
+    protected array \$attributes = [];
+
+    public function __construct(array \$attributes = [])
+    {
+        \$this->attributes = \$attributes;
+    }
+
+    public static function fromArray(array \$attributes): self
+    {
+        return new self(\$attributes);
+    }
+
+    public function get(string \$key, mixed \$default = null): mixed
+    {
+        return \$this->attributes[\$key] ?? \$default;
+    }
+
+    public function set(string \$key, mixed \$value): self
+    {
+        \$this->attributes[\$key] = \$value;
+        return \$this;
+    }
+
+    public function toArray(): array
+    {
+        return \$this->attributes;
+    }
+
+    public function jsonSerialize(): array
+    {
+        return \$this->toArray();
+    }
+}
+PHP;
+
+            file_put_contents($path, $content);
+            $console->newLine();
+            $console->success("  DTO created successfully.");
+            $console->line("  → {$path}");
+            $console->newLine();
+        }, 'Generate a DTO/value object class');
     }
 
     // ─── Database Commands ───────────────────────────────────
@@ -1135,7 +1302,7 @@ PHP;
             $port = $options['port'] ?? '8000';
 
             $console->newLine();
-            $console->info("  SimplePHP development server started");
+            $console->info("  MythPHP development server started");
             $console->newLine();
             $console->line("  Local:   \033[4mhttp://{$host}:{$port}\033[0m");
             $console->newLine();
@@ -1263,7 +1430,7 @@ PHP;
         $console->command('about', function () use ($console) {
             $console->newLine();
             $console->info("  ┌──────────────────────────────────────┐");
-            $console->info("  │          SimplePHP Framework         │");
+            $console->info("  │           MythPHP Framework          │");
             $console->info("  └──────────────────────────────────────┘");
             $console->newLine();
 
@@ -1297,6 +1464,397 @@ PHP;
                 $console->newLine();
             }
         }, 'Display basic information about the application');
+
+        $console->command('security:audit', function (array $args = [], array $options = []) use ($console) {
+            $security = (array) (config('security') ?? []);
+            $framework = (array) (config('framework') ?? []);
+            $api = (array) (config('api') ?? []);
+
+            $failures = [];
+            $warnings = [];
+            $passed = [];
+
+            $record = static function (bool $ok, string $label, string $message, array &$passed, array &$failures): void {
+                if ($ok) {
+                    $passed[] = [$label, $message];
+                    return;
+                }
+                $failures[] = [$label, $message];
+            };
+
+            $record((bool) ($security['csrf']['csrf_protection'] ?? false), 'CSRF', 'csrf_protection enabled', $passed, $failures);
+            $record((bool) ($security['csrf']['csrf_origin_check'] ?? false), 'CSRF', 'csrf_origin_check enabled', $passed, $failures);
+            $record((bool) ($security['request_hardening']['enabled'] ?? false), 'Request Hardening', 'request_hardening enabled', $passed, $failures);
+            $record((bool) ($security['csp']['enabled'] ?? false), 'CSP', 'csp enabled', $passed, $failures);
+
+            $scriptSrc = (array) ($security['csp']['script-src'] ?? []);
+            if (in_array("'unsafe-eval'", $scriptSrc, true)) {
+                $warnings[] = ['CSP', "script-src contains 'unsafe-eval'"];
+            } else {
+                $passed[] = ['CSP', "script-src excludes 'unsafe-eval'"];
+            }
+
+            $aliases = (array) ($framework['middleware_aliases'] ?? []);
+            $groups = (array) ($framework['middleware_groups'] ?? []);
+            $record(isset($aliases['request.safety']), 'Middleware', 'request.safety alias registered', $passed, $failures);
+            $record(in_array('request.safety', (array) ($groups['web'] ?? []), true), 'Middleware', 'web group includes request.safety', $passed, $failures);
+            $record(in_array('request.safety', (array) ($groups['api'] ?? []), true), 'Middleware', 'api group includes request.safety', $passed, $failures);
+            $record(in_array('xss', (array) ($groups['api'] ?? []), true), 'Middleware', 'api group includes xss', $passed, $failures);
+
+            $cors = (array) ($api['cors'] ?? []);
+            $allowOrigin = (array) ($cors['allow_origin'] ?? []);
+            $authRequired = (bool) ($api['auth']['required'] ?? false);
+            $allowCredentials = (bool) ($cors['allow_credentials'] ?? false);
+            $allowWildcardWithAuth = (bool) ($cors['allow_wildcard_with_auth'] ?? false);
+            $hasWildcard = in_array('*', $allowOrigin, true);
+
+            if ($allowCredentials && $hasWildcard) {
+                $failures[] = ['CORS', 'allow_credentials=true cannot be combined with allow_origin=*'];
+            } else {
+                $passed[] = ['CORS', 'credentials/origin policy is valid'];
+            }
+
+            if ($authRequired && $hasWildcard && $allowWildcardWithAuth) {
+                $failures[] = ['CORS', 'authenticated API cannot allow wildcard origins'];
+            } else {
+                $passed[] = ['CORS', 'authenticated wildcard policy is restricted'];
+            }
+
+            $trustedProxies = (array) ($security['trusted_proxies'] ?? []);
+            if (in_array('*', $trustedProxies, true) || in_array('0.0.0.0/0', $trustedProxies, true)) {
+                $failures[] = ['Proxy Trust', 'trusted_proxies must not contain global wildcard values'];
+            } else {
+                $passed[] = ['Proxy Trust', 'trusted_proxies does not include global wildcard'];
+            }
+
+            $strictMode = isset($options['strict']) || isset($options['ci']);
+
+            $console->newLine();
+            $console->info('  MythPHP Security Audit (OWASP baseline)');
+            $console->line('  ' . str_repeat('─', 56));
+
+            if (!empty($passed)) {
+                $console->table(['PASS', 'Detail'], $passed);
+            }
+            if (!empty($warnings)) {
+                $console->newLine();
+                $console->warn('  Warnings');
+                $console->table(['WARN', 'Detail'], $warnings);
+            }
+            if (!empty($failures)) {
+                $console->newLine();
+                $console->error('  Failed checks');
+                $console->table(['FAIL', 'Detail'], $failures);
+            }
+
+            $failCount = count($failures);
+            $warnCount = count($warnings);
+            $console->newLine();
+            $console->line('  Summary: ' . count($passed) . ' passed, ' . $warnCount . ' warning(s), ' . $failCount . ' failed.');
+            $console->line('  Mode: ' . ($strictMode ? 'strict' : 'normal'));
+            $console->newLine();
+
+            if ($failCount > 0) {
+                return 1;
+            }
+
+            if ($strictMode && $warnCount > 0) {
+                return 2;
+            }
+
+            return 0;
+        }, 'Run OWASP-aligned security audit checks [--strict] [--ci]');
+
+        $console->command('auth:security:test', function (array $args = [], array $options = []) use ($console) {
+            $authConfig = (array) (config('auth') ?? []);
+            $strictMode = isset($options['strict']) || isset($options['ci']);
+
+            $failures = [];
+            $warnings = [];
+            $passed = [];
+
+            $record = static function (bool $ok, string $label, string $message, array &$passed, array &$failures): void {
+                if ($ok) {
+                    $passed[] = [$label, $message];
+                    return;
+                }
+
+                $failures[] = [$label, $message];
+            };
+
+            $invokePrivate = static function (object $object, string $method, array $args = []) {
+                $ref = new \ReflectionMethod($object, $method);
+                $ref->setAccessible(true);
+                return $ref->invokeArgs($object, $args);
+            };
+
+            $base64UrlEncode = static function (string $value): string {
+                return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+            };
+
+            $makeJwt = static function (array $header, array $payload, string $secret, string $algo = 'sha256') use ($base64UrlEncode): string {
+                $encodedHeader = $base64UrlEncode((string) json_encode($header));
+                $encodedPayload = $base64UrlEncode((string) json_encode($payload));
+                $signature = hash_hmac($algo, $encodedHeader . '.' . $encodedPayload, $secret, true);
+                return $encodedHeader . '.' . $encodedPayload . '.' . $base64UrlEncode($signature);
+            };
+
+            $methods = array_values((array) ($authConfig['methods'] ?? []));
+            $record($methods === ['session', 'token'], 'Auth Config', 'default methods are least-privilege (session, token)', $passed, $failures);
+
+            $allowQueryParam = (($authConfig['api_key']['allow_query_param'] ?? false) === true);
+            if ($allowQueryParam) {
+                $warnings[] = ['Auth Config', 'api_key.allow_query_param is enabled (higher leakage risk)'];
+            } else {
+                $passed[] = ['Auth Config', 'api_key.allow_query_param is disabled'];
+            }
+
+            // JWT tamper checks: valid token passes, alg mismatch is rejected.
+            $jwtSecret = 'ci-jwt-test-secret';
+            $jwtConfig = array_replace_recursive($authConfig, [
+                'jwt' => [
+                    'enabled' => true,
+                    'algo' => 'HS256',
+                    'secret' => $jwtSecret,
+                    'leeway' => 0,
+                    'user_id_claim' => 'sub',
+                ],
+            ]);
+            $jwtAuth = new \Components\Auth($jwtConfig);
+            $validToken = $makeJwt(
+                ['alg' => 'HS256', 'typ' => 'JWT'],
+                ['sub' => 321, 'exp' => time() + 300],
+                $jwtSecret,
+                'sha256'
+            );
+            $tamperedAlgToken = $makeJwt(
+                ['alg' => 'HS512', 'typ' => 'JWT'],
+                ['sub' => 321, 'exp' => time() + 300],
+                $jwtSecret,
+                'sha256'
+            );
+
+            $decodedValid = $invokePrivate($jwtAuth, 'decodeJwt', [$validToken]);
+            $decodedTampered = $invokePrivate($jwtAuth, 'decodeJwt', [$tamperedAlgToken]);
+            $record(is_array($decodedValid) && ((int) ($decodedValid['sub'] ?? 0) === 321), 'JWT', 'valid JWT accepted', $passed, $failures);
+            $record($decodedTampered === null, 'JWT', 'JWT tamper via header alg mismatch rejected', $passed, $failures);
+
+            // Digest replay checks: same nonce/counter replay must fail.
+            $digestAuth = new \Components\Auth($authConfig);
+            $nonce = 'ci-nonce-' . bin2hex(random_bytes(8));
+            $digestFirst = (bool) $invokePrivate($digestAuth, 'isDigestNonceCounterValid', ['ci-user', $nonce, '00000001']);
+            $digestReplay = (bool) $invokePrivate($digestAuth, 'isDigestNonceCounterValid', ['ci-user', $nonce, '00000001']);
+            $digestIncrement = (bool) $invokePrivate($digestAuth, 'isDigestNonceCounterValid', ['ci-user', $nonce, '00000002']);
+            $record($digestFirst, 'Digest', 'initial nonce counter accepted', $passed, $failures);
+            $record($digestReplay === false, 'Digest', 'nonce counter replay rejected', $passed, $failures);
+            $record($digestIncrement, 'Digest', 'higher nonce counter accepted', $passed, $failures);
+
+            // API key query rejection checks.
+            $previousGet = $_GET;
+            $previousServer = $_SERVER;
+
+            try {
+                $_GET['api_key'] = 'query-key-should-not-pass';
+                unset($_SERVER['HTTP_X_API_KEY'], $_SERVER['HTTP_AUTHORIZATION']);
+
+                $apiKeyNoQueryAuth = new \Components\Auth(array_replace_recursive($authConfig, [
+                    'api_key' => [
+                        'enabled' => true,
+                        'header' => 'X-API-KEY',
+                        'query_param' => 'api_key',
+                        'allow_query_param' => false,
+                    ],
+                ]));
+                $extractedNoQuery = $invokePrivate($apiKeyNoQueryAuth, 'extractApiKey');
+                $record($extractedNoQuery === null, 'API Key', 'query-string API key rejected when allow_query_param=false', $passed, $failures);
+
+                $apiKeyAllowQueryAuth = new \Components\Auth(array_replace_recursive($authConfig, [
+                    'api_key' => [
+                        'enabled' => true,
+                        'header' => 'X-API-KEY',
+                        'query_param' => 'api_key',
+                        'allow_query_param' => true,
+                    ],
+                ]));
+                $extractedWithQuery = $invokePrivate($apiKeyAllowQueryAuth, 'extractApiKey');
+                $record($extractedWithQuery === 'query-key-should-not-pass', 'API Key', 'query-string API key accepted when explicitly enabled', $passed, $failures);
+            } finally {
+                $_GET = $previousGet;
+                $_SERVER = $previousServer;
+            }
+
+            $console->newLine();
+            $console->info('  MythPHP Auth Security Tests');
+            $console->line('  ' . str_repeat('─', 56));
+
+            if (!empty($passed)) {
+                $console->table(['PASS', 'Detail'], $passed);
+            }
+
+            if (!empty($warnings)) {
+                $console->newLine();
+                $console->warn('  Warnings');
+                $console->table(['WARN', 'Detail'], $warnings);
+            }
+
+            if (!empty($failures)) {
+                $console->newLine();
+                $console->error('  Failed tests');
+                $console->table(['FAIL', 'Detail'], $failures);
+            }
+
+            $failCount = count($failures);
+            $warnCount = count($warnings);
+
+            $console->newLine();
+            $console->line('  Summary: ' . count($passed) . ' passed, ' . $warnCount . ' warning(s), ' . $failCount . ' failed.');
+            $console->line('  Mode: ' . ($strictMode ? 'strict' : 'normal'));
+            $console->newLine();
+
+            if ($failCount > 0) {
+                return 1;
+            }
+
+            if ($strictMode && $warnCount > 0) {
+                return 2;
+            }
+
+            return 0;
+        }, 'Run auth hardening tests (JWT tamper, Digest replay, API key leakage) [--strict] [--ci]');
+
+        $console->command('perf:benchmark', function (array $args = [], array $options = []) use ($console) {
+            $iterations = max(10, (int) ($options['iterations'] ?? 200));
+            $routeCount = max(10, (int) ($options['routes'] ?? 200));
+            $dbIterations = max(5, (int) ($options['db-iterations'] ?? 100));
+
+            $console->newLine();
+            $console->info('  Running MythPHP performance benchmark...');
+            $console->line('  This benchmark focuses on routing, validation, and query workload baselines.');
+            $console->newLine();
+
+            $results = [];
+
+            // Routing benchmark
+            $router = new \Core\Routing\Router();
+            for ($i = 0; $i < $routeCount; $i++) {
+                $router->get('/perf/route-' . $i, function () {
+                    return ['code' => 200, 'ok' => true];
+                });
+            }
+
+            $request = new \Core\Http\Request([], [], [
+                'REQUEST_METHOD' => 'GET',
+                'REQUEST_URI' => '/perf/route-' . ($routeCount - 1),
+                'HTTP_ACCEPT' => 'application/json',
+                'HTTP_HOST' => 'localhost',
+            ]);
+
+            $start = microtime(true);
+            for ($i = 0; $i < $iterations; $i++) {
+                $router->dispatch($request);
+            }
+            $routingSeconds = max(0.000001, microtime(true) - $start);
+            $results[] = ['routing', $iterations, round(($routingSeconds / $iterations) * 1000, 4), round($iterations / $routingSeconds, 2)];
+
+            // Validation benchmark
+            $payload = [
+                'name' => 'Myth User',
+                'email' => 'myth@example.com',
+                'age' => '30',
+                'status' => '1',
+            ];
+            $rules = [
+                'name' => 'required|string|min_length:3|max_length:100',
+                'email' => 'required|email|max_length:120',
+                'age' => 'required|numeric|min:18|max:120',
+                'status' => 'required|integer|min:0|max:1',
+            ];
+
+            $start = microtime(true);
+            for ($i = 0; $i < $iterations; $i++) {
+                $validator = validator($payload, $rules);
+                $validator->passed();
+            }
+            $validationSeconds = max(0.000001, microtime(true) - $start);
+            $results[] = ['validation', $iterations, round(($validationSeconds / $iterations) * 1000, 4), round($iterations / $validationSeconds, 2)];
+
+            // Query benchmark (optional, skipped when DB unavailable)
+            $queryLabel = 'query (SELECT 1)';
+            try {
+                $pdo = db()->getPdo();
+                $start = microtime(true);
+                for ($i = 0; $i < $dbIterations; $i++) {
+                    $stmt = $pdo->query('SELECT 1');
+                    $stmt->fetchColumn();
+                    $stmt->closeCursor();
+                }
+                $querySeconds = max(0.000001, microtime(true) - $start);
+                $results[] = [$queryLabel, $dbIterations, round(($querySeconds / $dbIterations) * 1000, 4), round($dbIterations / $querySeconds, 2)];
+            } catch (\Throwable $e) {
+                $results[] = [$queryLabel, 0, 'skipped', 'DB unavailable'];
+            }
+
+            $console->table(['Workload', 'Iterations', 'Avg (ms/op)', 'Ops/sec'], $results);
+            $console->line('  Peak memory: ' . round(memory_get_peak_usage(true) / 1048576, 2) . ' MB');
+            $console->newLine();
+        }, 'Run baseline performance benchmark [--iterations=200] [--routes=200] [--db-iterations=100]');
+
+        $console->command('perf:report', function (array $args = [], array $options = []) use ($console) {
+            try {
+                $report = db()->getPerformanceReport();
+            } catch (\Throwable $e) {
+                $console->newLine();
+                $console->error('  Unable to build performance report: ' . $e->getMessage());
+                $console->newLine();
+                return;
+            }
+
+            if (isset($options['json'])) {
+                $console->line(json_encode($report, JSON_PRETTY_PRINT));
+                return;
+            }
+
+            $summary = $report['summary'] ?? [];
+            $console->newLine();
+            $console->info('  MythPHP Performance Report');
+            $console->line('  ' . str_repeat('─', 56));
+            $console->line('  Total queries      : ' . (int) ($summary['total_queries'] ?? 0));
+            $console->line('  Slow queries       : ' . (int) ($summary['slow_queries'] ?? 0));
+            $console->line('  Avg query time (s) : ' . round((float) ($summary['avg_time'] ?? 0), 6));
+            $console->line('  Max query time (s) : ' . round((float) ($summary['max_time'] ?? 0), 6));
+            $console->line('  Memory peak (MB)   : ' . round(((float) ($summary['memory_peak'] ?? 0)) / 1048576, 2));
+
+            $slow = array_slice((array) ($report['slow_queries'] ?? []), 0, 5);
+            if (!empty($slow)) {
+                $rows = [];
+                foreach ($slow as $item) {
+                    $rows[] = [
+                        $item['query_type'] ?? 'unknown',
+                        round((float) ($item['execution_time'] ?? 0), 6),
+                        (int) ($item['row_count'] ?? 0),
+                        mb_strimwidth((string) ($item['sql'] ?? ''), 0, 80, '...'),
+                    ];
+                }
+                $console->newLine();
+                $console->table(['Type', 'Time (s)', 'Rows', 'SQL'], $rows);
+            }
+
+            if (!empty($options['export'])) {
+                $path = (string) $options['export'];
+                $path = str_starts_with($path, ROOT_DIR) ? $path : ROOT_DIR . ltrim($path, '/\\');
+
+                $dir = dirname($path);
+                if (!is_dir($dir)) {
+                    mkdir($dir, 0775, true);
+                }
+
+                file_put_contents($path, json_encode($report, JSON_PRETTY_PRINT));
+                $console->newLine();
+                $console->success('  Report exported to: ' . $path);
+            }
+
+            $console->newLine();
+        }, 'Show performance monitor report [--json] [--export=logs/perf_report.json]');
     }
 
     // ─── Queue Commands ──────────────────────────────────────

@@ -246,6 +246,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     protected $enableProfiling = false;
 
+    /**
+     * @var bool Skip QueryCache for streaming operations to avoid cache growth.
+     */
+    protected $suppressQueryCache = false;
+
     # Implement ConnectionInterface logic
 
     /**
@@ -1204,10 +1209,15 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Filter and validate all values as integers
         $safeValues = array_map(function ($v) {
-            if (!is_numeric($v)) {
-                throw new \InvalidArgumentException('All values in whereIntegerInRaw must be numeric');
+            if (is_int($v)) {
+                return $v;
             }
-            return (int) $v;
+
+            if (is_string($v) && preg_match('/^-?\d+$/', $v) === 1) {
+                return (int) $v;
+            }
+
+            throw new \InvalidArgumentException('All values in whereIntegerInRaw must be integers');
         }, $values);
 
         $safeValues = array_unique($safeValues);
@@ -1233,10 +1243,15 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->validateColumn($column);
 
         $safeValues = array_map(function ($v) {
-            if (!is_numeric($v)) {
-                throw new \InvalidArgumentException('All values in whereIntegerNotInRaw must be numeric');
+            if (is_int($v)) {
+                return $v;
             }
-            return (int) $v;
+
+            if (is_string($v) && preg_match('/^-?\d+$/', $v) === 1) {
+                return (int) $v;
+            }
+
+            throw new \InvalidArgumentException('All values in whereIntegerNotInRaw must be integers');
         }, $values);
 
         $safeValues = array_unique($safeValues);
@@ -2490,7 +2505,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         // Check QueryCache if enabled and old cache system not used
-        if (empty($result) && QueryCache::isEnabled() && empty($this->cacheFile)) {
+        if (empty($result) && QueryCache::isEnabled() && empty($this->cacheFile) && !$this->suppressQueryCache) {
             $cacheKey = QueryCache::generateKey($this->_query, $this->_binds, $this->connectionName);
             $result = QueryCache::get($cacheKey);
             
@@ -2547,7 +2562,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $_temp_relations = $this->relations;
             $_temp_cacheKey = $this->cacheFile;
             $_temp_cacheExpired = $this->cacheFileExpired;
-            $_temp_queryCacheEnabled = QueryCache::isEnabled() && empty($this->cacheFile);
+            $_temp_queryCacheEnabled = QueryCache::isEnabled() && empty($this->cacheFile) && !$this->suppressQueryCache;
             $_temp_queryCacheKey = null;
             if ($_temp_queryCacheEnabled) {
                 $_temp_queryCacheKey = isset($cacheKey) ? $cacheKey : QueryCache::generateKey($this->_query, $this->_binds, $this->connectionName);
@@ -2604,7 +2619,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         // Check QueryCache if enabled and old cache system not used
-        if (empty($result) && QueryCache::isEnabled() && empty($this->cacheFile)) {
+        if (empty($result) && QueryCache::isEnabled() && empty($this->cacheFile) && !$this->suppressQueryCache) {
             $cacheKey = QueryCache::generateKey($this->_query, $this->_binds, $this->connectionName);
             $result = QueryCache::get($cacheKey);
             
@@ -2661,7 +2676,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $_temp_relations = $this->relations;
             $_temp_cacheKey = $this->cacheFile;
             $_temp_cacheExpired = $this->cacheFileExpired;
-            $_temp_queryCacheEnabled = QueryCache::isEnabled() && empty($this->cacheFile);
+            $_temp_queryCacheEnabled = QueryCache::isEnabled() && empty($this->cacheFile) && !$this->suppressQueryCache;
             $_temp_queryCacheKey = null;
             if ($_temp_queryCacheEnabled) {
                 $_temp_queryCacheKey = isset($cacheKey) ? $cacheKey : QueryCache::generateKey($this->_query, $this->_binds, $this->connectionName);
@@ -2769,151 +2784,167 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     public function chunk($size, callable $callback)
     {
-        $offset = 0;
+        $previousSuppressQueryCache = $this->suppressQueryCache;
+        $this->suppressQueryCache = true;
 
-        // Store the original query state
-        $originalState = $this->_saveQueryState();
+        try {
+            $offset = 0;
 
-        // Check if a limit was set before chunking
-        $maxLimit = null;
-        if (!empty($originalState['limit'])) {
-            // Extract the numeric limit value from the limit string
-            preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
-            $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
-        }
+            // Store the original query state
+            $originalState = $this->_saveQueryState();
 
-        $totalFetched = 0;
+            // Check if a limit was set before chunking
+            $maxLimit = null;
+            if (!empty($originalState['limit'])) {
+                // Extract the numeric limit value from the limit string
+                preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
+                $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
+            }
 
-        while (true) {
-            // Restore the original query state
-            $this->_restoreQueryState($originalState);
+            $totalFetched = 0;
 
-            $this->_setProfilerIdentifier('chunk_size' . $size . '_offset' . $offset);
+            while (true) {
+                // Restore the original query state
+                $this->_restoreQueryState($originalState);
 
-            // Calculate the chunk size based on max limit if set
-            $currentChunkSize = $size;
-            if ($maxLimit !== null) {
-                $remaining = $maxLimit - $totalFetched;
-                if ($remaining <= 0) {
-                    break; // Reached the limit
+                $this->_setProfilerIdentifier('chunk_size' . $size . '_offset' . $offset);
+
+                // Calculate the chunk size based on max limit if set
+                $currentChunkSize = $size;
+                if ($maxLimit !== null) {
+                    $remaining = $maxLimit - $totalFetched;
+                    if ($remaining <= 0) {
+                        break; // Reached the limit
+                    }
+                    $currentChunkSize = min($size, $remaining);
                 }
-                $currentChunkSize = min($size, $remaining);
-            }
 
-            // Apply limit and offset
-            $this->limit($currentChunkSize)->offset($offset);
+                // Apply limit and offset
+                $this->limit($currentChunkSize)->offset($offset);
 
-            // Get results 
-            $results = $this->get();
+                // Get results
+                $results = $this->get();
 
-            if (empty($results)) {
-                break;
-            }
+                if (empty($results)) {
+                    break;
+                }
 
-            $totalFetched += count($results);
+                $totalFetched += count($results);
 
-            if (call_user_func($callback, $results) === false) {
-                break;
-            }
+                if (call_user_func($callback, $results) === false) {
+                    break;
+                }
 
-            // If we've fetched less than the chunk size or reached max limit, we're done
-            if (count($results) < $currentChunkSize || ($maxLimit !== null && $totalFetched >= $maxLimit)) {
+                // If we've fetched less than the chunk size or reached max limit, we're done
+                if (count($results) < $currentChunkSize || ($maxLimit !== null && $totalFetched >= $maxLimit)) {
+                    unset($results);
+                    break;
+                }
+
+                $offset += $currentChunkSize;
+
+                // Clear the results to free memory
                 unset($results);
-                break;
+
+                // Suggest garbage collection on large chunks
+                if ($size >= 1000 && function_exists('gc_collect_cycles')) {
+                    gc_collect_cycles();
+                }
             }
 
-            $offset += $currentChunkSize;
+            // Unset the variables to free memory
+            unset($originalState, $maxLimit, $totalFetched, $currentChunkSize, $offset);
 
-            // Clear the results to free memory
-            unset($results);
-            
-            // Suggest garbage collection on large chunks
-            if ($size >= 1000 && function_exists('gc_collect_cycles')) {
-                gc_collect_cycles();
-            }
+            // Reset internal properties for next query
+            $this->reset();
+
+            return $this;
+        } finally {
+            $this->suppressQueryCache = $previousSuppressQueryCache;
         }
-
-        // Unset the variables to free memory
-        unset($originalState, $maxLimit, $totalFetched, $currentChunkSize, $offset);
-
-        // Reset internal properties for next query
-        $this->reset();
-
-        return $this;
     }
 
     public function cursor($chunkSize = 1000)
     {
-        $offset = 0;
+        $previousSuppressQueryCache = $this->suppressQueryCache;
+        $this->suppressQueryCache = true;
 
-        // Store the original query state
-        $originalState = $this->_saveQueryState();
+        try {
+            $offset = 0;
 
-        // Check if a limit was set before chunking
-        $maxLimit = null;
-        if (!empty($originalState['limit'])) {
-            // Extract the numeric limit value from the limit string
-            preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
-            $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
-        }
+            // Store the original query state
+            $originalState = $this->_saveQueryState();
 
-        $totalFetched = 0;
+            // Check if a limit was set before chunking
+            $maxLimit = null;
+            if (!empty($originalState['limit'])) {
+                // Extract the numeric limit value from the limit string
+                preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
+                $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
+            }
 
-        while (true) {
-            // Restore the original query state
-            $this->_restoreQueryState($originalState);
+            $totalFetched = 0;
 
-            $this->_setProfilerIdentifier('cursor_size' . $chunkSize . '_offset' . $offset);
+            while (true) {
+                // Restore the original query state
+                $this->_restoreQueryState($originalState);
 
-            // Calculate the chunk size based on max limit if set
-            $currentChunkSize = $chunkSize;
-            if ($maxLimit !== null) {
-                $remaining = $maxLimit - $totalFetched;
-                if ($remaining <= 0) {
-                    break; // Reached the limit
+                $this->_setProfilerIdentifier('cursor_size' . $chunkSize . '_offset' . $offset);
+
+                // Calculate the chunk size based on max limit if set
+                $currentChunkSize = $chunkSize;
+                if ($maxLimit !== null) {
+                    $remaining = $maxLimit - $totalFetched;
+                    if ($remaining <= 0) {
+                        break; // Reached the limit
+                    }
+                    $currentChunkSize = min($chunkSize, $remaining);
                 }
-                $currentChunkSize = min($chunkSize, $remaining);
-            }
 
-            // Apply limit and offset
-            $this->limit($currentChunkSize)->offset($offset);
+                // Apply limit and offset
+                $this->limit($currentChunkSize)->offset($offset);
 
-            // Get results 
-            $results = $this->get();
+                // Get results
+                $results = $this->get();
 
-            if (empty($results)) {
-                break;
-            }
-
-            foreach ($results as $row) {
-                yield $row;
-                $totalFetched++;
-                
-                // Stop yielding if we've reached the max limit
-                if ($maxLimit !== null && $totalFetched >= $maxLimit) {
-                    break 2; // Break out of both foreach and while
+                if (empty($results)) {
+                    break;
                 }
+
+                foreach ($results as $row) {
+                    yield $row;
+                    $totalFetched++;
+
+                    // Stop yielding if we've reached the max limit
+                    if ($maxLimit !== null && $totalFetched >= $maxLimit) {
+                        break 2; // Break out of both foreach and while
+                    }
+                }
+
+                // If we've fetched less than the chunk size, we're done
+                if (count($results) < $currentChunkSize) {
+                    break;
+                }
+
+                $offset += $currentChunkSize;
+
+                // Clear the results to free memory
+                unset($results);
+                if (function_exists('gc_collect_cycles')) {
+                    gc_collect_cycles();
+                }
+
+                usleep(1000);
             }
 
-            // If we've fetched less than the chunk size, we're done
-            if (count($results) < $currentChunkSize) {
-                break;
-            }
+            // Unset the variables to free memory
+            unset($originalState);
 
-            $offset += $currentChunkSize;
-
-            // Clear the results to free memory
-            unset($results);
-            if (function_exists('gc_collect_cycles')) gc_collect_cycles();
-
-            usleep(1000);
+            // Reset internal properties for next query
+            $this->reset();
+        } finally {
+            $this->suppressQueryCache = $previousSuppressQueryCache;
         }
-
-        // Unset the variables to free memory
-        unset($originalState);
-
-        // Reset internal properties for next query
-        $this->reset();
     }
 
     public function lazy($chunkSize = 1000)
@@ -2934,30 +2965,39 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             // Data source function
             $source = function ($size, $offset) use ($originalState, $maxLimit, &$totalFetched) {
-                // Restore the original query state
-                $this->_restoreQueryState($originalState);
+                $previousSuppressQueryCache = $this->suppressQueryCache;
+                $this->suppressQueryCache = true;
 
-                // Calculate the chunk size based on max limit if set
-                $currentChunkSize = $size;
-                if ($maxLimit !== null) {
-                    $remaining = $maxLimit - $totalFetched;
-                    if ($remaining <= 0) {
-                        return []; // No more data to fetch
+                try {
+                    // Restore the original query state
+                    $this->_restoreQueryState($originalState);
+
+                    // Calculate the chunk size based on max limit if set
+                    $currentChunkSize = $size;
+                    if ($maxLimit !== null) {
+                        $remaining = $maxLimit - $totalFetched;
+                        if ($remaining <= 0) {
+                            return []; // No more data to fetch
+                        }
+                        $currentChunkSize = min($size, $remaining);
                     }
-                    $currentChunkSize = min($size, $remaining);
+
+                    // Apply limit and offset
+                    $this->limit($currentChunkSize)->offset($offset);
+
+                    // Execute the query
+                    $results = $this->get();
+
+                    if (empty($results)) {
+                        return [];
+                    }
+
+                    $totalFetched += count($results);
+
+                    return is_array($results) ? $results : [$results];
+                } finally {
+                    $this->suppressQueryCache = $previousSuppressQueryCache;
                 }
-
-                // Apply limit and offset
-                $this->limit($currentChunkSize)->offset($offset);
-
-                // Execute the query
-                $results = $this->get();
-
-                if (empty($results)) return [];
-
-                $totalFetched += count($results);
-
-                return is_array($results) ? $results : [$results];
             };
 
             // Create LazyCollection
@@ -4294,29 +4334,41 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     {
         // Optimize primary keys - remove duplicates and sort for better performance
         $primaryKeys = EagerLoadOptimizer::optimizeInClause($primaryKeys);
+        $preferIntegerRawIn = $this->allChunkValuesAreIntegers($primaryKeys);
         
         // Get connection from pool for better reuse
         $connectionObj = $this->getInstance()->connect($connectionName);
 
-        // Use adaptive chunk sizing for optimal performance
-        $chunks = EagerLoadOptimizer::createOptimalChunks($primaryKeys, $table);
+        // Build row index once so chunk attachment stays linear even for large datasets.
+        $rowIndexByPk = [];
+        foreach ($data as $rowIndex => $row) {
+            $rowKey = $row[$pk_id] ?? null;
+            if ($rowKey === null) {
+                continue;
+            }
+            $rowIndexByPk[$rowKey][] = $rowIndex;
+            if (!isset($data[$rowIndex][$alias])) {
+                $data[$rowIndex][$alias] = $method === 'fetch' ? null : [];
+            }
+        }
 
-        // Initialize an empty array to store all related records
-        $allRelatedRecords = [];
-
-        foreach ($chunks as $key => $chunk) {
+        // Use adaptive chunk sizing for optimal performance (lazy chunks to reduce memory pressure).
+        $chunkNumber = 0;
+        foreach (EagerLoadOptimizer::yieldOptimalChunks($primaryKeys, $table) as $chunk) {
+            $chunkNumber++;
 
             // Set profiler
-            $this->_setProfilerIdentifier('with_' . $alias . '_' . ($key + 1));
+            $this->_setProfilerIdentifier('with_' . $alias . '_' . $chunkNumber);
 
             // Start performance monitoring
             $queryId = uniqid('eager_', true);
-            PerformanceMonitor::startQuery($queryId, "Eager load: {$table}.{$fk_id}", $chunk);
+            // Avoid storing large chunk key arrays in profiler binds to keep memory stable.
+            PerformanceMonitor::startQuery($queryId, "Eager load: {$table}.{$fk_id} (chunk=" . count($chunk) . ")", []);
 
             $startTime = microtime(true);
 
             // Process chunk directly without parallelism
-            $chunkRelatedRecords = $this->_processEagerByChunk($chunk, $callback, $connectionObj, $table, $fk_id);
+            $chunkRelatedRecords = $this->_processEagerByChunk($chunk, $callback, $connectionObj, $table, $fk_id, $preferIntegerRawIn);
 
             // End performance monitoring
             $executionTime = microtime(true) - $startTime;
@@ -4325,12 +4377,24 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             // Record performance for adaptive optimization
             EagerLoadOptimizer::recordPerformance($table, count($chunk), $executionTime);
 
-            // Merge chunk results into the allRelatedRecords array
-            $allRelatedRecords = array_merge($allRelatedRecords, $chunkRelatedRecords);
-        }
+            // Attach chunk result immediately so large relations do not accumulate in memory.
+            foreach ($chunkRelatedRecords as $relatedRow) {
+                $fkValue = $relatedRow[$fk_id] ?? null;
+                if ($fkValue === null || !isset($rowIndexByPk[$fkValue])) {
+                    continue;
+                }
 
-        // Attach related data to the main data
-        $this->attachEagerLoadedData($method, $data, $allRelatedRecords, $alias, $fk_id, $pk_id);
+                foreach ($rowIndexByPk[$fkValue] as $rowIndex) {
+                    if ($method === 'fetch') {
+                        if ($data[$rowIndex][$alias] === null) {
+                            $data[$rowIndex][$alias] = $relatedRow;
+                        }
+                        continue;
+                    }
+                    $data[$rowIndex][$alias][] = $relatedRow;
+                }
+            }
+        }
     }
 
     /**
@@ -4343,9 +4407,17 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param string $fk_id The foreign key column in the related table.
      * @return array The related records fetched for the chunk.
      */
-    protected function _processEagerByChunk($chunk, ?\Closure $callback, $connectionObj, $table, $fk_id)
+    protected function _processEagerByChunk($chunk, ?\Closure $callback, $connectionObj, $table, $fk_id, ?bool $preferIntegerRawIn = null)
     {
-        $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $chunk);
+        $relatedRecordsQuery = $connectionObj->table($table);
+
+        // Prefer integer raw IN for large numeric key sets to reduce PDO binding overhead.
+        $useIntegerRawIn = $preferIntegerRawIn ?? $this->allChunkValuesAreIntegers($chunk);
+        if ($useIntegerRawIn) {
+            $relatedRecordsQuery->whereIntegerInRaw($fk_id, $chunk);
+        } else {
+            $relatedRecordsQuery->whereIn($fk_id, $chunk);
+        }
 
         // Apply callback if provided for customization
         if (!empty($callback) && $callback instanceof \Closure) {
@@ -4355,6 +4427,30 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $data = $relatedRecordsQuery->get();
 
         return $this->_safeOutputSanitize($data);
+    }
+
+    /**
+     * Check whether all chunk values are integers (or integer strings).
+     */
+    protected function allChunkValuesAreIntegers(array $chunk): bool
+    {
+        if (empty($chunk)) {
+            return false;
+        }
+
+        foreach ($chunk as $value) {
+            if (is_int($value)) {
+                continue;
+            }
+
+            if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
     }
 
     /**

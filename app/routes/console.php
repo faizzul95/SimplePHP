@@ -35,7 +35,7 @@ $schedule = $console->getSchedule();
 $maintenanceSecret = getenv('MYTH_MAINTENANCE_SECRET') ?: (config('framework.maintenance.secret') ?? null);
 
 // Similar to old Laravel Kernel: production-only backup scheduler
-if (defined('APP_ENV') && APP_ENV === 'production') {
+if (defined('ENVIRONMENT') && ENVIRONMENT === 'production') {
     // Optional task: backup monitor (only if command exists)
     if ($console->hasCommand('backup:monitor')) {
         $schedule->command('backup:monitor')

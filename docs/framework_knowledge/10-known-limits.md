@@ -8,15 +8,10 @@ This section lists boundaries observed from current implementation.
 - `Core\Http\Request` method is taken from `REQUEST_METHOD` only.
 - No framework-level `_method` override handling was found.
 
-## Router `any()` Coverage
-
-- `Router::any()` maps only: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`.
-- It does not include `OPTIONS` registration.
-
 ## API Component Method Coverage
 
-- `Components\Api` registers GET/POST/PUT/DELETE routes.
-- No PATCH registration helper in `Components\Api`.
+- `Components\Api` route helpers include GET/POST/PUT/PATCH/DELETE/OPTIONS.
+- No HEAD registration helper in `Components\Api`.
 
 ## View Directive Extensibility
 
@@ -45,7 +40,7 @@ The hidden field is rendered, but request method parsing still depends on server
 
 ### Router any()
 
-`any()` does not register `OPTIONS`, so CORS preflight should be handled by middleware/component behavior, not assumed from route helper.
+`any()` registers `OPTIONS` as well, but API preflight handling should still be validated at CORS layer.
 
 ## How To Work Safely Around Limits
 

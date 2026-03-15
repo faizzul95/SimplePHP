@@ -28,7 +28,7 @@ class CacheManager
     public function __construct(array $config)
     {
         $this->config = $config;
-        $this->prefix = $config['prefix'] ?? 'simplephp_';
+        $this->prefix = $config['prefix'] ?? 'MythPHP_';
     }
 
     // ─── Store Resolution ────────────────────────────────────

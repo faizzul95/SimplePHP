@@ -68,6 +68,11 @@ class Router
         return $this->addRoute('DELETE', $uri, $action);
     }
 
+    public function options(string $uri, $action): RouteDefinition
+    {
+        return $this->addRoute('OPTIONS', $uri, $action);
+    }
+
     public function resource(string $name, string $controller, array $options = []): array
     {
         $only = $options['only'] ?? ['index', 'store', 'show', 'update', 'destroy'];
@@ -129,7 +134,7 @@ class Router
      */
     public function any(string $uri, $action): array
     {
-        return $this->match(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], $uri, $action);
+        return $this->match(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], $uri, $action);
     }
 
     /**
@@ -137,11 +142,11 @@ class Router
      */
     public function redirect(string $from, string $to, int $status = 302): RouteDefinition
     {
-        return $this->match(['GET', 'HEAD'], $from, function () use ($to, $status) {
+        return $this->get($from, function () use ($to, $status) {
             http_response_code($status);
             header('Location: ' . $to);
             exit;
-        })[0];
+        });
     }
 
     /**
@@ -188,6 +193,14 @@ class Router
             // Check if the route exists for other methods (405 Method Not Allowed)
             $allowedMethods = $this->getAllowedMethods($request->path());
             if (!empty($allowedMethods)) {
+                if (strtoupper($request->method()) === 'OPTIONS') {
+                    $allow = array_values(array_unique(array_merge($allowedMethods, ['OPTIONS'])));
+                    sort($allow);
+                    http_response_code(204);
+                    header('Allow: ' . implode(', ', $allow));
+                    return null;
+                }
+
                 if ($request->expectsJson()) {
                     Response::json([
                         'code' => 405,
@@ -359,6 +372,9 @@ class Router
     /** @var bool Whether the route index has been built */
     private bool $routeIndexBuilt = false;
 
+    /** @var array Registered HTTP methods found during index build */
+    private array $registeredMethods = [];
+
     /** @var array Cache for resolved middleware instances (keyed by serialized middleware list) */
     private array $middlewareCache = [];
 
@@ -369,6 +385,7 @@ class Router
         }
 
         foreach ($this->routes as $index => $route) {
+            $this->registeredMethods[$route->method] = true;
             $hasParams = str_contains($route->uri, '{');
 
             // Skip fallback routes from index
@@ -637,7 +654,7 @@ class Router
         $this->buildRouteIndex();
 
         // Check static routes (O(1) per method)
-        foreach (['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as $method) {
+        foreach (array_keys($this->registeredMethods) as $method) {
             $key = $method . ':' . $normalizedPath;
             if (isset($this->staticRoutes[$key])) {
                 $methods[] = $method;
@@ -682,17 +699,51 @@ class Router
         }
 
         $uri = self::$namedRoutes[$name];
+        $remaining = $params;
 
-        if (!empty($params)) {
-            foreach ($params as $key => $value) {
-                $uri = str_replace('{' . $key . '}', (string) $value, $uri);
+        $segments = explode('/', trim($uri, '/'));
+        if (empty($segments) || $segments === ['']) {
+            return '/';
+        }
+
+        $resolvedSegments = [];
+
+        foreach ($segments as $segment) {
+            if (preg_match('/^\{([a-zA-Z_][a-zA-Z0-9_]*)\?\}$/', $segment, $matches) === 1) {
+                $paramName = $matches[1];
+                if (array_key_exists($paramName, $remaining)) {
+                    $resolvedSegments[] = rawurlencode((string) $remaining[$paramName]);
+                    unset($remaining[$paramName]);
+                }
+                continue;
+            }
+
+            if (preg_match('/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/', $segment, $matches) === 1) {
+                $paramName = $matches[1];
+                if (!array_key_exists($paramName, $remaining)) {
+                    // frontend code can replace it later (e.g. .replace('{id}', value)).
+                    $resolvedSegments[] = '{' . $paramName . '}';
+                    continue;
+                }
+
+                $resolvedSegments[] = rawurlencode((string) $remaining[$paramName]);
+                unset($remaining[$paramName]);
+                continue;
+            }
+
+            $resolvedSegments[] = $segment;
+        }
+
+        $path = '/' . implode('/', $resolvedSegments);
+
+        if (!empty($remaining)) {
+            $query = http_build_query($remaining);
+            if ($query !== '') {
+                $path .= '?' . $query;
             }
         }
 
-        // Remove any unmatched optional parameters like {param?}
-        $uri = preg_replace('/\/{[^}]+\?}/', '', $uri);
-
-        return $uri;
+        return $path;
     }
 
     /**

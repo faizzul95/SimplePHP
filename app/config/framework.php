@@ -32,10 +32,12 @@ $config['framework'] = [
         'aggressive-throttle' => \App\Http\Middleware\ThrottleRequests::class,
         'xss' => \App\Http\Middleware\XssProtection::class,
         'api.log' => \App\Http\Middleware\ApiRequestLogger::class,
+        'cache.headers' => \App\Http\Middleware\SetResponseCache::class,
+        'request.safety' => \App\Http\Middleware\ValidateRequestSafety::class,
     ],
     'middleware_groups' => [
-        'web' => ['headers', 'throttle:web'],
-        'api' => ['headers', 'throttle:api', 'xss', 'api.log'],
+        'web' => ['headers', 'request.safety', 'throttle:web'],
+        'api' => ['headers', 'request.safety', 'throttle:api', 'xss', 'api.log'],
     ],
     'rate_limiters' => [
         'web' => [
