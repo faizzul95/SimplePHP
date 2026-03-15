@@ -17,8 +17,8 @@ $config['framework'] = [
         'web' => 'login',
     ],
     'scope_macro' => [
-        'base_path' => 'app/database/',
-        'folders' => ['ScopeMacroQuery'],
+        'base_path' => 'app/http/controllers/',
+        'folders' => ['ScopeControllers'],
         'files' => [],
     ],
     'middleware_aliases' => [
