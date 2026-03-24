@@ -9,10 +9,17 @@ if (!function_exists('pageTitle')) {
 }
 
 if (!function_exists('pageSubTitle')) {
-    function titleSubPage()
+    function pageSubTitle()
     {
         global $titleSubPage;
         return $titleSubPage;
+    }
+}
+
+if (!function_exists('titleSubPage')) {
+    function titleSubPage()
+    {
+        return pageSubTitle();
     }
 }
 
@@ -20,7 +27,7 @@ if (!function_exists('showPageTitle')) {
     function showPageTitle()
     {
         $mainPage = pageTitle();
-        $subPage = titleSubPage();
+        $subPage = pageSubTitle();
 
         $showSubpage = !empty($subPage) ? '/ ' . $subPage : null;
 
@@ -110,7 +117,7 @@ if (!function_exists('showBreadcrumb')) {
     function showBreadcrumb()
     {
         $mainPage = pageTitle();
-        $subPage = titleSubPage();
+        $subPage = pageSubTitle();
 
         $showSubpage = !empty($subPage) ? " <div class='col-sm-auto'>
                             <ul class='breadcrumb'>

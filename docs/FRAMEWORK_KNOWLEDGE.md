@@ -15,3 +15,4 @@ Use the verified knowledge base as the canonical source.
 
 - Verified docs include only capabilities confirmed from current code.
 - If a feature is not listed in verified docs, treat it as unsupported until validated.
+- Current verified additions include direct-path Blade view resolution, the tabbed APP_DEBUG exception dashboard, env-driven CSRF core settings, config-driven auth/middleware defaults, and configurable auth/API hardening defaults.

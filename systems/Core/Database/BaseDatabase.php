@@ -526,6 +526,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     {
         $table = trim($table);
         $this->validateTableName($table, 'Table name');
+
+        // Start a fresh builder scope for each new table selection.
+        // Connection-level state is preserved by reset(), but stale WHERE clauses,
+        // binds, joins, and cached query strings must not leak across queries.
+        $this->reset();
         $this->table = $table;
         return $this;
     }

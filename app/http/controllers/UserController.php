@@ -92,15 +92,16 @@ class UserController extends Controller
                 } else {
                     $updateAct = permission('user-update') ? "<span style='display: inline-block; vertical-align: middle;'><i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i> </span>" : '';
                     $deleteAct = permission('user-delete') ? "<a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'><i class='bx bx-trash me-1'></i> Delete </a>" : '';
+                    $resetAct = permission('user-update') ? "<a href='javascript:void(0);' onclick='resetPassword(\"{$id}\")' class='dropdown-item'>\n      
+                                                                                                <i class='bx bx-key me-1'></i> Reset Password                                   
+                                                                                            </a>" : '';
                     $delResetAction = in_array($row['id'], $listSuperadmin) ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
                                                                                         <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'> 
                                                                                             <i class='bx bx-dots-vertical-rounded'></i>                                
                                                                                         </button>                               
                                                                                         <div class='dropdown-menu'>                                   
                                                                                             {$deleteAct}                                    
-                                                                                            <a href='javascript:void(0);' onclick='resetPassword(\"{$id}\")' class='dropdown-item'>\n      
-                                                                                                <i class='bx bx-key me-1'></i> Reset Password                                   
-                                                                                            </a>
+                                                                                            {$resetAct}
                                                                                         </div>                           
                                                                                     </div>";
 

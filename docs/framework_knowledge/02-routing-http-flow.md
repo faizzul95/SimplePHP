@@ -92,6 +92,12 @@ $router->get('/login', [AuthController::class, 'showLogin'])->name('login');
 // Later: route('login')
 ```
 
+## Redirect Helper Behavior
+
+- `Router::redirect()` now normalizes targets before sending the response.
+- Relative redirect targets are resolved through the app URL helper, so subfolder deployments keep redirects inside the app base path.
+- Absolute redirect targets are only preserved when they point to the current host; malformed or external targets are reduced to a safe fallback.
+
 ## Error & Not Found Flow
 
 - `OPTIONS` preflight requests auto-return `204` + `Allow` when URI exists for other methods.
@@ -99,6 +105,7 @@ $router->get('/login', [AuthController::class, 'showLogin'])->name('login');
 - 404 handling distinguishes JSON vs browser requests.
 - Browser no-match redirect uses `framework.not_found_redirect.web` (default `login`).
 - HTML error pages are read from `framework.error_views`.
+- Error views may be configured either by dot notation or direct file path; direct paths are resolved before dot-style lookup.
 
 Config example (`app/config/framework.php`):
 
@@ -117,6 +124,18 @@ Config example (`app/config/framework.php`):
 - Groups come from `framework.middleware_groups` and are expanded recursively.
 - Parameters are passed to middleware through `setParameters(...)`.
 - Middleware instances are cached by middleware signature for efficiency.
+- Groups are not applied automatically based on route file. A route inside `app/routes/web.php` only gets the `web` group if you explicitly attach `web` to the route or its parent group.
+
+Practical implication:
+
+```php
+$router->group(['middleware' => ['web']], function ($router) {
+	$router->post('/auth/login', [AuthController::class, 'authorize']);
+	$router->post('/modal/content', fn () => null);
+});
+```
+
+Without the explicit `web` middleware, browser POST routes will miss the configured CSRF middleware.
 
 ## Request Format Detection
 

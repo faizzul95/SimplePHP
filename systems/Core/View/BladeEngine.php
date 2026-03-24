@@ -179,7 +179,22 @@ class BladeEngine
             return self::$resolveCache[$view];
         }
 
-        $relative = str_replace('.', DIRECTORY_SEPARATOR, trim($view));
+        $normalizedView = trim($view);
+        $rootPath = rtrim(ROOT_DIR, '/\\');
+
+        $directCandidates = [
+            $normalizedView,
+            $rootPath . DIRECTORY_SEPARATOR . ltrim($normalizedView, '/\\'),
+        ];
+
+        foreach ($directCandidates as $file) {
+            if (is_string($file) && is_file($file)) {
+                self::$resolveCache[$view] = $file;
+                return $file;
+            }
+        }
+
+        $relative = str_replace('.', DIRECTORY_SEPARATOR, $normalizedView);
 
         $candidates = [
             $this->viewPath . DIRECTORY_SEPARATOR . $relative . '.blade.php',

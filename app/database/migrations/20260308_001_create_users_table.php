@@ -24,6 +24,8 @@ return new class extends Migration
             $table->string('user_contact_no', 15)->nullable();
             $table->string('username')->nullable();
             $table->string('password')->nullable();
+            $table->timestamp('password_changed_at')->nullable();
+            $table->boolean('force_password_change')->nullable()->default(0);
             $table->tinyInteger('user_status')->nullable()->default(4)->comment('0-Inactive, 1-Active, 2-Suspended, 3-Deleted, 4-Unverified');
             $table->rememberToken();
             $table->timestamp('email_verified_at')->nullable();

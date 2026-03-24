@@ -19,6 +19,7 @@ class PermissionController extends Controller
         $db = db();
         $result = $db->table('system_abilities')->select('id, abilities_name, abilities_slug, abilities_desc')
             ->whereNull('deleted_at')
+            ->orderBy('abilities_name', 'ASC')
             ->withCount('count', 'system_permission', 'abilities_id', 'id')
             ->setPaginateFilterColumn(['abilities_name', 'abilities_slug'])
             ->safeOutput()
@@ -26,21 +27,28 @@ class PermissionController extends Controller
 
         $result['data'] = array_map(function ($row) {
             $id = encodeID($row['id']);
-            $delAction = $row['count'] > 0 ? null : "onclick='deletePermRecord(\"{$id}\")'";
+            $canUpdate = permission('rbac-abilities-update');
+            $canDelete = permission('rbac-abilities-delete') && (int) $row['count'] < 1;
+            $delAction = $canDelete ? "onclick='deletePermRecord(\"{$id}\")'" : null;
+            $delText = empty($delAction) ? '(disabled)' : '';
+            $editAction = $canUpdate ? "onclick='editPermRecord(\"{$id}\")'" : '';
+            $editStyle = $canUpdate ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
+            $deleteStyle = $canDelete ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
+            $action = "
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-edit-alt' style='{$editStyle}' {$editAction} title='Edit'></i>
+                </span>
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-trash' style='{$deleteStyle}' {$delAction} title='Delete {$delText}'></i>
+                </span>
+            ";
 
             return [
                 'name' => $row['abilities_name'],
                 'slug' => $row['abilities_slug'],
                 'count' => number_format($row['count']),
                 'desc' => $row['abilities_desc'],
-                'action' => "
-                <span style='display: inline-block; vertical-align: middle;'>
-                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editPermRecord(\"{$id}\")' title='Edit'></i>
-                </span>
-                <span style='display: inline-block; vertical-align: middle;'>
-                    <i class='bx bx-trash' style='cursor: pointer;' {$delAction} title='Delete'></i>
-                </span>
-            "
+                'action' => $action,
             ];
         }, $result['data']);
 
@@ -54,6 +62,7 @@ class PermissionController extends Controller
         $db = db();
         $result = $db->table('system_abilities')->select('id, abilities_name, abilities_slug, abilities_desc')
             ->whereNull('deleted_at')
+            ->orderBy('abilities_name', 'ASC')
             ->safeOutput()
             ->get();
 
@@ -66,7 +75,9 @@ class PermissionController extends Controller
             $currentAbilitiesID[] = $perm['abilities_id'];
         }
 
-        $result = array_map(function ($row) use ($result, $roleID, $currentAbilitiesID) {
+        $canModifyAssignments = permission('rbac-roles-update');
+
+        $result = array_map(function ($row) use ($result, $roleID, $currentAbilitiesID, $canModifyAssignments) {
             $abilitiesID = $row['id'];
             $allAccess = $row['abilities_slug'] === '*' ? 1 : 0;
 
@@ -82,14 +93,18 @@ class PermissionController extends Controller
 
             if ($allAccess) {
                 $checked = $acquiredAccess ? 'checked' : '';
-                $disabledCheckbox = "onchange='grantPermission({$roleID}, {$abilitiesID}, {$allAccess})'";
+                $disabledCheckbox = $canModifyAssignments
+                    ? "onchange='grantPermission({$roleID}, {$abilitiesID}, {$allAccess})'"
+                    : 'disabled';
             } else {
                 if ($hasAllAccess) {
                     $checked = 'checked';
                     $disabledCheckbox = "onchange='grantPermission({$roleID}, {$abilitiesID}, {$allAccess})' disabled";
                 } else {
                     $checked = $acquiredAccess ? 'checked' : '';
-                    $disabledCheckbox = "onchange='grantPermission({$roleID}, {$abilitiesID}, {$allAccess})'";
+                    $disabledCheckbox = $canModifyAssignments
+                        ? "onchange='grantPermission({$roleID}, {$abilitiesID}, {$allAccess})'"
+                        : 'disabled';
                 }
             }
 
@@ -127,11 +142,20 @@ class PermissionController extends Controller
     public function saveAbilities(SaveAbilitiesRequest $request): void
     {
         $data = $request->validated();
+        $abilityId = $request->input('id');
         unset($data['id']);
+
+        if (empty($abilityId) && !permission('rbac-abilities-create')) {
+            jsonResponse(['code' => 403, 'message' => 'You do not have permission to create abilities.']);
+        }
+
+        if (!empty($abilityId) && !permission('rbac-abilities-update')) {
+            jsonResponse(['code' => 403, 'message' => 'You do not have permission to update abilities.']);
+        }
 
         $result = db()->table('system_abilities')->insertOrUpdate(
             [
-                'id' => $request->input('id')
+                'id' => $abilityId
             ],
             $data
         );

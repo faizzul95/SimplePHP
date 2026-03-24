@@ -95,6 +95,18 @@ class TaskRunner
             throw new \InvalidArgumentException("Parameters must be an array or null.");
         }
 
+        if (!is_string($command) || trim($command) === '') {
+            throw new \InvalidArgumentException("Command must be a non-empty string.");
+        }
+
+        if (is_array($params)) {
+            foreach ($params as $param) {
+                if (!is_scalar($param) && $param !== null) {
+                    throw new \InvalidArgumentException("Task parameters must be scalar values or null.");
+                }
+            }
+        }
+
         $this->tasks[] = compact('command', 'params');
     }
 
@@ -105,6 +117,11 @@ class TaskRunner
      */
     public function setMaxConcurrentTasks($maxConcurrentTasks)
     {
+        $maxConcurrentTasks = (int) $maxConcurrentTasks;
+        if ($maxConcurrentTasks < 1) {
+            throw new \InvalidArgumentException("Maximum concurrent tasks must be at least 1.");
+        }
+
         $this->maxConcurrentTasks = $maxConcurrentTasks;
     }
 
@@ -260,12 +277,26 @@ class TaskRunner
      */
     private function executeTask($task)
     {
-        $filePath = $this->jobsDir . $task['command'];
-        $params = !empty($task['params']) ? implode(' ', $task['params']) : NULL;
+        $taskCommand = (string) ($task['command'] ?? '');
+        $filePath = $this->resolveTaskFilePath($taskCommand);
+        if ($filePath === null) {
+            $this->print("TaskRunner - Rejected unsafe task path '{$taskCommand}'.");
+            return null;
+        }
+
+        $params = null;
+        if (!empty($task['params']) && is_array($task['params'])) {
+            $params = implode(' ', array_map(static function ($param) {
+                return escapeshellarg((string) $param);
+            }, $task['params']));
+        }
+
         $logFolderPath = $this->logPath . 'debug_log' . DIRECTORY_SEPARATOR;
 
         if (!is_dir($logFolderPath)) {
-            mkdir($logFolderPath, 0755, true);
+            if (!mkdir($logFolderPath, 0755, true) && !is_dir($logFolderPath)) {
+                throw new \RuntimeException("Unable to create task log directory: {$logFolderPath}");
+            }
         }
 
         $descriptors = [
@@ -274,7 +305,10 @@ class TaskRunner
             ['file', $logFolderPath . 'STDERR.log', 'a'],
         ];
 
-        $command = "{$this->phpCommand} $filePath $params";
+        $command = escapeshellarg((string) $this->phpCommand) . ' ' . escapeshellarg($filePath);
+        if (is_string($params) && $params !== '') {
+            $command .= ' ' . $params;
+        }
 
         try {
             // Open a process for the task
@@ -381,6 +415,36 @@ class TaskRunner
         }
 
         return $status['pid'];
+    }
+
+    private function resolveTaskFilePath(string $command): ?string
+    {
+        $command = trim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $command));
+        if ($command === '' || str_contains($command, '..')) {
+            return null;
+        }
+
+        $jobsDir = rtrim($this->jobsDir, '/\\') . DIRECTORY_SEPARATOR;
+        $jobsDirReal = realpath($jobsDir);
+        if ($jobsDirReal === false) {
+            return null;
+        }
+
+        $candidate = $jobsDirReal . DIRECTORY_SEPARATOR . ltrim($command, DIRECTORY_SEPARATOR);
+        $resolved = realpath($candidate);
+        if ($resolved === false || !is_file($resolved) || !is_readable($resolved)) {
+            return null;
+        }
+
+        if (!str_starts_with($resolved, $jobsDirReal . DIRECTORY_SEPARATOR)) {
+            return null;
+        }
+
+        if (strtolower(pathinfo($resolved, PATHINFO_EXTENSION)) !== 'php') {
+            return null;
+        }
+
+        return $resolved;
     }
 
     /**

@@ -12,18 +12,20 @@ $config['security'] = [
     'permission_request' => true,
 
     'csrf' => [
-        'csrf_protection'    => true,
-        'csrf_token_name'    => 'csrf_token',
-        'csrf_cookie_name'   => 'csrf_cookie',
-        'csrf_expire'        => 7200,
-        'csrf_regenerate'    => true,
+        'csrf_protection'    => (bool) env('CSRF_PROTECTION', true),
+        'csrf_token_name'    => (string) env('CSRF_TOKEN_NAME', 'csrf_token'),
+        'csrf_cookie_name'   => (string) env('CSRF_COOKIE_NAME', 'csrf_cookie'),
+        'csrf_expire'        => (int) env('CSRF_EXPIRE', 7200),
+        // Keep false by default so modal/AJAX-loaded forms do not go stale between requests.
+        'csrf_regenerate'    => (bool) env('CSRF_REGENERATE', false),
         // Routes excluded from CSRF verification (API uses Bearer tokens instead)
         'csrf_exclude_uris'  => [
             'api/*',
         ],
         // Routes explicitly included for CSRF verification (supports wildcards)
         'csrf_include_uris'  => [],
-        'csrf_secure_cookie' => true,
+        // Secure-by-default for HTTPS deployments; local HTTP dev can override via .env.
+        'csrf_secure_cookie' => env('CSRF_SECURE_COOKIE', true),
         'csrf_httponly'      => true,
         'csrf_samesite'      => 'Lax',
         // Verify Origin/Referer on state-changing web requests.

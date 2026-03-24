@@ -9,6 +9,7 @@ use Core\Http\Middleware\MiddlewareInterface;
 class RequirePermission implements MiddlewareInterface
 {
     private array $permissions = [];
+    private const AUTH_GUARDS = ['session', 'token', 'jwt', 'api_key', 'oauth2', 'basic', 'digest', 'oauth'];
 
     public function setParameters(array $parameters): void
     {
@@ -19,8 +20,9 @@ class RequirePermission implements MiddlewareInterface
 
     public function handle(Request $request, callable $next)
     {
-        // Check both session and token authentication
-        if (!auth()->check()) {
+        // Validate auth using all supported guards (not config-default only)
+        // so token/JWT/api_key requests are not rejected when AUTH_METHODS=session.
+        if (!auth()->check(self::AUTH_GUARDS)) {
             if ($request->expectsJson()) {
                 Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
             }
@@ -33,16 +35,11 @@ class RequirePermission implements MiddlewareInterface
         }
 
         foreach ($this->permissions as $permissionSlug) {
-            $hasPermission = false;
+            $hasPermission = auth()->can($permissionSlug);
 
-            // Check session-based permissions
-            if (auth()->checkSession() && function_exists('permission')) {
+            // Backward compatibility for custom helper-based checks.
+            if (!$hasPermission && auth()->checkSession() && function_exists('permission')) {
                 $hasPermission = permission($permissionSlug);
-            }
-
-            // Check token-based abilities
-            if (!$hasPermission && auth()->checkToken()) {
-                $hasPermission = auth()->hasAbility($permissionSlug);
             }
 
             if (!$hasPermission) {

@@ -8,7 +8,7 @@
 | `guest` | `EnsureGuest` | Block authenticated users (for login/register) |
 | `auth` | `RequireAuth` | Unified auth (session/token/both) |
 | `auth.web` | `RequireSessionAuth` | Session-only auth |
-| `auth.api` | `RequireApiToken` | Token-only auth |
+| `auth.api` | `RequireApiToken` | API auth using configured methods (`api.auth.methods` with `auth.api_methods` fallback) |
 | `permission` | `RequirePermission` | RBAC permission check |
 | `throttle` | `RateLimit` | Standard rate limiting (configurable) |
 | `aggressive-throttle` | `ThrottleRequests` | Aggressive IP-based blocking |
@@ -19,8 +19,12 @@
 
 ## Middleware Groups
 
-- `web` => `['headers', 'request.safety', 'throttle:web']`
+- `web` => `['headers', 'request.safety', 'csrf', 'throttle:web']`
 - `api` => `['headers', 'request.safety', 'throttle:api', 'xss', 'api.log']`
+
+Important:
+- Middleware groups are only applied when you attach them to a route or route group. Defining the `web` group in `framework.php` does not make it automatic for `web.php` routes.
+- For browser `POST|PUT|PATCH|DELETE` routes such as login, logout, and modal/form loaders, attach `web` explicitly so CSRF runs.
 
 ## Middleware Details
 
@@ -29,7 +33,7 @@
 Unified guard-based middleware supporting multiple authentication modes.
 
 **Guard parameters:**
-- `auth` — No params: accepts session OR token (either passes).
+- `auth` — No params: uses configured `auth.methods` order (session-first by default).
 - `auth:session` — Session auth only. Alias: `auth:web`.
 - `auth:token` — Token auth only. Alias: `auth:api`.
 
@@ -55,6 +59,10 @@ Standard rate limiter with configurable profiles and scoping.
 3. `throttle:profile_name,max,decayMinutes,scope` — Profile + overrides.
 
 **Scope options:** `ip-route` (default), `ip`, `route`, `user`, `user-route`, `auth`, `auth-route`.
+
+**Scope behavior details:**
+- `auth` => user-global bucket for authenticated users (`user:{id}`), IP-global bucket for guests (`ip:{ip}`).
+- `auth-route` => user+route bucket for authenticated users (`user-route:{id}:{method}:{path}`), IP+route bucket for guests (`ip-route:{ip}:{method}:{path}`).
 
 **File-based state** stored in `storage/cache/rate_limit/`.
 
@@ -100,6 +108,11 @@ Logs every API request and response for debugging/auditing.
 
 **Configuration** in `app/config/api.php`:
 ```php
+'rate_limit' => [
+	'enabled' => true,
+	'max_requests' => 60,
+	'window_seconds' => 60,
+],
 'logging' => [
 	'enabled'  => true,
 	'log_path' => 'logs/api.log',
@@ -127,18 +140,51 @@ Checks RBAC permission. Parameter is the permission code:
 ->middleware('permission:user-create')
 ```
 
+Auth validation runs across all supported guards (`session`, `token`, `jwt`, `api_key`, `oauth2`, `basic`, `digest`, `oauth`) before permission checks.
+
+### `RequireAnyPermission` (alias: `permission.any`)
+
+Checks OR-style permission access (any listed permission passes):
+
+```php
+->middleware('permission.any:user-create,user-update')
+```
+
+### `RequireRole` (alias: `role`)
+
+Checks role membership (any listed role passes):
+
+```php
+->middleware('role:Super Admin,Administrator')
+```
+
 ### `EnsureGuest` (alias: `guest`)
 
 Blocks authenticated users. Used on login/register pages to redirect already-logged-in users.
 
+The check covers all supported guards (not just session), so token/JWT/API-key authenticated users are treated as authenticated guests too.
+
+Redirect behavior:
+- `EnsureGuest` does not hardcode a role or permission map.
+- It resolves the first authenticated landing URL from the configured menu/sidebar structure through `resolveAuthenticatedLandingUrl()` and the current permission set.
+- If no accessible landing URL is available, it falls back to a `403` response instead of redirecting to an unauthorized page.
+
 ## Security Config (`app/config/security.php`)
 
 - CSRF protection settings + include/exclude URIs.
+- Core CSRF switches are env-backed: `CSRF_PROTECTION`, `CSRF_TOKEN_NAME`, `CSRF_COOKIE_NAME`, `CSRF_EXPIRE`, `CSRF_REGENERATE`, and `CSRF_SECURE_COOKIE`.
+- Recommended runtime default: `CSRF_REGENERATE=false`. This framework returns many responses by emitting output directly, so per-request token rotation can leave modal/AJAX-loaded forms holding stale tokens unless the frontend refreshes tokens after every write.
+- Framework default for `CSRF_SECURE_COOKIE` is secure-by-default. Override it only for plain HTTP local development.
 - CSRF Origin/Referer verification for state-changing browser requests.
 - Request hardening policy (`request_hardening`) to constrain URI/body/host/content-type.
 - CSP directives (configuration-driven).
 - Permissions-Policy (configuration-driven).
 - Trusted proxy IP list (controls forwarded-IP trust in `Request::ip()`).
+
+## API Whitelist Notes
+
+- `api.url_whitelist` accepts either full API paths such as `/api/v1/auth/login` or normalized internal paths such as `v1/auth/login`.
+- Default whitelist path is derived from `API_PREFIX`, `API_VERSIONING_ENABLED`, and `API_VERSION`.
 
 ## Security Audit Command
 
@@ -204,7 +250,7 @@ $router->get('/api/v1/profile', [UserController::class, 'profile'])->middleware(
 
 ## Benefits
 
-- 10 built-in middleware classes covering auth, rate limiting, XSS, logging, security headers.
+- 23 built-in middleware classes (including method-specific auth middleware) covering auth, RBAC, rate limiting, XSS, logging, and security headers.
 - Consistent request protection across routes via groups.
 - Centralized security policy in config files.
 - API request tracing via `api.log` with sensitive field masking.

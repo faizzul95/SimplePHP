@@ -42,6 +42,11 @@ class Api
     {
         return preg_replace('/[^a-zA-Z0-9_]/', '', $name) ?: 'users_access_tokens';
     }
+    
+    private function safeColumn(string $name, string $fallback = 'id'): string
+    {
+        return preg_replace('/[^a-zA-Z0-9_]/', '', $name) ?: $fallback;
+    }
 
     /**
      * Default configuration — token_table resolved from api or auth config
@@ -217,6 +222,11 @@ class Api
             return null;
         }
 
+            $fallbackUser = $this->resolveFallbackTokenUser((int) ($tokenRecord['user_id'] ?? 0));
+            if ($fallbackUser === null) {
+                return null;
+            }
+
         // Update last used timestamp
         $updateStmt = $this->pdo->prepare("
             UPDATE {$tokenTable} 
@@ -226,7 +236,7 @@ class Api
         $updateStmt->execute([$tokenRecord['id']]);
 
         return [
-            'id' => $tokenRecord['user_id'],
+            'id' => $fallbackUser['id'],
             'token_id' => $tokenRecord['id'],
             'token_name' => $tokenRecord['name'],
             'auth_type' => 'token',
@@ -323,7 +333,33 @@ class Api
      */
     private function isUrlWhitelisted(): bool
     {
-        return in_array($this->requestUri, $this->config['url_whitelist']);
+        $needle = $this->normalizeWhitelistUri($this->requestUri);
+
+        foreach ((array) ($this->config['url_whitelist'] ?? []) as $allowedUri) {
+            if ($needle === $this->normalizeWhitelistUri((string) $allowedUri)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizeWhitelistUri(string $uri): string
+    {
+        $path = (string) parse_url($uri, PHP_URL_PATH);
+        if ($path === '') {
+            return '/';
+        }
+
+        $normalized = trim($path);
+        $apiPos = strpos($normalized, '/api/');
+        if ($apiPos !== false) {
+            $normalized = substr($normalized, $apiPos + 5);
+        }
+
+        $normalized = trim($normalized, '/');
+
+        return $normalized === '' ? '/' : $normalized;
     }
 
     /**
@@ -534,12 +570,22 @@ class Api
      */
     private function compileRoutePattern(string $uri): string
     {
-        $pattern = preg_replace_callback('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', function ($matches) {
-            $paramName = $matches[1];
-            return '(?P<' . $paramName . '>[A-Za-z0-9_-]+)';
-        }, $uri);
+        $segments = explode('/', trim($uri, '/'));
+        if (empty($segments) || $segments === ['']) {
+            return '#^/$#';
+        }
 
-        return '#^' . $pattern . '$#';
+        $patternParts = [];
+        foreach ($segments as $segment) {
+            if (preg_match('/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/', $segment, $matches) === 1) {
+                $patternParts[] = '(?P<' . $matches[1] . '>[A-Za-z0-9_-]+)';
+                continue;
+            }
+
+            $patternParts[] = preg_quote($segment, '#');
+        }
+
+        return '#^' . implode('/', $patternParts) . '$#';
     }
 
     /**
@@ -743,5 +789,37 @@ class Api
 
         $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
         return filter_var($remoteAddr, FILTER_VALIDATE_IP) ? $remoteAddr : '127.0.0.1';
+    }
+
+    private function resolveFallbackTokenUser(int $userId): ?array
+    {
+        if ($userId < 1) {
+            return null;
+        }
+
+        $usersTable = $this->safeTable((string) \config('auth.users_table', 'users'));
+        $userColumns = (array) \config('auth.user_columns', []);
+        $policy = (array) \config('auth.systems_login_policy', []);
+
+        $idColumn = $this->safeColumn((string) ($userColumns['id'] ?? 'id'));
+        $statusColumn = $this->safeColumn((string) ($policy['user_status_column'] ?? ($userColumns['status'] ?? 'user_status')), 'user_status');
+
+        $stmt = $this->pdo->prepare("SELECT {$idColumn}, {$statusColumn} FROM {$usersTable} WHERE {$idColumn} = ? LIMIT 1");
+        $stmt->execute([$userId]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!is_array($user) || empty($user)) {
+            return null;
+        }
+
+        $allowedStatuses = array_map('intval', (array) ($policy['allowed_user_status'] ?? [1]));
+        if (($policy['enforce_user_status'] ?? true) === true && !in_array((int) ($user[$statusColumn] ?? 0), $allowedStatuses, true)) {
+            return null;
+        }
+
+        return [
+            'id' => (int) ($user[$idColumn] ?? $userId),
+            'status' => (int) ($user[$statusColumn] ?? 0),
+        ];
     }
 }

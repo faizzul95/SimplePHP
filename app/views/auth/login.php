@@ -30,6 +30,8 @@
 
     <base href="<?= BASE_URL ?>">
     <meta name="base_url" content="<?= BASE_URL ?>" />
+    <meta name="secure_token" content="<?= htmlspecialchars(csrf()->getToken() ?: csrf()->init(), ENT_QUOTES, 'UTF-8'); ?>" />
+    <meta name="csrf-token" content="<?= htmlspecialchars(csrf()->getToken() ?: csrf()->init(), ENT_QUOTES, 'UTF-8'); ?>" />
     <meta name="description" content="" />
 
     <!-- Favicon -->
@@ -93,6 +95,7 @@
                         <h4 class="mb-2">Welcome to MythPHP! 👋</h4>
                         <p class="mb-4">Please sign-in to your account</p>
                         <form id="formAuthentication" class="mb-3" method="POST">
+                            <?= csrf_field(); ?>
                             <div class="mb-3">
                                 <label for="email" class="form-label">Email or Username</label>
                                 <input

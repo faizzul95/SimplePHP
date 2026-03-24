@@ -18,25 +18,32 @@ use Core\Http\Request;
 */
 
 $router->get('/', [DashboardController::class, 'index'])
+    ->middleware('web')
     ->middleware('auth.web')
+    ->middleware('permission:management-view')
     ->name('home');
 
 $router->get('/login', [AuthController::class, 'showLogin'])
+    ->middleware('web')
     ->middleware('guest')
     ->name('login');
 
 $router->post('/auth/login', [AuthController::class, 'authorize'])
+    ->middleware('web')
     ->middleware('guest')
     ->middleware('xss')
     ->name('auth.login');
 
 $router->post('/auth/logout', [AuthController::class, 'logout'])
+    ->middleware('web')
     ->middleware('auth.web')
     ->name('auth.logout');
 
-$router->group(['middleware' => ['auth.web']], function ($router) {
+$router->group(['middleware' => ['web', 'auth.web']], function ($router) {
 
-    $router->get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    $router->get('/dashboard', [DashboardController::class, 'index'])
+        ->middleware('permission:management-view')
+        ->name('dashboard');
     $router->get('/directory', [UserController::class, 'index'])
         ->middleware('permission:user-view')
         ->name('directory');
@@ -49,14 +56,27 @@ $router->group(['middleware' => ['auth.web']], function ($router) {
 });
 
 $router->post('/modal/content', function (Request $request): void {
+    if (strtolower((string) $request->header('x-requested-with', '')) !== 'xmlhttprequest') {
+        http_response_code(403);
+        echo '<div class="alert alert-danger" role="alert">Invalid modal request.</div>';
+        return;
+    }
+
     $filePath = (string) $request->input('fileName', '');
     $dataArray = $request->input('dataArray', []);
 
     $normalizedPath = str_replace('\\', '/', trim($filePath));
+    $partialName = pathinfo($normalizedPath, PATHINFO_FILENAME);
 
     if ($normalizedPath === '' || str_contains($normalizedPath, '..') || !str_starts_with($normalizedPath, 'views/')) {
         http_response_code(422);
         echo '<div class="alert alert-danger" role="alert">Invalid modal file path.</div>';
+        return;
+    }
+
+    if (!str_starts_with((string) $partialName, '_')) {
+        http_response_code(422);
+        echo '<div class="alert alert-danger" role="alert">Invalid modal partial.</div>';
         return;
     }
 
@@ -90,4 +110,4 @@ $router->post('/modal/content', function (Request $request): void {
     }, $dataArray) : [];
 
     include $absolute;
-})->middleware('auth.web')->name('modal.content');
+})->middleware('web')->middleware('auth.web')->name('modal.content');

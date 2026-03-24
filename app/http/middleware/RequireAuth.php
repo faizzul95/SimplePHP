@@ -31,10 +31,19 @@ class RequireAuth implements MiddlewareInterface
     {
         $guards = $this->guards;
         if (empty($guards)) {
-            $guards = ['session', 'token'];
+            $guards = (array) config('auth.methods', ['session']);
         }
 
         if (!auth()->check($guards)) {
+            $debugEnabled = (bool) config('auth.session_security.debug_log_enabled');
+            if ($debugEnabled && function_exists('logger')) {
+                try {
+                    logger()->log_debug('[AuthDebug] RequireAuth unauthorized | Context: ' . json_encode(auth()->debugAuthState($guards), JSON_UNESCAPED_SLASHES));
+                } catch (\Throwable $e) {
+                    // Never break auth flow when debug logging fails.
+                }
+            }
+
             $normalizedGuards = array_map('strtolower', $guards);
 
             if (in_array('basic', $normalizedGuards, true)) {

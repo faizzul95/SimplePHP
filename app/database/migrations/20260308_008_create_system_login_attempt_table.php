@@ -17,10 +17,15 @@ return new class extends Migration
 
             $table->id();
             $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete()->comment('Refer table users');
+            $table->string('identifier', 191)->nullable()->comment('Normalized login identifier such as email:foo@bar.com');
             $table->string('ip_address', 128)->nullable();
             $table->timestamp('time')->nullable();
             $table->string('user_agent', 200)->nullable();
             $table->timestamps();
+
+            $table->index('identifier');
+            $table->index('ip_address');
+            $table->index('time');
         });
     }
 

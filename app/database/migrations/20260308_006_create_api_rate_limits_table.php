@@ -11,6 +11,11 @@ return new class extends Migration
 
     public function up(): void
     {
+        $rateLimit = (array) (config('api.rate_limit') ?? []);
+        if (($rateLimit['enabled'] ?? false) !== true) {
+            return;
+        }
+
         Schema::create($this->table, function (Blueprint $table) {
             $table->charset('utf8mb4');
             $table->collation('utf8mb4_general_ci');

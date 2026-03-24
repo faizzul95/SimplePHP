@@ -10,20 +10,18 @@ class RequireApiToken implements MiddlewareInterface
 {
     public function handle(Request $request, callable $next)
     {
-        $configuredMethods = config('auth.api_methods') ?? ['token'];
-        $methods = is_string($configuredMethods)
-            ? array_map('trim', explode(',', $configuredMethods))
-            : (array) $configuredMethods;
-
-        $methods = array_values(array_filter($methods, static function ($method) {
-            return is_string($method) && trim($method) !== '';
-        }));
-
-        if (empty($methods)) {
-            $methods = ['token'];
-        }
+        $methods = auth()->apiMethods();
 
         if (!auth()->check($methods)) {
+            $debugEnabled = (bool) config('auth.session_security.debug_log_enabled');
+            if ($debugEnabled && function_exists('logger')) {
+                try {
+                    logger()->log_debug('[AuthDebug] RequireApiToken unauthorized | Context: ' . json_encode(auth()->debugAuthState($methods), JSON_UNESCAPED_SLASHES));
+                } catch (\Throwable $e) {
+                    // Never break auth flow when debug logging fails.
+                }
+            }
+
             $normalized = array_map('strtolower', $methods);
 
             if (in_array('basic', $normalized, true)) {

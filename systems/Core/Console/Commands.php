@@ -1427,6 +1427,273 @@ PHP;
             $console->newLine();
         }, 'Display the current environment information');
 
+        $console->command('env:check', function (array $args = [], array $options = []) use ($console) {
+            $strictMode = isset($options['strict']) || isset($options['ci']);
+            $showValues = isset($options['show-values']);
+
+            $passed = [];
+            $warnings = [];
+            $failures = [];
+
+            $envFile = ROOT_DIR . '.env';
+            if (is_file($envFile) && is_readable($envFile)) {
+                $passed[] = ['.env', 'env file found and readable'];
+            } else {
+                $warnings[] = ['.env', 'env file not found/readable; relying on system environment variables'];
+            }
+
+            $getRaw = static function (string $key): ?string {
+                $value = getenv($key);
+                if ($value === false) {
+                    $value = $_ENV[$key] ?? $_SERVER[$key] ?? null;
+                }
+
+                if ($value === null) {
+                    return null;
+                }
+
+                if (!is_scalar($value)) {
+                    return null;
+                }
+
+                return trim((string) $value);
+            };
+
+            $mask = static function (?string $value): string {
+                if ($value === null) {
+                    return '[missing]';
+                }
+
+                $length = strlen($value);
+                if ($length <= 4) {
+                    return str_repeat('*', max(1, $length));
+                }
+
+                return substr($value, 0, 2) . str_repeat('*', $length - 4) . substr($value, -2);
+            };
+
+            $display = static function (?string $raw, bool $secret, bool $showValues) use ($mask): string {
+                if ($raw === null) {
+                    return '[missing]';
+                }
+
+                if ($raw === '') {
+                    return '[empty]';
+                }
+
+                if ($secret && !$showValues) {
+                    return $mask($raw);
+                }
+
+                return $raw;
+            };
+
+            $checkRequired = static function (string $key, bool $secret = false) use (&$passed, &$failures, $getRaw, $display, $showValues): ?string {
+                $raw = $getRaw($key);
+                if ($raw === null || $raw === '') {
+                    $failures[] = [$key, 'required value missing'];
+                    return null;
+                }
+
+                $passed[] = [$key, 'set (' . $display($raw, $secret, $showValues) . ')'];
+                return $raw;
+            };
+
+            $checkBoolean = static function (string $key, bool $required = false) use (&$passed, &$warnings, &$failures, $getRaw): void {
+                $raw = $getRaw($key);
+
+                if ($raw === null || $raw === '') {
+                    if ($required) {
+                        $failures[] = [$key, 'boolean value missing'];
+                    } else {
+                        $warnings[] = [$key, 'not set; using config default'];
+                    }
+                    return;
+                }
+
+                $normalized = strtolower($raw);
+                $valid = in_array($normalized, ['true', 'false', '(true)', '(false)'], true);
+
+                if (!$valid) {
+                    $failures[] = [$key, "invalid boolean '{$raw}' (use true/false)"];
+                    return;
+                }
+
+                $passed[] = [$key, 'valid boolean'];
+            };
+
+            $checkInteger = static function (string $key, int $min = 0, ?int $max = null, bool $required = false) use (&$passed, &$warnings, &$failures, $getRaw): void {
+                $raw = $getRaw($key);
+
+                if ($raw === null || $raw === '') {
+                    if ($required) {
+                        $failures[] = [$key, 'integer value missing'];
+                    } else {
+                        $warnings[] = [$key, 'not set; using config default'];
+                    }
+                    return;
+                }
+
+                if (filter_var($raw, FILTER_VALIDATE_INT) === false) {
+                    $failures[] = [$key, "invalid integer '{$raw}'"];
+                    return;
+                }
+
+                $intVal = (int) $raw;
+                if ($intVal < $min) {
+                    $failures[] = [$key, "must be >= {$min}"];
+                    return;
+                }
+                if ($max !== null && $intVal > $max) {
+                    $failures[] = [$key, "must be <= {$max}"];
+                    return;
+                }
+
+                $passed[] = [$key, 'valid integer'];
+            };
+
+            $requireIfEnabled = static function (string $toggleKey, string $requiredKey, bool $secret = false) use (&$passed, &$failures, $getRaw, $display, $showValues): void {
+                $rawToggle = strtolower((string) ($getRaw($toggleKey) ?? 'false'));
+                $enabled = in_array($rawToggle, ['true', '(true)'], true);
+
+                if (!$enabled) {
+                    return;
+                }
+
+                $required = $getRaw($requiredKey);
+                if ($required === null || $required === '') {
+                    $failures[] = [$toggleKey, "enabled but '{$requiredKey}' is missing"];
+                    return;
+                }
+
+                $passed[] = [$requiredKey, 'set (' . $display($required, $secret, $showValues) . ')'];
+                $passed[] = [$toggleKey, "enabled and '{$requiredKey}' is set"];
+            };
+
+            $requiredKeys = [
+                'APP_ENV',
+                'APP_DEBUG',
+                'APP_TIMEZONE',
+                'DB_CONNECTION',
+                'DB_HOST',
+                'DB_PORT',
+                'DB_DATABASE',
+                'DB_USERNAME',
+                'DB_CHARSET',
+            ];
+
+            foreach ($requiredKeys as $requiredKey) {
+                $checkRequired($requiredKey);
+            }
+
+            $appEnv = strtolower((string) env('APP_ENV', 'development'));
+            if (!in_array($appEnv, ['development', 'staging', 'production'], true)) {
+                $failures[] = ['APP_ENV', "invalid value '{$appEnv}' (expected development|staging|production)"];
+            } else {
+                $passed[] = ['APP_ENV', 'supported environment'];
+            }
+
+            $checkBoolean('APP_DEBUG', true);
+            $checkBoolean('DB_PROFILING_ENABLED');
+            $checkBoolean('DB_CACHE_ENABLED');
+            $checkBoolean('API_AUTH_REQUIRED');
+            $checkBoolean('API_VERSIONING_ENABLED');
+            $checkBoolean('API_RATE_LIMIT_ENABLED');
+            $checkBoolean('API_CORS_ALLOW_CREDENTIALS');
+            $checkBoolean('AUTH_JWT_ENABLED');
+            $checkBoolean('AUTH_API_KEY_ENABLED');
+            $checkBoolean('AUTH_OAUTH2_ENABLED');
+            $checkBoolean('AUTH_BASIC_ENABLED');
+            $checkBoolean('AUTH_DIGEST_ENABLED');
+            $checkBoolean('RECAPTCHA_ENABLED');
+
+            $checkInteger('DB_PORT', 1, 65535, true);
+            $checkInteger('DB_CACHE_TTL', 0);
+            $checkInteger('AUTH_LOGIN_POLICY_MAX_ATTEMPTS', 1);
+            $checkInteger('AUTH_LOGIN_POLICY_DECAY_SECONDS', 1);
+            $checkInteger('AUTH_LOGIN_POLICY_LOCKOUT_SECONDS', 1);
+            $checkInteger('AUTH_SESSION_MAX_DEVICES', 0);
+            $checkInteger('AUTH_SESSION_CONCURRENCY_TTL', 1);
+            $checkInteger('AUTH_DIGEST_NONCE_TTL', 1);
+            $checkInteger('AUTH_DIGEST_NONCE_FUTURE_SKEW', 0);
+
+            if ($appEnv === 'production') {
+                if ((bool) env('APP_DEBUG', true)) {
+                    $failures[] = ['APP_DEBUG', 'must be false in production'];
+                } else {
+                    $passed[] = ['APP_DEBUG', 'disabled in production'];
+                }
+
+                $checkRequired('APP_KEY', true);
+            }
+
+            $authMethods = array_map('strtolower', env_list('AUTH_METHODS', ['session']));
+            if (empty($authMethods)) {
+                $warnings[] = ['AUTH_METHODS', 'empty list; config defaults may be used'];
+            }
+
+            $apiMethods = array_map('strtolower', env_list('API_AUTH_METHODS', ['token']));
+            if ((bool) env('API_AUTH_REQUIRED', true) && empty($apiMethods)) {
+                $failures[] = ['API_AUTH_METHODS', 'cannot be empty when API_AUTH_REQUIRED=true'];
+            }
+
+            if (in_array('jwt', $authMethods, true) || (bool) env('AUTH_JWT_ENABLED', false)) {
+                $checkRequired('AUTH_JWT_SECRET', true);
+            }
+
+            if (in_array('digest', $authMethods, true) || (bool) env('AUTH_DIGEST_ENABLED', false)) {
+                $checkRequired('AUTH_DIGEST_NONCE_SECRET', true);
+            }
+
+            $requireIfEnabled('RECAPTCHA_ENABLED', 'RECAPTCHA_SITE_KEY', false);
+            $requireIfEnabled('RECAPTCHA_ENABLED', 'RECAPTCHA_SECRET_KEY', true);
+
+            if (strtolower((string) env('MAIL_DRIVER', 'smtp')) === 'smtp') {
+                $checkRequired('MAIL_HOST');
+                $checkRequired('MAIL_PORT');
+                $checkInteger('MAIL_PORT', 1, 65535, true);
+            }
+
+            $console->newLine();
+            $console->info('  MythPHP Environment Check');
+            $console->line('  ' . str_repeat('─', 56));
+
+            if (!empty($passed)) {
+                $console->table(['PASS', 'Detail'], $passed);
+            }
+            if (!empty($warnings)) {
+                $console->newLine();
+                $console->warn('  Warnings');
+                $console->table(['WARN', 'Detail'], $warnings);
+            }
+            if (!empty($failures)) {
+                $console->newLine();
+                $console->error('  Failed checks');
+                $console->table(['FAIL', 'Detail'], $failures);
+            }
+
+            $failCount = count($failures);
+            $warnCount = count($warnings);
+
+            $console->newLine();
+            $console->line('  Summary: ' . count($passed) . ' passed, ' . $warnCount . ' warning(s), ' . $failCount . ' failed.');
+            $console->line('  Mode: ' . ($strictMode ? 'strict' : 'normal'));
+            if (!$showValues) {
+                $console->line('  Tip: use --show-values to display non-secret values in output.');
+            }
+            $console->newLine();
+
+            if ($failCount > 0) {
+                return 1;
+            }
+
+            if ($strictMode && $warnCount > 0) {
+                return 2;
+            }
+
+            return 0;
+        }, 'Validate environment variables and security-sensitive env settings [--strict] [--ci] [--show-values]');
+
         $console->command('about', function () use ($console) {
             $console->newLine();
             $console->info("  ┌──────────────────────────────────────┐");
@@ -1600,7 +1867,17 @@ PHP;
             };
 
             $methods = array_values((array) ($authConfig['methods'] ?? []));
-            $record($methods === ['session', 'token'], 'Auth Config', 'default methods are least-privilege (session, token)', $passed, $failures);
+            $leastPrivilegeDefaults = [
+                ['session'],
+                ['session', 'token'],
+            ];
+            $record(
+                in_array($methods, $leastPrivilegeDefaults, true),
+                'Auth Config',
+                'default methods use least-privilege baseline (session-first)',
+                $passed,
+                $failures
+            );
 
             $allowQueryParam = (($authConfig['api_key']['allow_query_param'] ?? false) === true);
             if ($allowQueryParam) {

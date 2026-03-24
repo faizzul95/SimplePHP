@@ -1,0 +1,100 @@
+[
+    {
+        "file": "20260308_001_create_users_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:42",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_002_create_master_roles_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:42",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_003_create_master_email_templates_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:42",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_004_create_system_abilities_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:42",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_005_create_users_access_tokens_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:42",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_006_create_api_rate_limits_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:43",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_007_create_entity_files_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:43",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_008_create_system_login_attempt_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:43",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_009_create_system_login_history_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:43",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_010_create_system_permission_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:43",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_011_create_user_profile_table.php",
+        "type": "migrate",
+        "batch": 1,
+        "migrated_at": "2026-03-25 01:23:43",
+        "status": "migrated"
+    },
+    {
+        "file": "20260308_001_MasterRolesSeeder.php",
+        "type": "seed",
+        "batch": 0,
+        "migrated_at": "2026-03-25 01:23:46",
+        "status": "seeded"
+    },
+    {
+        "file": "20260308_002_FirstUserSeeder.php",
+        "type": "seed",
+        "batch": 0,
+        "migrated_at": "2026-03-25 01:23:46",
+        "status": "seeded"
+    },
+    {
+        "file": "20260308_003_RbacPermissionsSeeder.php",
+        "type": "seed",
+        "batch": 0,
+        "migrated_at": "2026-03-25 01:23:46",
+        "status": "seeded"
+    }
+]

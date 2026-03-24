@@ -16,12 +16,16 @@
                             <button type="button" class="btn btn-warning btn-sm float-end" onclick="getDataList()" title="Refresh">
                                 <i class='bx bx-refresh'></i>
                             </button>
+                            <?php if (permission('rbac-roles-create')) : ?>
                             <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addRoles()" title="Add New Role">
                                 <i class='bx bx-plus'></i> Add New Role
                             </button>
+                            <?php endif; ?>
+                            <?php if (permission('rbac-abilities-view')) : ?>
                             <button type="button" class="btn btn-primary btn-sm float-end me-2" onclick="showPermission()" title="List Permissions">
                                 <i class='bx bx-shield-quarter'></i> Abilities
                             </button>
+                            <?php endif; ?>
                             <select id="filter_role_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All </option>
                                 <option value="1"> Active </option>

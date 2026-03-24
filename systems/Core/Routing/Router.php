@@ -143,10 +143,46 @@ class Router
     public function redirect(string $from, string $to, int $status = 302): RouteDefinition
     {
         return $this->get($from, function () use ($to, $status) {
-            http_response_code($status);
-            header('Location: ' . $to);
-            exit;
+            Response::redirect($this->normalizeRedirectTarget($to), $status);
         });
+    }
+
+    private function normalizeRedirectTarget(string $target): string
+    {
+        $target = trim($target);
+        if ($target === '' || preg_match('/[\r\n\0]/', $target) === 1) {
+            return '/';
+        }
+
+        if (str_starts_with($target, '//')) {
+            return '/';
+        }
+
+        $parts = parse_url($target);
+        if ($parts === false) {
+            return '/';
+        }
+
+        $isAbsolute = isset($parts['scheme']) || isset($parts['host']);
+        if (!$isAbsolute) {
+            $normalizedTarget = ltrim($target, '/');
+            if (function_exists('url')) {
+                return url($normalizedTarget);
+            }
+
+            return '/' . $normalizedTarget;
+        }
+
+        $requestHost = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+        $requestHost = preg_replace('/:\d+$/', '', $requestHost);
+        $targetHost = strtolower((string) ($parts['host'] ?? ''));
+        $targetHost = preg_replace('/:\d+$/', '', $targetHost);
+
+        if ($requestHost === '' || $targetHost === '' || $requestHost !== $targetHost) {
+            return '/';
+        }
+
+        return $target;
     }
 
     /**

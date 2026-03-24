@@ -33,7 +33,8 @@
     <meta name="base_url" content="<?= BASE_URL ?>" />
     <meta name="route.modal.content" content="<?= route('modal.content') ?>" />
     <meta name="description" content="" />
-    <meta name="secure_token" content="<?= csrf_value(); ?>" />
+    <meta name="secure_token" content="<?= htmlspecialchars(csrf()->getToken() ?: csrf()->init(), ENT_QUOTES, 'UTF-8'); ?>" />
+    <meta name="csrf-token" content="<?= htmlspecialchars(csrf()->getToken() ?: csrf()->init(), ENT_QUOTES, 'UTF-8'); ?>" />
 
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="<?= asset('sneat/img/favicon/favicon.ico'); ?>" />

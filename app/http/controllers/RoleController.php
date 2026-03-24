@@ -38,8 +38,16 @@ class RoleController extends Controller
 
         $result['data'] = array_map(function ($row) {
             $id = encodeID($row['id']);
-            $delAction = $row['profile_count'] > 0 ? null : "onclick='deleteRecord(\"{$id}\")'";
+            $canUpdate = permission('rbac-roles-update');
+            $canDelete = permission('rbac-roles-delete') && (int) $row['profile_count'] < 1;
+            $canAssign = permission('rbac-roles-update');
+            $delAction = $canDelete ? "onclick='deleteRecord(\"{$id}\")'" : null;
             $delText = empty($delAction) ? '(disabled)'  : '';
+            $editAction = $canUpdate ? "onclick='editRecord(\"{$id}\")'" : '';
+            $editStyle = $canUpdate ? "cursor: pointer;" : "cursor: not-allowed; opacity: .45;";
+            $assignAction = $canAssign ? "<a href='javascript:void(0);' onclick='permissionRecord(\"{$id}\", \"{$row['role_name']}\")' class='dropdown-item'>
+                            <i class='bx bx-shield-quarter me-1'></i> Assign Permissions
+                        </a>" : '';
 
             return [
                 'name' => $row['role_name'],
@@ -48,7 +56,7 @@ class RoleController extends Controller
                 'status' => $row['role_status'] ? '<span class="badge bg-label-success"> Active </span>' : '<span class="badge bg-label-warning"> Inactive </span>',
                 'action' => "
                 <span style='display: inline-block; vertical-align: middle;'>
-                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
+                    <i class='bx bx-edit-alt' style='{$editStyle}' {$editAction} title='Edit'></i>
                 </span>
                 <div class='dropdown' style='display: inline-block; vertical-align: middle;'>
                     <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
@@ -58,9 +66,7 @@ class RoleController extends Controller
                         <a href='javascript:void(0);' {$delAction} class='dropdown-item'>
                             <i class='bx bx-trash me-1'></i> Delete {$delText}
                         </a>
-                         <a href='javascript:void(0);' onclick='permissionRecord(\"{$id}\", \"{$row['role_name']}\")' class='dropdown-item'>
-                            <i class='bx bx-shield-quarter me-1'></i> Assign Permissions
-                        </a>
+                        {$assignAction}
                     </div>
                 </div>
             "

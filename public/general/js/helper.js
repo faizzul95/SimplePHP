@@ -1,5 +1,117 @@
 let csrf_token_name = 'csrf_token';
 let csrf_cookie_name = 'csrf_cookie';
+
+const getCsrfToken = () => {
+	const secureTokenMeta = document.querySelector('meta[name="secure_token"]');
+	if (secureTokenMeta && typeof secureTokenMeta.content === 'string' && secureTokenMeta.content !== '') {
+		return secureTokenMeta.content;
+	}
+
+	const standardTokenMeta = document.querySelector('meta[name="csrf-token"]');
+	return standardTokenMeta && typeof standardTokenMeta.content === 'string' ? standardTokenMeta.content : '';
+};
+
+const setCsrfToken = (token) => {
+	if (typeof token !== 'string' || token.trim() === '') {
+		return;
+	}
+
+	const normalizedToken = token.trim();
+	document.querySelectorAll('meta[name="secure_token"], meta[name="csrf-token"]').forEach((meta) => {
+		meta.setAttribute('content', normalizedToken);
+	});
+
+	document.querySelectorAll(`input[name="${csrf_token_name}"]`).forEach((input) => {
+		input.value = normalizedToken;
+	});
+};
+
+const ensureCsrfFieldInForm = (formElement) => {
+	if (!(formElement instanceof HTMLFormElement)) {
+		return;
+	}
+
+	const token = getCsrfToken();
+	if (token === '') {
+		return;
+	}
+
+	let input = formElement.querySelector(`input[name="${csrf_token_name}"]`);
+	if (!input) {
+		input = document.createElement('input');
+		input.type = 'hidden';
+		input.name = csrf_token_name;
+		formElement.appendChild(input);
+	}
+
+	input.value = token;
+};
+
+const ensureCsrfFieldsInContainer = (container) => {
+	const root = container && container.jquery ? container[0] : container;
+	if (!(root instanceof Element)) {
+		return;
+	}
+
+	root.querySelectorAll('form').forEach((formElement) => {
+		ensureCsrfFieldInForm(formElement);
+	});
+};
+
+const syncCsrfTokenFromHeaders = (headers = {}) => {
+	if (!headers || typeof headers !== 'object') {
+		return;
+	}
+
+	const token = headers['x-csrf-token'] || headers['X-CSRF-TOKEN'] || headers['X-Csrf-Token'] || '';
+	setCsrfToken(typeof token === 'string' ? token : '');
+};
+
+const syncCsrfTokenFromJqXhr = (xhr) => {
+	if (!xhr) {
+		return;
+	}
+
+	const headerToken = typeof xhr.getResponseHeader === 'function' ? xhr.getResponseHeader('X-CSRF-TOKEN') : '';
+	if (typeof headerToken === 'string' && headerToken !== '') {
+		setCsrfToken(headerToken);
+		return;
+	}
+
+	if (xhr.responseJSON && typeof xhr.responseJSON.csrf_token === 'string') {
+		setCsrfToken(xhr.responseJSON.csrf_token);
+	}
+};
+
+if (typeof axios !== 'undefined' && axios.interceptors) {
+	axios.interceptors.response.use(
+		(response) => {
+			syncCsrfTokenFromHeaders(response.headers || {});
+			if (response && response.data && typeof response.data.csrf_token === 'string') {
+				setCsrfToken(response.data.csrf_token);
+			}
+			return response;
+		},
+		(error) => {
+			if (error && error.response) {
+				syncCsrfTokenFromHeaders(error.response.headers || {});
+				if (error.response.data && typeof error.response.data.csrf_token === 'string') {
+					setCsrfToken(error.response.data.csrf_token);
+				}
+			}
+
+			return Promise.reject(error);
+		}
+	);
+}
+
+if (typeof jQuery !== 'undefined') {
+	$(document).ajaxComplete(function (_event, xhr) {
+		const token = xhr && typeof xhr.getResponseHeader === 'function' ? xhr.getResponseHeader('X-CSRF-TOKEN') : '';
+		setCsrfToken(typeof token === 'string' ? token : '');
+	});
+}
+
 let localeMapCurrency = {
 	USD: {
 		symbol: '$',
@@ -1499,7 +1611,7 @@ const loginApi = async (url, formID = null, token = null) => {
 				if (isError(error.response.status)) {
 					noti(error.response.status, textMessage);
 				} else if (isUnauthorized(error.response.status)) {
-					noti(error.response.status, "Unauthorized: Access is denied");
+					noti(error.response.status, textMessage || "Unauthorized: Access is denied");
 				}
 
 				loadingBtn(submitIdBtn, false, submitBtnText);
@@ -1514,7 +1626,7 @@ const loginApi = async (url, formID = null, token = null) => {
 		loadingBtn(submitIdBtn, false, submitBtnText);
 
 		if (isUnauthorized(res.status)) {
-			noti(res.status, "Unauthorized: Access is denied");
+			noti(res.status, isset(res.data.message) ? res.data.message : "Unauthorized: Access is denied");
 		} else {
 			if (isError(res.status)) {
 				var error_count = 0;
@@ -1552,9 +1664,9 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 			const dataArr = new FormData(frm[0]);
 
 			// Check for meta tag 'secure_token' and append if exists and not empty
-			var secureTokenMeta = document.querySelector('meta[name="secure_token"]');
-			if (secureTokenMeta && secureTokenMeta.content) {
-				dataArr.append(csrf_token_name, secureTokenMeta.content);
+			const csrfToken = getCsrfToken();
+			if (csrfToken) {
+				dataArr.append(csrf_token_name, csrfToken);
 			}
 
 			const submitHeaders = {
@@ -1645,8 +1757,10 @@ const deleteApi = async (id, url, reloadFunction = null, token = null) => {
 	if (id != '') {
 		url = urls(url + '/' + id);
 		try {
+			const csrfToken = getCsrfToken();
 			const deleteHeaders = {
 				'X-Requested-With': 'XMLHttpRequest',
+				'X-CSRF-TOKEN': csrfToken,
 				'content-type': 'application/x-www-form-urlencoded',
 			};
 			const deleteBearer = _resolveToken(token);
@@ -1726,8 +1840,7 @@ const callApi = async (method = 'POST', url, dataObj = null, option = {}, token 
 	const bearerToken = _resolveToken(token);
 
 	// Append CSRF token for state-changing methods
-	const secureTokenMeta = document.querySelector('meta[name="secure_token"]');
-	const csrfToken = secureTokenMeta ? secureTokenMeta.content : null;
+	const csrfToken = getCsrfToken();
 
 	if (['post', 'put', 'patch', 'delete'].includes(lowerMethod)) {
 		const params = new URLSearchParams(dataObj);
@@ -1744,6 +1857,7 @@ const callApi = async (method = 'POST', url, dataObj = null, option = {}, token 
 	// Build headers
 	const headers = {
 		'X-Requested-With': 'XMLHttpRequest',
+		'X-CSRF-TOKEN': csrfToken,
 		'content-type': 'application/x-www-form-urlencoded',
 	};
 	if (bearerToken) {
@@ -1932,7 +2046,14 @@ const noti = (code = 400, text = 'Something went wrong') => {
 	var resCode = typeof code === 'number' ? code : code.status;
 	var textResponse = apiStatus[code];
 
-	var messageText = isSuccess(resCode) ? ucfirst(text) + ' successfully' : isUnauthorized(resCode) ? 'Unauthorized: Access is denied' : isError(resCode) ? text : 'Something went wrong';
+	var normalizedText = typeof text === 'string' ? text.trim() : '';
+	var messageText = isSuccess(resCode)
+		? ucfirst(text) + ' successfully'
+		: isUnauthorized(resCode)
+			? (normalizedText || 'Unauthorized: Access is denied')
+			: isError(resCode)
+				? text
+				: 'Something went wrong';
 	var type = isSuccess(code) ? 'success' : 'error';
 	var title = isSuccess(code) ? 'Great!' : 'Ops!';
 
@@ -2404,7 +2525,8 @@ const generateDatatableClient = async (id, url = null, dataObj = null, filterCol
 	return table;
 }
 
-const loadFileContent = (fileName, idToLoad, sizeModal = 'lg', title = 'Default Title', dataArray = null, typeModal = 'modal') => {
+const loadFileContent = (fileName, idToLoad, sizeModal = 'lg', title = 'Default Title', dataArray = null, typeModal = 'modal', retryOnCsrfMismatch = true) => {
+	const csrfToken = getCsrfToken();
 
 	if (typeModal == 'modal') {
 		var idContent = idToLoad + "-" + sizeModal;
@@ -2424,11 +2546,13 @@ const loadFileContent = (fileName, idToLoad, sizeModal = 'lg', title = 'Default 
 		},
 		headers: {
 			'X-Requested-With': 'XMLHttpRequest',
+			'X-CSRF-TOKEN': csrfToken,
 			'content-type': 'application/x-www-form-urlencoded',
 		},
 		dataType: "html",
 		success: function (data) {
 			$('#' + idContent).append(data);
+			ensureCsrfFieldsInContainer(document.getElementById(idContent));
 
 			setTimeout(function () {
 				if (typeof getPassData == 'function') {
@@ -2449,12 +2573,22 @@ const loadFileContent = (fileName, idToLoad, sizeModal = 'lg', title = 'Default 
 				$('#generaloffcanvas-right').offcanvas('toggle');
 				$('.custom-width').css('width', sizeModal);
 			}
+		},
+		error: function (xhr) {
+			syncCsrfTokenFromJqXhr(xhr);
+
+			if (xhr && xhr.status === 419 && retryOnCsrfMismatch) {
+				return loadFileContent(fileName, idToLoad, sizeModal, title, dataArray, typeModal, false);
+			}
+
+			noti(xhr && xhr.status ? xhr.status : 500, 'Failed to load modal content');
 		}
 	});
 }
 
 const loadFormContent = (fileName, idToLoad, sizeModal = 'lg', urlFunc = null, title = 'Default Title', dataArray =
-	null, typeModal = 'modal') => {
+	null, typeModal = 'modal', retryOnCsrfMismatch = true) => {
+	const csrfToken = getCsrfToken();
 
 	if (typeModal == 'modal') {
 		var idContent = idToLoad + "-" + sizeModal;
@@ -2474,11 +2608,13 @@ const loadFormContent = (fileName, idToLoad, sizeModal = 'lg', urlFunc = null, t
 		},
 		headers: {
 			'X-Requested-With': 'XMLHttpRequest',
+			'X-CSRF-TOKEN': csrfToken,
 			'content-type': 'application/x-www-form-urlencoded',
 		},
 		dataType: "html",
 		success: function (response) {
 			$('#' + idContent).append(response);
+			ensureCsrfFieldsInContainer(document.getElementById(idContent));
 
 			setTimeout(function () {
 				if (typeof getPassData == 'function') {
@@ -2527,6 +2663,12 @@ const loadFormContent = (fileName, idToLoad, sizeModal = 'lg', urlFunc = null, t
 
 		},
 		error: function (xhr, status, error) {
+			syncCsrfTokenFromJqXhr(xhr);
+
+			if (xhr && xhr.status === 419 && retryOnCsrfMismatch) {
+				return loadFormContent(fileName, idToLoad, sizeModal, urlFunc, title, dataArray, typeModal, false);
+			}
+
         	var statusCode = xhr.status; // HTTP status code (e.g., 404, 500)
 			
 			var message;

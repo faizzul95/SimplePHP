@@ -35,6 +35,12 @@ class MasterEmailTemplateController extends Controller
 
         $result['data'] = array_map(function ($row) {
             $id = encodeID($row['id']);
+            $canUpdate = permission('rbac-email-update');
+            $canDelete = permission('rbac-email-delete');
+            $editAction = $canUpdate ? "onclick='editRecord(\"{$id}\")'" : '';
+            $editStyle = $canUpdate ? "cursor: pointer;" : "cursor: not-allowed; opacity: .45;";
+            $deleteAction = $canDelete ? "onclick='deleteRecord(\"{$id}\")'" : '';
+            $deleteText = $canDelete ? 'Delete' : 'Delete (disabled)';
 
             return [
                 'type' => $row['email_type'],
@@ -44,15 +50,15 @@ class MasterEmailTemplateController extends Controller
                 'status' => $row['email_status'] ? '<span class="badge bg-label-success"> Active </span>' : '<span class="badge bg-label-warning"> Inactive </span>',
                 'action' => "
                 <span style='display: inline-block; vertical-align: middle;'>
-                    <i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i>
+                    <i class='bx bx-edit-alt' style='{$editStyle}' {$editAction} title='Edit'></i>
                 </span>
                 <div class='dropdown' style='display: inline-block; vertical-align: middle;'>
                     <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
                         <i class='bx bx-dots-vertical-rounded'></i>
                     </button>
                     <div class='dropdown-menu'>
-                        <a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'>
-                            <i class='bx bx-trash me-1'></i> Delete
+                        <a href='javascript:void(0);' {$deleteAction} class='dropdown-item'>
+                            <i class='bx bx-trash me-1'></i> {$deleteText}
                         </a>
                     </div>
                 </div>

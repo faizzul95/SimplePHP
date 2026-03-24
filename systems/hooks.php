@@ -2,6 +2,139 @@
 
 /*
 |--------------------------------------------------------------------------
+| ENV LOADER (.env)
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('setEnvValue')) {
+    function setEnvValue(string $key, string $value): void
+    {
+        $_ENV[$key] = $value;
+        $_SERVER[$key] = $value;
+        putenv($key . '=' . $value);
+    }
+}
+
+if (!function_exists('loadDotEnv')) {
+    function loadDotEnv(string $filePath): void
+    {
+        if (!is_file($filePath) || !is_readable($filePath)) {
+            return;
+        }
+
+        $lines = file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!is_array($lines)) {
+            return;
+        }
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+
+            if (str_starts_with($line, 'export ')) {
+                $line = trim(substr($line, 7));
+            }
+
+            if (!str_contains($line, '=')) {
+                continue;
+            }
+
+            [$name, $rawValue] = explode('=', $line, 2);
+            $name = trim($name);
+            if ($name === '' || preg_match('/^[A-Z0-9_]+$/i', $name) !== 1) {
+                continue;
+            }
+
+            // Do not overwrite already defined environment variables.
+            if (getenv($name) !== false || array_key_exists($name, $_ENV) || array_key_exists($name, $_SERVER)) {
+                continue;
+            }
+
+            $value = trim($rawValue);
+            if ($value !== '') {
+                $first = $value[0];
+                $last = substr($value, -1);
+                $quoted = ($first === '"' && $last === '"') || ($first === "'" && $last === "'");
+
+                if ($quoted && strlen($value) >= 2) {
+                    $value = substr($value, 1, -1);
+                } else {
+                    $hashPos = strpos($value, ' #');
+                    if ($hashPos !== false) {
+                        $value = rtrim(substr($value, 0, $hashPos));
+                    }
+                }
+
+                $value = str_replace(['\\n', '\\r', '\\t'], ["\n", "\r", "\t"], $value);
+            }
+
+            setEnvValue($name, $value);
+        }
+    }
+}
+
+if (!function_exists('env')) {
+    function env(string $key, mixed $default = null): mixed
+    {
+        if ($key === '') {
+            return $default;
+        }
+
+        $value = getenv($key);
+        if ($value === false) {
+            $value = $_ENV[$key] ?? $_SERVER[$key] ?? null;
+        }
+
+        if ($value === null) {
+            return $default;
+        }
+
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        $normalized = strtolower(trim($value));
+        return match ($normalized) {
+            'true', '(true)' => true,
+            'false', '(false)' => false,
+            'null', '(null)' => null,
+            'empty', '(empty)' => '',
+            default => $value,
+        };
+    }
+}
+
+if (!function_exists('env_list')) {
+    function env_list(string $key, array $default = []): array
+    {
+        $value = env($key, null);
+        if ($value === null) {
+            return $default;
+        }
+
+        if (is_array($value)) {
+            return array_values(array_filter(array_map(static fn($v) => trim((string) $v), $value), static fn($v) => $v !== ''));
+        }
+
+        $csv = trim((string) $value);
+        if ($csv === '') {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', $csv)), static fn($v) => $v !== ''));
+    }
+}
+
+// Load .env as early as possible before config files are evaluated.
+$rootForEnv = defined('ROOT_DIR')
+    ? ROOT_DIR
+    : dirname(__DIR__) . DIRECTORY_SEPARATOR;
+loadDotEnv($rootForEnv . '.env');
+
+/*
+|--------------------------------------------------------------------------
 | GET PROJECT BASE URL
 |--------------------------------------------------------------------------
 */
@@ -605,7 +738,7 @@ if (!function_exists('csrf_field')) {
 if (!function_exists('csrf_value')) {
     function csrf_value()
     {
-        return csrf()->regenerate();
+        return csrf()->getToken() ?: csrf()->init();
     }
 }
 

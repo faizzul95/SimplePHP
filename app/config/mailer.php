@@ -7,13 +7,13 @@
 */
 
 $config['mail'] = [
-    'driver'     => 'smtp',
-    'host'       => 'smtp.gmail.com',
-    'port'       => 587,
-    'username'   => '',
-    'password'   => '',  // need to set here https://myaccount.google.com/apppasswords
-    'encryption' => 'tls',
-    'from_email' => '',
-    'from_name'  => APP_NAME,
-    'debug'      => false,
+    'driver'     => (string) env('MAIL_DRIVER', 'smtp'),
+    'host'       => (string) env('MAIL_HOST', 'smtp.gmail.com'),
+    'port'       => (int) env('MAIL_PORT', 587),
+    'username'   => (string) env('MAIL_USERNAME', ''),
+    'password'   => (string) env('MAIL_PASSWORD', ''),  // Use .env for secrets.
+    'encryption' => (string) env('MAIL_ENCRYPTION', 'tls'),
+    'from_email' => (string) env('MAIL_FROM_ADDRESS', ''),
+    'from_name'  => (string) env('MAIL_FROM_NAME', APP_NAME),
+    'debug'      => (bool) env('MAIL_DEBUG', false),
 ];

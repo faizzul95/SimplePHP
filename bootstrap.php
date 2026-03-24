@@ -69,6 +69,10 @@ if (is_array($environmentPresets) && !empty($environmentPresets)) {
             continue;
         }
 
+        if (isset($sectionOverrides[$topLevelSection]) && is_array($sectionOverrides[$topLevelSection])) {
+            $sectionOverrides = $sectionOverrides[$topLevelSection];
+        }
+
         if (!isset($config[$topLevelSection]) || !is_array($config[$topLevelSection])) {
             $config[$topLevelSection] = [];
         }
@@ -196,14 +200,6 @@ $menuList = [
                     'url' => url('rbac/email'),
                     'file' => 'app/views/rbac/emailTemplate.php',
                     'permission' => 'rbac-email-view',
-                    'active' => true,
-                    'authenticate' => true,
-                ],
-                'observability' => [
-                    'desc' => 'Observability',
-                    'url' => url('system/observability'),
-                    'file' => 'app/views/dashboard/observability.php',
-                    'permission' => 'management-view',
                     'active' => true,
                     'authenticate' => true,
                 ]

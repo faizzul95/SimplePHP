@@ -8,14 +8,14 @@
 
 $config['credentials'] = [
     'google_auth' => [
-        'client_id' => '',
-        'client_secret' => '',
+        'client_id' => (string) env('GOOGLE_CLIENT_ID', ''),
+        'client_secret' => (string) env('GOOGLE_CLIENT_SECRET', ''),
         'cookie_policy' => 'single_host_origin',
-        'redirect_uri' => '', // paramUrl(['_p' => REDIRECT_LOGIN], true)
+        'redirect_uri' => (string) env('GOOGLE_REDIRECT_URI', ''), // paramUrl(['_p' => REDIRECT_LOGIN], true)
     ],
     'recaptcha' => [
-        'enable' => false,
-        'site_key' => '',
-        'secret_key' => '',
+        'enable' => (bool) env('RECAPTCHA_ENABLED', false),
+        'site_key' => (string) env('RECAPTCHA_SITE_KEY', ''),
+        'secret_key' => (string) env('RECAPTCHA_SECRET_KEY', ''),
     ],
 ];

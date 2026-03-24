@@ -8,13 +8,19 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 - **Database Query Builder** - Fluent, expressive database interactions with Laravel-style eager loading — no models required
 - **Large Dataset Eager Loading** - Adaptive chunking plus incremental relation attach to keep memory usage stable on high-cardinality datasets
 - **Modern HTTP Router** - Fast indexed routing with middleware pipeline, named routes, route groups, multi-parameter routes, `where()` constraints, explicit `options()` support, and 405 Method Not Allowed detection
+- **Safer Redirect Helpers** - Convenience redirects are normalized to local app targets so route-level redirects do not silently become external redirects
 - **API Versioning** - Support for versioned (`/api/v1/users`) and non-versioned (`/api/users`) API routes via route group prefixing
 - **Blade-like Template Engine** - Template compilation with caching, includes `@forelse`, `@method`, `@error`, `@checked`, `@class`, and more
+- **Direct View Path Resolution** - Blade engine now accepts both dot notation (`errors.404`) and direct file paths (`app/views/errors/404.php`) safely
 - **Artisan-like Console** - CLI command system with argument parsing, scheduling (cron expressions), colored output, progress bars, and scaffolding generators
 - **Security Audit Command** - OWASP baseline checks with CI-friendly strict mode via `php myth security:audit --ci`
 - **Auth Security Test Command** - Automated JWT tamper, Digest replay, and API-key leakage checks via `php myth auth:security:test --ci`
-- **Laravel-like Auth** - Configurable session keys, `login()`, `attempt()`, OAuth/Socialite support, dual session + API token authentication
-- **RBAC Permissions** - Role-based access control with abilities, checked for both session and token auth
+- **Environment Check Command** - Validate `.env` keys/types and feature-gated secrets via `php myth env:check --ci`
+- **Laravel-like Auth** - Configurable session keys, `login()`, `attempt()`, OAuth/Socialite, OAuth2, JWT, API key, Basic, and Digest support
+- **Session Concurrency Control** - Enforce single-device login or configurable max-device session limits
+- **Auth Debug Diagnostics** - Optional unauthorized context logging for middleware auth failures
+- **Developer Error Dashboard** - APP_DEBUG-only exception page with theme toggle, code context, request/response/environment tabs, and masked sensitive values
+- **RBAC Permissions** - Role-based access control with multi-role support and unified `can()` authorization checks
 - **Collection Class** - Fluent array wrapper with 60+ methods (map, filter, where, pluck, groupBy, reduce, etc.) inspired by Laravel Collection
 - **Cache System** - Unified cache API with file and array drivers, remember pattern, counters, and batch operations
 - **Job Queue** - Database-backed job queue with background workers, retries, failed job management, and delayed dispatch
@@ -35,66 +41,77 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 git clone https://github.com/faizzul95/MythPHP.git
 cd MythPHP
 ```
-2. Edit `app/config/*.php` with your database and mail settings
+2. Create your local environment file:
+```bash
+cp .env.example .env
+```
 
-3. Run database migrations:
+3. Edit `.env` with your local secrets (database, mail, API keys). Keep secrets out of git.
+
+4. Run database migrations:
 ```bash
 php myth migrate
 php myth db:seed
 ```
 
+Default seed result:
+- `superadmin@admin.com` is attached to role `1` (Super Administrator) and receives wildcard `*` access.
+- `admin@admin.com` is attached to role `2` (Administrator) with a reduced permission set for dashboard, user view/create/update, RBAC abilities view/create/update, RBAC roles view/update, and RBAC email view/create/update.
+
 ## Configuration
 
 ### Environment Setup
 
-Edit `app/config/database.php` to configure your application:
+Set runtime config from `.env` (Laravel-style):
 
-```php
-<?php
-global $config;
+```dotenv
+APP_ENV=development
+APP_DEBUG=true
 
-// Environment: development, staging, production
-$config['environment'] = 'development';
+DB_CONNECTION=mysql
+DB_HOST=localhost
+DB_PORT=3306
+DB_DATABASE=example_db
+DB_USERNAME=root
+DB_PASSWORD=
 
-// Database configuration (support multi connection)
-$config['db'] = [
-    'default' => [
-        'development' => [
-            'driver' => 'mysql',
-            'host' => 'localhost',
-            'username' => 'root',
-            'password' => '',
-            'database' => 'your_database',
-            'port' => '3306',
-            'charset' => 'utf8mb4',
-        ]
-    ],
-    'slave' => [
-        'development' => [
-            'driver' => 'mysql',
-            'host' => 'localhost',
-            'username' => 'root',
-            'password' => '',
-            'database' => 'your_database',
-            'port' => '3306',
-            'charset' => 'utf8mb4',
-        ]
-    ]
-];
-
-// Mail configuration
-$config['mail'] = [
-    'driver' => 'smtp',
-    'host' => 'smtp.gmail.com',
-    'port' => 587,
-    'username' => 'your-email@gmail.com',
-    'password' => 'your-app-password',
-    'encryption' => 'TLS',
-    'from_email' => 'your-email@gmail.com',
-    'from_name' => 'Your App Name',
-    'debug' => TRUE,
-];
+MAIL_DRIVER=smtp
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=your-app-password
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS=your-email@gmail.com
+MAIL_FROM_NAME=MythPHP
 ```
+
+Optional security/auth toggles in `.env`:
+
+```dotenv
+# Session-first defaults
+AUTH_METHODS=session
+
+# Enable API/auth extras only when needed
+AUTH_API_METHODS=token
+AUTH_API_KEY_ENABLED=false
+AUTH_OAUTH2_ENABLED=false
+API_RATE_LIMIT_ENABLED=true
+API_RATE_LIMIT_MAX_REQUESTS=60
+API_RATE_LIMIT_WINDOW_SECONDS=60
+
+# Session fingerprint strategy and auth diagnostics
+AUTH_SESSION_BIND_USER_AGENT=true
+AUTH_SESSION_USER_AGENT_MODE=family
+AUTH_DEBUG_LOG_ENABLED=false
+```
+
+Notes:
+- `.env` is already ignored by git in this project.
+- Keep `.env.example` safe (no real secrets).
+- CSRF settings (`CSRF_PROTECTION`, `CSRF_TOKEN_NAME`, `CSRF_COOKIE_NAME`, `CSRF_EXPIRE`, `CSRF_REGENERATE`, `CSRF_SECURE_COOKIE`) are controlled from `.env`.
+- `CSRF_REGENERATE=false` is the recommended default for this framework so modal/AJAX-loaded forms and multi-tab sessions do not drift onto stale tokens between requests.
+- The framework default for `CSRF_SECURE_COOKIE` is secure-by-default; keep your local `.env` override set to `false` on plain HTTP development environments.
+- API component rate limiting is controlled from `.env` via `API_RATE_LIMIT_*`.
 
 ## Usage
 
@@ -136,16 +153,25 @@ $router->group(['prefix' => 'admin', 'middleware' => ['auth.web']], function ($r
 ### API Versioning
 
 ```php
-// app/routes/api.php — Versioned API
+// app/config/api.php
+$config['api']['versioning'] = [
+    'enabled' => true,
+    'current' => 'v1',
+    'prefix' => '/api',
+];
+
+// app/routes/api.php — Versioned API (prefix resolved from config)
 $router->group(['prefix' => '/api/v1', 'middleware' => ['auth.api']], function ($router) {
     $router->get('/users', [UserApiController::class, 'index']);
     $router->resource('/posts', PostApiController::class);
     $router->options('/users', [UserApiController::class, 'options']);
 });
 
-// app/config/auth.php
-// `auth.api` default methods (token-only unless expanded)
-$config['auth']['api_methods'] = ['token', 'jwt', 'api_key'];
+// app/config/api.php - preferred source for auth.api methods
+$config['api']['auth']['methods'] = ['token', 'jwt', 'api_key', 'oauth2'];
+
+// app/config/auth.php - fallback for auth.api methods (used when api.auth.methods is missing)
+$config['auth']['api_methods'] = ['token'];
 
 // Non-versioned API (internal use)
 $router->group(['prefix' => '/api', 'middleware' => ['auth.api']], function ($router) {
@@ -166,6 +192,11 @@ Forms submit to named routes — no hidden `action` fields needed:
 </form>
 ```
 
+For modal or AJAX-loaded forms:
+- keep the route behind the `web` middleware group so CSRF is enforced consistently on write requests
+- keep `CSRF_REGENERATE=false` unless you have a full client-side token refresh strategy for every write response
+- MythPHP's frontend helpers now sync the latest CSRF token from AJAX responses and inject a hidden CSRF field into modal-loaded forms when missing
+
 ### API Calls
 
 ```javascript
@@ -180,6 +211,131 @@ const saved = await callApi('post', "/api/v1/users", {
 // Preflight check endpoint (if exposed)
 const preflight = await callApi('options', '/api/v1/users');
 ```
+
+### Auth Middleware Aliases
+
+```php
+// Dedicated auth method guards
+$router->get('/api/v1/reports', [ReportController::class, 'index'])->middleware('auth.jwt');
+$router->get('/api/v1/integrations', [IntegrationController::class, 'index'])->middleware('auth.oauth2');
+$router->get('/api/v1/admin-only', [AdminController::class, 'index'])->middleware('auth.api_key');
+
+// RBAC and ability middleware
+$router->get('/admin', [AdminController::class, 'index'])->middleware('role:Super Admin,Administrator');
+$router->get('/audit', [AuditController::class, 'index'])->middleware('permission.any:management-view,rbac-roles-view');
+$router->post('/jobs/run', [JobsController::class, 'run'])->middleware('ability:jobs.dispatch,jobs.admin');
+
+// Layer auth + permission on API endpoints
+$router->post('/api/v1/users/delete/{id}', [UserApiController::class, 'delete'])
+    ->middleware('auth.api')
+    ->middleware('permission:user-delete');
+```
+
+Notes:
+- `auth.api` resolves methods through `auth()->apiMethods()` in this order: `api.auth.methods` -> `auth.api_methods` -> `['token']`.
+- Base `auth` middleware without parameters now respects `auth.methods` instead of silently broadening to token auth.
+- `permission`, `permission.any`, and `role` validate authentication across all supported guards (session/token/jwt/api_key/oauth2/basic/digest/oauth).
+- `guest` also checks all supported guards to avoid mixed web/API bypasses.
+- Authenticated guest redirects and post-login browser redirects are resolved from the configured menu/sidebar structure through `resolveAuthenticatedLandingUrl()` instead of hardcoded role checks.
+
+### Debug Error Page
+
+When `APP_DEBUG=true`, uncaught exceptions render a developer page with:
+
+- syntax-highlighted source context for each frame
+- tabs for request, response, environment, and stack details
+- responsive mobile layout with horizontal frame navigation
+- dark/light theme toggle persisted in local storage
+- masking for sensitive env, header, cookie, session, and server values
+
+When `APP_DEBUG=false`, the framework falls back to the compact production error page.
+
+### Session Device Limit (Security)
+
+```php
+// app/config/auth.php
+
+// Force single-device login (new login kicks old session)
+$config['auth']['session_concurrency'] = [
+    'enabled' => true,
+    'max_devices' => 1,
+    'invalidate_oldest' => true,
+    'deny_new_login_when_limit_reached' => false,
+    'enforce_on_check' => true,
+];
+
+// OR allow up to 3 devices and deny the 4th login
+$config['auth']['session_concurrency'] = [
+    'enabled' => true,
+    'max_devices' => 3,
+    'invalidate_oldest' => false,
+    'deny_new_login_when_limit_reached' => true,
+    'enforce_on_check' => true,
+];
+```
+
+Notes:
+- Concurrency enforcement uses the cache layer. Use a persistent cache store (for example file store) for reliable cross-request enforcement.
+- If `deny_new_login_when_limit_reached` is enabled, `auth()->login(...)` can return `false` when device/session limit is exceeded.
+
+### Login Policy (Brute-force Protection)
+
+```php
+// app/config/auth.php
+$config['auth']['systems_login_policy'] = [
+    'enabled' => true,
+    'max_attempts' => 5,
+    'decay_seconds' => 600,
+    'lockout_seconds' => 900,
+    'ban_enabled' => false,
+    'ban_after_failures' => 5,
+    'ban_user_status' => 2,
+    'track_by_identifier' => true,
+    'track_by_ip' => true,
+    'enforce_user_status' => true,
+    'allowed_user_status' => [1],
+    'password_rotation' => [
+        'enabled' => false,
+        'max_age_days' => 90,
+        'password_changed_at_column' => 'password_changed_at',
+        'force_reset_column' => 'force_password_change',
+    ],
+];
+```
+
+Notes:
+- Failed credential attempts are recorded in `system_login_attempt`, and lockout is evaluated from those recent rows.
+- Optional auto-ban can persist a restricted `user_status` after repeated failures for a known user.
+- Successful credential verification clears matching recent login-attempt rows so stale lockouts do not linger.
+- Session authentication re-checks current user status, so banning or suspending a user invalidates existing sessions.
+- Optional password rotation only activates when the configured columns exist, so older schemas keep working.
+- Login attempts/history are written to `system_login_attempt` and `system_login_history` when enabled.
+- Use `auth()->schemaAudit()` to verify required auth tables/columns are present.
+
+Column mapping note:
+- You can rename login-attempt and login-history columns without editing the component by setting `systems_login_policy.attempts_columns` and `systems_login_policy.history_columns` in `app/config/auth.php`.
+
+### Auth 401 Debugging
+
+When investigating unauthorized responses, enable auth debug diagnostics:
+
+```dotenv
+AUTH_DEBUG_LOG_ENABLED=true
+```
+
+Then inspect `logs/error.log` for lines prefixed with `[AuthDebug]`.
+
+If session fingerprint checks are too strict in local testing, keep user-agent binding enabled and use a tolerant mode:
+
+```dotenv
+AUTH_SESSION_BIND_USER_AGENT=true
+AUTH_SESSION_USER_AGENT_MODE=family
+```
+
+Modes:
+- `strict`: full user-agent string fingerprint (most strict)
+- `normalized`: browser major + platform + device class
+- `family`: browser family + major version (most tolerant)
 
 ### Controller Structure (Class-Based)
 
@@ -1972,6 +2128,8 @@ php myth make:seeder PostsSeeder
 php myth serve --port=8080        # Start PHP dev server
 php myth key:generate             # Generate app key
 php myth storage:link             # Create storage symlink
+php myth env:check                # Validate env keys and safety checks
+php myth env:check --ci           # CI mode (non-zero on warnings)
 
 # Scheduler (add to crontab: * * * * * php /path/to/myth schedule:run)
 php myth schedule:run             # Run due scheduled tasks
@@ -2327,14 +2485,16 @@ $router->get('/admin', [AdminController::class, 'index'])->middleware('permissio
 |-------|-------|-------------|
 | `auth` | `RequireAuth` | Session or token authentication |
 | `auth.web` | `RequireSessionAuth` | Session-only authentication |
-| `auth.api` | `RequireApiToken` | Configurable API auth methods from `auth.api_methods` (token default) |
+| `auth.api` | `RequireApiToken` | Configurable API auth methods via `api.auth.methods` with `auth.api_methods` fallback (`token` runtime default) |
 | `auth:jwt` | `RequireAuth` | JWT authentication |
 | `auth:api_key` | `RequireAuth` | API Key authentication |
 | `auth:oauth` | `RequireAuth` | OAuth-backed session authentication |
 | `auth:basic` | `RequireAuth` | HTTP Basic authentication |
 | `auth:digest` | `RequireAuth` | HTTP Digest authentication |
 | `guest` | `EnsureGuest` | Redirect authenticated users |
-| `permission` | `RequirePermission` | Check RBAC permission (session + token) |
+| `permission` | `RequirePermission` | Check RBAC permission across all supported auth guards |
+| `permission.any` | `RequireAnyPermission` | Check OR-style RBAC permissions across all supported auth guards |
+| `role` | `RequireRole` | Check role membership across all supported auth guards |
 | `throttle` | `RateLimit` | Laravel-style rate limiting |
 | `aggressive-throttle` | `ThrottleRequests` | Aggressive IP-based throttling with blocking |
 | `xss` | `XssProtection` | XSS pattern detection on input |

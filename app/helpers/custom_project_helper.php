@@ -183,6 +183,51 @@ if (!function_exists('getPermissionSlug')) {
     }
 }
 
+if (!function_exists('resolveAccessibleMenuUrl')) {
+    function resolveAccessibleMenuUrl(array $items): ?string
+    {
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $isActive = ($item['active'] ?? true) === true;
+            $requiresAuth = ($item['authenticate'] ?? false) === true;
+            $permission = trim((string) ($item['permission'] ?? ''));
+            $url = trim((string) ($item['url'] ?? ''));
+
+            if ($isActive && $requiresAuth && $url !== '' && $url !== 'javascript:void(0);') {
+                if ($permission === '' || permission($permission)) {
+                    return $url;
+                }
+            }
+
+            $subpages = $item['subpage'] ?? [];
+            if (is_array($subpages) && !empty($subpages)) {
+                $subpageUrl = resolveAccessibleMenuUrl($subpages);
+                if ($subpageUrl !== null) {
+                    return $subpageUrl;
+                }
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('resolveAuthenticatedLandingUrl')) {
+    function resolveAuthenticatedLandingUrl(): ?string
+    {
+        global $menuList;
+
+        if (!isset($menuList) || !is_array($menuList)) {
+            return null;
+        }
+
+        return resolveAccessibleMenuUrl($menuList);
+    }
+}
+
 if (!function_exists('currentUserID')) {
     function currentUserID()
     {
@@ -200,7 +245,7 @@ if (!function_exists('currentRank')) {
 if (!function_exists('isSuperadmin')) {
     function isSuperadmin()
     {
-        return currentRoleID() == 1 && currentRank() == 9000 ? true : false;
+        return currentRoleID() == 1 && (int) currentRank() >= 9999 ? true : false;
     }
 }
 

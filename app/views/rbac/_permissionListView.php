@@ -1,3 +1,5 @@
+<?php $canSaveAbilities = permission('rbac-abilities-create') || permission('rbac-abilities-update'); ?>
+
 <div class="row">
     <div class="col-xl-12 mb-4">
         <div class="d-flex justify-content-between align-items-center">
@@ -6,6 +8,7 @@
     </div>
 
     <div class="col-xl-12 mb-4">
+        <?php if ($canSaveAbilities) : ?>
         <form id="permissionForm" method="post" action="<?= route('permissions.save') ?>">
             <div class="row">
                 <div class="col-xl-8 mb-3">
@@ -36,6 +39,11 @@
                 <span class="text-danger">* Indicates a required field</span>
             </div>
         </div>
+        <?php else : ?>
+        <div class="alert alert-info mb-0" role="alert">
+            You have read-only access to abilities.
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 

@@ -1,6 +1,6 @@
 # 19. Console Built-in Commands
 
-## Complete Command List (34 commands)
+## Complete Command List (35 commands)
 
 ### Cache (3)
 
@@ -38,7 +38,7 @@
 | `backup:clean` | Clean old backups |
 | `db:seed` | Run database seeders |
 
-### App Runtime (7)
+### App Runtime (8)
 
 | Command | Description |
 |---------|-------------|
@@ -48,6 +48,7 @@
 | `down` | Put application in maintenance mode |
 | `up` | Bring application out of maintenance mode |
 | `env` | Display current environment |
+| `env:check` | Validate env keys/types and feature-gated secrets (`--strict`, `--ci`, `--show-values`) |
 | `about` | Display application information |
 
 ### Security & Performance (4)
@@ -111,7 +112,7 @@ php myth cache:clear --store=file           # Clear specific store
 
 ## Benefits
 
-- 34 built-in commands covering development, security, performance, deployment, and operations.
+- 35 built-in commands covering development, security, performance, deployment, and operations.
 - Standardized developer workflow.
 - Faster setup for common tasks.
 - Reduced manual mistakes for repetitive operations.

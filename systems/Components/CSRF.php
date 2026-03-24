@@ -37,7 +37,7 @@ class CSRF
         'csrf_token_name' => 'csrf_token',
         'csrf_cookie_name' => 'csrf_cookie',
         'csrf_expire' => 7200,
-        'csrf_regenerate' => true,
+        'csrf_regenerate' => false,
         'csrf_exclude_uris' => [],      // opt-out: URIs to SKIP CSRF (e.g. 'api/*')
         'csrf_include_uris' => [],      // legacy opt-in (ignored when exclude list is non-empty)
         'csrf_secure_cookie' => true,

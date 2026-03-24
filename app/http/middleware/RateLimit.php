@@ -105,11 +105,15 @@ class RateLimit implements MiddlewareInterface
         $ip = (string) $request->ip();
         $path = (string) $request->path();
         $method = strtoupper((string) $request->method());
-        $authId = auth()->id();
+        $authId = auth()->id(['session', 'token', 'jwt', 'api_key', 'oauth2', 'basic', 'digest', 'oauth']);
         $userId = $authId !== null ? (string) $authId : 'guest';
 
         switch ($this->scope) {
             case 'auth':
+                $key = $authId !== null
+                    ? 'user:' . $userId
+                    : 'ip:' . $ip;
+                break;
             case 'auth-route':
                 $key = $authId !== null
                     ? 'user-route:' . $userId . ':' . $method . ':' . $path

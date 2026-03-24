@@ -21,78 +21,74 @@ class AuthController extends Controller
     {
         global $redirectAuth;
 
-        $username = $request->input('username');
-        $password = $request->input('password');
+        $username = trim((string) $request->input('username'));
+        $password = (string) $request->input('password');
         $authMode = strtolower((string) $request->input('auth_mode', 'session'));
 
         if (!in_array($authMode, ['session', 'token', 'both'], true)) {
             $authMode = 'session';
         }
 
+        if ($username === '' || $password === '') {
+            return ['code' => 400, 'message' => 'Invalid username or password'];
+        }
+
+        $credentials = ['password' => $password];
+        if (filter_var($username, FILTER_VALIDATE_EMAIL)) {
+            $credentials['email'] = $username;
+        } else {
+            $credentials['username'] = $username;
+        }
+
         $response = ['code' => 400, 'message' => 'Invalid username or password'];
-        $userData = db()->table('users')
-            ->select('id, password')
-            ->whereRaw('(email = ? OR username = ?)', [$username, $username])
-            ->fetch();
+        $userData = auth()->attempt($credentials);
 
-        if (!empty($userData)) {
-            $ipUser = $request->ip();
-            $countAttempt = db()->table('system_login_attempt')
-                ->selectRaw('COUNT(*) as count')
-                ->where('ip_address', $ipUser)
-                ->where('user_id', $userData['id'])
-                ->whereRaw('time > NOW() - INTERVAL 10 MINUTE')
-                ->fetch();
-
-            if (($countAttempt['count'] ?? 0) >= 5) {
-                return [
-                    'code' => 429,
-                    'message' => 'Too many login attempts. Please try again later.',
+        if ($userData === false) {
+            $attemptStatus = auth()->lastAttemptStatus();
+            if (!empty($attemptStatus)) {
+                $response = [
+                    'code' => (int) ($attemptStatus['http_code'] ?? 400),
+                    'message' => (string) ($attemptStatus['message'] ?? 'Invalid username or password'),
+                    'reason' => (string) ($attemptStatus['reason'] ?? 'invalid_credentials'),
                 ];
+
+                $context = (array) ($attemptStatus['context'] ?? []);
+                if (!empty($context)) {
+                    $response['context'] = $context;
+                }
             }
+        } else {
+            $sessionResponse = $this->loginSessionStart($request, $userData);
+            $response = $sessionResponse;
 
-            if (password_verify((string) $password, (string) $userData['password'])) {
-                $sessionResponse = $this->loginSessionStart($request, $userData, 1);
-                $response = $sessionResponse;
+            if (isSuccess($sessionResponse['code']) && in_array($authMode, ['token', 'both'], true)) {
+                $tokenName = $request->input('token_name', 'Web Login Token');
+                $maxTTL = 30 * 24 * 60 * 60; // 30 days maximum
+                $tokenTTL = min(max((int) $request->input('token_ttl', $maxTTL), 60), $maxTTL);
 
-                if (isSuccess($sessionResponse['code']) && in_array($authMode, ['token', 'both'], true)) {
-                    $tokenName = $request->input('token_name', 'Web Login Token');
-                    $maxTTL = 30 * 24 * 60 * 60; // 30 days maximum
-                    $tokenTTL = min(max((int) $request->input('token_ttl', $maxTTL), 60), $maxTTL);
+                // Derive token abilities from user's actual permissions — never trust client input
+                $tokenAbilities = !empty($_SESSION['permissions']) ? $_SESSION['permissions'] : ['*'];
+                $token = auth()->createToken((int) $userData['id'], (string) $tokenName, time() + $tokenTTL, $tokenAbilities);
 
-                    // Derive token abilities from user's actual permissions — never trust client input
-                    $tokenAbilities = !empty($_SESSION['permissions']) ? $_SESSION['permissions'] : ['*'];
-                    $token = auth()->createToken((int) $userData['id'], (string) $tokenName, time() + $tokenTTL, $tokenAbilities);
+                if (empty($token)) {
+                    $response = ['code' => 500, 'message' => 'Failed to generate access token'];
+                } else {
+                    if ($authMode === 'token') {
+                        auth()->logout(false);
 
-                    if (empty($token)) {
-                        $response = ['code' => 500, 'message' => 'Failed to generate access token'];
+                        $response = [
+                            'code' => 200,
+                            'message' => 'Login',
+                            'token' => $token,
+                            'token_type' => 'Bearer',
+                            'expires_in' => $tokenTTL,
+                        ];
                     } else {
-                        if ($authMode === 'token') {
-                            auth()->logout(false);
-
-                            $response = [
-                                'code' => 200,
-                                'message' => 'Login',
-                                'token' => $token,
-                                'token_type' => 'Bearer',
-                                'expires_in' => $tokenTTL,
-                            ];
-                        } else {
-                            $response['token'] = $token;
-                            $response['token_type'] = 'Bearer';
-                            $response['expires_in'] = $tokenTTL;
-                        }
+                        $response['token'] = $token;
+                        $response['token_type'] = 'Bearer';
+                        $response['expires_in'] = $tokenTTL;
                     }
                 }
-
-                db()->table('system_login_attempt')->where('user_id', $userData['id'])->delete();
-            } else {
-                db()->table('system_login_attempt')->insert([
-                    'ip_address' => $ipUser,
-                    'user_id' => $userData['id'],
-                    'user_agent' => $request->userAgent(),
-                    'time' => timestamp(),
-                ]);
             }
         }
 
@@ -178,10 +174,8 @@ class AuthController extends Controller
         }
     }
 
-    private function loginSessionStart(Request $request, array $userData, int $loginType = 1): array
+    private function loginSessionStart(Request $request, array $userData): array
     {
-        global $redirectAuth;
-
         $userID = (int) $userData['id'];
         $db = db();
 
@@ -193,7 +187,7 @@ class AuthController extends Controller
                     ->where('profile_status', 1)
                     ->where('is_main', 1)
                     ->withOne('roles', 'master_roles', 'id', 'role_id', function ($db) {
-                        $db->select('id,role_name')->where('role_status', 1)
+                        $db->select('id,role_name,role_rank')->where('role_status', 1)
                             ->with('permission', 'system_permission', 'role_id', 'id', function ($db) {
                                 $db->select('id,role_id,abilities_id')
                                     ->withOne('abilities', 'system_abilities', 'id', 'abilities_id', function ($db) {
@@ -216,24 +210,10 @@ class AuthController extends Controller
             ];
         }
 
-        $db->table('system_login_history')->insert([
-            'user_id' => $userData['id'],
-            'ip_address' => $request->ip(),
-            'login_type' => $loginType,
-            'operating_system' => $request->platform(),
-            'browsers' => $request->browser(),
-            'time' => timestamp(),
-            'user_agent' => $request->userAgent(),
-            'created_at' => timestamp(),
-        ]);
-
         $perm = $userData['profile']['roles']['permission'] ?? null;
         $avatar = isset($userData['avatar']['files_path']) ? getFilesCompression($userData['avatar']) : 'public/upload/default.jpg';
 
-        // Regenerate session ID to prevent session fixation attacks
-        session_regenerate_id(true);
-
-        startSession([
+        $loginOk = auth()->login((int) $userData['id'], [
             'userID' => $userData['id'],
             'userFullName' => $userData['name'],
             'userNickname' => $userData['user_preferred_name'],
@@ -246,10 +226,17 @@ class AuthController extends Controller
             'isLoggedIn' => true,
         ]);
 
+        if (!$loginOk) {
+            return [
+                'code' => 500,
+                'message' => 'Failed to initialize session. Please try again.',
+            ];
+        }
+
         return [
             'code' => 200,
             'message' => 'Login',
-            'redirectUrl' => $redirectAuth,
+            'redirectUrl' => function_exists('resolveAuthenticatedLandingUrl') ? (resolveAuthenticatedLandingUrl() ?? url('dashboard')) : url('dashboard'),
         ];
     }
 }

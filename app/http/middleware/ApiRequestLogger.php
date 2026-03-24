@@ -67,7 +67,7 @@ class ApiRequestLogger implements MiddlewareInterface
         }
 
         $this->write($logPath, sprintf(
-            "[%s] REQUEST  id=%s method=%s uri=%s ip=%s agent=%s params=%s",
+            "[%s][REQUEST] id=%s method=%s uri=%s ip=%s agent=%s params=%s",
             date('Y-m-d H:i:s'),
             $requestId,
             $method,
@@ -77,31 +77,53 @@ class ApiRequestLogger implements MiddlewareInterface
             json_encode($params, JSON_UNESCAPED_SLASHES)
         ));
 
-        // Execute next middleware / controller
-        $response = $next($request);
+        try {
+            // Execute next middleware / controller
+            $response = $next($request);
 
-        $duration = round((microtime(true) - $startTime) * 1000, 2);
-        $statusCode = http_response_code() ?: 200;
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+            $statusCode = http_response_code() ?: 200;
+            $outcome = ($statusCode >= 200 && $statusCode < 400) ? 'SUCCESS' : 'FAILED';
 
-        // Log a summary of the response (not the full body to avoid bloat)
-        $responseSummary = 'non-array';
-        if (is_array($response)) {
-            $responseSummary = json_encode(
-                array_intersect_key($response, array_flip(['code', 'message'])),
-                JSON_UNESCAPED_SLASHES
-            );
+            // Log a summary of the response (not the full body to avoid bloat)
+            $responseSummary = 'non-array';
+            if (is_array($response)) {
+                $responseSummary = json_encode(
+                    array_intersect_key($response, array_flip(['code', 'message'])),
+                    JSON_UNESCAPED_SLASHES
+                );
+
+                // Prefer API response code when present to classify outcome.
+                $apiCode = isset($response['code']) && is_numeric($response['code']) ? (int) $response['code'] : null;
+                if ($apiCode !== null) {
+                    $statusCode = $apiCode;
+                    $outcome = ($apiCode >= 200 && $apiCode < 400) ? 'SUCCESS' : 'FAILED';
+                }
+            }
+
+            $this->write($logPath, sprintf(
+                "[%s][%s] RESPONSE id=%s status=%s duration=%sms body=%s",
+                date('Y-m-d H:i:s'),
+                $outcome,
+                $requestId,
+                $statusCode,
+                $duration,
+                $responseSummary
+            ));
+
+            return $response;
+        } catch (\Throwable $e) {
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+            $this->write($logPath, sprintf(
+                "[%s][FAILED] RESPONSE id=%s status=500 duration=%sms exception=%s",
+                date('Y-m-d H:i:s'),
+                $requestId,
+                $duration,
+                $e->getMessage()
+            ));
+
+            throw $e;
         }
-
-        $this->write($logPath, sprintf(
-            "[%s] RESPONSE id=%s status=%s duration=%sms body=%s",
-            date('Y-m-d H:i:s'),
-            $requestId,
-            $statusCode,
-            $duration,
-            $responseSummary
-        ));
-
-        return $response;
     }
 
     /**

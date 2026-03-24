@@ -5,6 +5,7 @@
 - View resolution supports:
   - `app/views/<name>.blade.php`
   - `app/views/<name>.php`
+- Direct file paths such as `app/views/errors/general_error.php`
 - Compiled cache path is configured (`framework.view_cache_path`).
 - Cache key includes source file path + mtime.
 - Compiled files are written with `LOCK_EX`.
