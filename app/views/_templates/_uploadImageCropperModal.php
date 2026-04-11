@@ -46,7 +46,6 @@
 				<input type="hidden" name="entity_file_type" id="entity_file_type" placeholder="entity_file_type">
 				<input type="hidden" name="folder_group" id="folder_group" placeholder="folder_group" readonly>
 				<input type="hidden" name="folder_type" id="folder_type" placeholder="folder_type" readonly>
-				<input type="hidden" name="_whitelist_field" value="image" readonly>
 				<button type="button" id="deleteBtn" class="btn btn-outline-danger d-none">
 					<i class="bx bx-trash me-1"></i>
 					Delete
