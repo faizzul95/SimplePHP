@@ -121,7 +121,11 @@ class AuthController extends Controller
             return ['code' => 400, 'message' => 'User not found'];
         }
 
-        $emailTemplate = db()->table('master_email_templates')->where('email_type', 'RESET_PASSWORD')->where('email_status', 1)->fetch();
+        $emailTemplate = db()->table('master_email_templates')
+            ->where('email_type', 'RESET_PASSWORD')
+            ->where('email_status', 1)
+            ->safeOutputWithException(['email_body'])
+            ->fetch();
         if (empty($emailTemplate)) {
             return ['code' => 400, 'message' => 'No email template found'];
         }

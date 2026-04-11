@@ -15,7 +15,7 @@ class UploadController extends Controller
 
     public function uploadImageCropper(UploadImageCropperRequest $request): void
     {
-        $response = ['code' => 400, 'message' => 'Invalid request'];
+        $storedFile = null;
 
         try {
             $entity_id = decodeID($request->validated('entity_id'));
@@ -23,24 +23,17 @@ class UploadController extends Controller
             $entity_file_type = $request->validated('entity_file_type');
             $image = $request->validated('image');
 
-            $imageConvert = convertBase64String($image);
-
-            if (!$imageConvert['status']) {
-                $response = ['code' => 400, 'message' => $imageConvert['error']];
-                jsonResponse($response);
+            if (empty($entity_id)) {
+                jsonResponse(['code' => 400, 'message' => 'Entity ID is invalid']);
             }
-
-            $imageUpload = $imageConvert['data'];
-            $extension = $imageConvert['extension'];
 
             $user_id = currentUserID();
             $id = decodeID($request->validated('id'));
             $folder_group = $request->validated('folder_group', 'unknown');
             $folder_type = $request->validated('folder_type', 'unknown');
+            $originalBaseName = $entity_id . '_' . date('YmdHis');
 
             $folder = folder($folder_group, $entity_id, $folder_type);
-            $fileNameNew = $entity_id . "_" . date('dFY') . "_" . date('his') . '.' . $extension;
-            $path = ROOT_DIR . $folder . '/' . $fileNameNew;
 
             $dataPrev = [];
             if (empty($id)) {
@@ -53,94 +46,100 @@ class UploadController extends Controller
                 $dataPrev = db()->table('entity_files')->where('id', $id)->fetch();
             }
 
-            if (!is_dir(ROOT_DIR . $folder)) {
-                if (!mkdir(ROOT_DIR . $folder, 0755, true)) {
-                    $response = ['code' => 500, 'message' => 'Failed to create upload directory'];
-                    jsonResponse($response);
-                }
+            $uploader = files();
+            $uploader->setUploadDir($folder, 0755);
+            $uploader->setMaxFileSize(8);
+            $uploader->setAllowedMimeTypes('image/jpeg, image/png');
+            $uploader->setImageLimits(5000, 5000, 16000000);
+
+            $uploadResult = $uploader->uploadBase64Image($image, [
+                'original_name' => $originalBaseName . '.upload',
+                'compress' => true,
+                'file_compression' => 3,
+            ]);
+
+            if (!$uploadResult['isUpload']) {
+                jsonResponse([
+                    'code' => (int) ($uploadResult['code'] ?? 400),
+                    'message' => (string) ($uploadResult['message'] ?: 'Failed to process uploaded image'),
+                ]);
             }
 
-            if (file_put_contents($path, $imageUpload)) {
-                try {
-                    $moveImg = moveFile(
-                        $fileNameNew,
-                        $path,
-                        $folder,
-                        [
-                            'type' => $entity_type,
-                            'file_type' => $entity_file_type,
-                            'entity_id' => $entity_id,
-                            'user_id' => $user_id,
-                        ],
-                        'rename',
-                        true,
-                        3
-                    );
+            $stored = $uploadResult['files'];
+            $storedFile = [
+                'files_name' => html_entity_decode($stored['name'], ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+                'files_original_name' => $originalBaseName . '.' . $stored['extension'],
+                'files_folder' => $stored['relative_folder'],
+                'files_type' => 'image',
+                'files_mime' => $stored['mime'],
+                'files_extension' => $stored['extension'],
+                'files_size' => $stored['size'],
+                'files_compression' => $stored['compression'],
+                'files_path' => $stored['relative_path'],
+                'files_path_is_url' => 0,
+                'entity_type' => $entity_type,
+                'entity_file_type' => $entity_file_type,
+                'entity_id' => $entity_id,
+                'user_id' => $user_id,
+            ];
 
-                    if (!empty($moveImg)) {
-                        try {
-                            if (empty($id)) {
-                                $moveImg['created_at'] = timestamp();
-                                $response = db()->table('entity_files')->insert($moveImg);
-                            } else {
-                                $moveImg['updated_at'] = timestamp();
-                                $response = db()->table('entity_files')->where('id', $id)->update($moveImg);
-                            }
-
-                            if (isSuccess($response['code'])) {
-                                unlinkOldFiles($dataPrev);
-                                $response = ['code' => 200, 'message' => 'Image uploaded successfully', 'data' => $moveImg];
-                            }
-                        } catch (\Exception $e) {
-                            if (file_exists($path)) {
-                                unlink($path);
-                            }
-                            error_log("Database error: " . $e->getMessage());
-                            $response = ['code' => 500, 'message' => 'Database error occurred'];
-                        }
-                    } else {
-                        if (file_exists($path)) {
-                            unlink($path);
-                        }
-                        $response = ['code' => 500, 'message' => 'Failed to process uploaded file'];
-                    }
-                } catch (\Exception $e) {
-                    if (file_exists($path)) {
-                        unlink($path);
-                    }
-                    error_log("Move file error: " . $e->getMessage());
-                    $response = ['code' => 500, 'message' => 'Failed to move uploaded file'];
-                }
+            if (empty($id)) {
+                $storedFile['created_at'] = timestamp();
+                $response = db()->table('entity_files')->insert($storedFile);
             } else {
-                $response = ['code' => 500, 'message' => 'Failed to save image file'];
+                $storedFile['updated_at'] = timestamp();
+                $response = db()->table('entity_files')->where('id', $id)->update($storedFile);
             }
-        } catch (\Exception $e) {
-            error_log("Upload image cropper error: " . $e->getMessage());
-            $response = ['code' => 500, 'message' => 'An unexpected error occurred'];
-        }
 
-        jsonResponse($response);
+            if (isError($response['code'])) {
+                if ($storedFile !== null) {
+                    unlinkOldFiles($storedFile);
+                }
+
+                logger()->logWithContext('Upload image cropper database write failed', [
+                    'entity_id' => $entity_id,
+                    'entity_type' => $entity_type,
+                    'entity_file_type' => $entity_file_type,
+                    'response' => $response,
+                ], \Components\Logger::LOG_LEVEL_ERROR);
+                jsonResponse(['code' => 500, 'message' => 'Database error occurred']);
+            }
+
+            unlinkOldFiles($dataPrev);
+            jsonResponse([
+                'code' => 200,
+                'message' => 'Image uploaded successfully',
+                'data' => $storedFile,
+            ]);
+        } catch (\Throwable $e) {
+            if ($storedFile !== null) {
+                unlinkOldFiles($storedFile);
+            }
+
+            logger()->logException($e);
+            jsonResponse(['code' => 500, 'message' => 'An unexpected error occurred']);
+        }
     }
 
     public function removeUploadFiles(Request $request): void
     {
-        $id = decodeID(request()->input('id'));
-
-        if (empty($id)) {
-            jsonResponse(['code' => 400, 'message' => 'ID is required']);
-        }
+        $id = $this->decodeIdOrFail((string) $request->input('id'), 'ID');
 
         $files = db()->table('entity_files')->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
             ->where('id', $id)
             ->fetch();
 
         if (empty($files)) {
-            jsonResponse(['code' => 400, 'message' => 'No files data found']);
+            jsonResponse(['code' => 404, 'message' => 'No files data found']);
         }
 
         $result = db()->table('entity_files')->where('id', $id)->delete();
 
         if (isError($result['code'])) {
+            logger()->logWithContext('Upload file deletion failed', [
+                'entity_file_id' => $id,
+                'response' => $result,
+            ], \Components\Logger::LOG_LEVEL_ERROR);
             jsonResponse(['code' => 422, 'message' => 'Failed to delete files']);
         }
 

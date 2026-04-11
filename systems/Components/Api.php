@@ -4,6 +4,7 @@ namespace Components;
 
 use PDO;
 use Exception;
+use InvalidArgumentException;
 
 /**
  * Secure PSR-Compliant API Class
@@ -40,12 +41,27 @@ class Api
      */
     private function safeTable(string $name): string
     {
-        return preg_replace('/[^a-zA-Z0-9_]/', '', $name) ?: 'users_access_tokens';
+        $sanitized = preg_replace('/[^a-zA-Z0-9_]/', '', trim($name));
+        if (!is_string($sanitized) || $sanitized === '') {
+            throw new InvalidArgumentException('Configured table name is invalid.');
+        }
+
+        return $sanitized;
     }
     
     private function safeColumn(string $name, string $fallback = 'id'): string
     {
-        return preg_replace('/[^a-zA-Z0-9_]/', '', $name) ?: $fallback;
+        $sanitized = preg_replace('/[^a-zA-Z0-9_]/', '', trim($name));
+        if (is_string($sanitized) && $sanitized !== '') {
+            return $sanitized;
+        }
+
+        $fallbackSanitized = preg_replace('/[^a-zA-Z0-9_]/', '', trim($fallback));
+        if (!is_string($fallbackSanitized) || $fallbackSanitized === '') {
+            throw new InvalidArgumentException('Configured column name is invalid.');
+        }
+
+        return $fallbackSanitized;
     }
 
     /**
@@ -222,10 +238,10 @@ class Api
             return null;
         }
 
-            $fallbackUser = $this->resolveFallbackTokenUser((int) ($tokenRecord['user_id'] ?? 0));
-            if ($fallbackUser === null) {
-                return null;
-            }
+        $fallbackUser = $this->resolveFallbackTokenUser((int) ($tokenRecord['user_id'] ?? 0));
+        if ($fallbackUser === null) {
+            return null;
+        }
 
         // Update last used timestamp
         $updateStmt = $this->pdo->prepare("
@@ -436,35 +452,56 @@ class Api
         $maxRequests = $this->config['rate_limit']['max_requests'];
         $windowSeconds = $this->config['rate_limit']['window_seconds'];
         $windowStart = date('Y-m-d H:i:s', time() - $windowSeconds);
+        $requestWindow = date('Y-m-d H:i:s');
         $rateLimitTable = $this->safeTable($this->config['rate_limit_table']);
 
-        // Clean old entries
-        $cleanStmt = $this->pdo->prepare("
-            DELETE FROM {$rateLimitTable} 
-            WHERE window_start < ?
-        ");
-        $cleanStmt->execute([$windowStart]);
+        $startedTransaction = false;
 
-        // Check current request count
-        $checkStmt = $this->pdo->prepare("
-            SELECT SUM(requests_count) as total_requests 
-            FROM {$rateLimitTable} 
-            WHERE ip_address = ? AND window_start >= ?
-        ");
-        $checkStmt->execute([$clientIp, $windowStart]);
-        $result = $checkStmt->fetch(PDO::FETCH_ASSOC);
-        $currentRequests = (int)($result['total_requests'] ?? 0);
+        try {
+            if (!$this->pdo->inTransaction()) {
+                $this->pdo->beginTransaction();
+                $startedTransaction = true;
+            }
 
-        if ($currentRequests >= $maxRequests) {
-            return false;
+            $cleanStmt = $this->pdo->prepare(" 
+                DELETE FROM {$rateLimitTable} 
+                WHERE window_start < ?
+            ");
+            $cleanStmt->execute([$windowStart]);
+
+            $checkStmt = $this->pdo->prepare(" 
+                SELECT SUM(requests_count) as total_requests 
+                FROM {$rateLimitTable} 
+                WHERE ip_address = ? AND window_start >= ?
+            ");
+            $checkStmt->execute([$clientIp, $windowStart]);
+            $result = $checkStmt->fetch(PDO::FETCH_ASSOC);
+            $currentRequests = (int) ($result['total_requests'] ?? 0);
+
+            if ($currentRequests >= $maxRequests) {
+                if ($startedTransaction && $this->pdo->inTransaction()) {
+                    $this->pdo->rollBack();
+                }
+
+                return false;
+            }
+
+            $recordStmt = $this->pdo->prepare(" 
+                INSERT INTO {$rateLimitTable} (ip_address, requests_count, window_start) 
+                VALUES (?, 1, ?)
+            ");
+            $recordStmt->execute([$clientIp, $requestWindow]);
+
+            if ($startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($startedTransaction && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            throw $e;
         }
-
-        // Record this request - simple insert per window
-        $recordStmt = $this->pdo->prepare("
-            INSERT INTO {$rateLimitTable} (ip_address, requests_count, window_start) 
-            VALUES (?, 1, NOW())
-        ");
-        $recordStmt->execute([$clientIp]);
 
         return true;
     }
@@ -671,7 +708,7 @@ class Api
             } else {
                 $this->sendJsonResponse(['data' => $result]);
             }
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             if ($this->config['log_errors']) {
                 error_log("API Exception: " . $e->getMessage());
             }

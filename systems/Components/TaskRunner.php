@@ -284,11 +284,11 @@ class TaskRunner
             return null;
         }
 
-        $params = null;
+        $params = [];
         if (!empty($task['params']) && is_array($task['params'])) {
-            $params = implode(' ', array_map(static function ($param) {
-                return escapeshellarg((string) $param);
-            }, $task['params']));
+            $params = array_map(static function ($param) {
+                return (string) $param;
+            }, $task['params']);
         }
 
         $logFolderPath = $this->logPath . 'debug_log' . DIRECTORY_SEPARATOR;
@@ -305,15 +305,17 @@ class TaskRunner
             ['file', $logFolderPath . 'STDERR.log', 'a'],
         ];
 
-        $command = escapeshellarg((string) $this->phpCommand) . ' ' . escapeshellarg($filePath);
-        if (is_string($params) && $params !== '') {
-            $command .= ' ' . $params;
-        }
+        $commandArgs = array_merge([(string) $this->phpCommand, $filePath], $params);
+        $command = $this->formatCommandForLog($commandArgs);
 
         try {
             // Open a process for the task
-            $process = proc_open($command, $descriptors, $pipes);
+            $process = proc_open($commandArgs, $descriptors, $pipes, null, null, ['bypass_shell' => true]);
             if (is_resource($process)) {
+                if (isset($pipes[0]) && is_resource($pipes[0])) {
+                    fclose($pipes[0]);
+                }
+
                 // Add task to running tasks list
                 $pid = $this->getPid($process);
                 $this->print("TaskRunner - Start (PID: {$pid}) '$command'");
@@ -329,6 +331,18 @@ class TaskRunner
             $this->print("An error occurred while executing the task: " . $e->getMessage());
             return null;
         }
+    }
+
+    /**
+     * Render the process arguments into a safe, human-readable log line.
+     *
+     * @param array<int, string> $commandArgs
+     */
+    private function formatCommandForLog(array $commandArgs): string
+    {
+        return implode(' ', array_map(static function (string $value): string {
+            return escapeshellarg($value);
+        }, $commandArgs));
     }
 
     /**

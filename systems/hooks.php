@@ -591,6 +591,42 @@ if (!function_exists('logger')) {
 
 /*
 |--------------------------------------------------------------------------
+| SECURITY COMPONENT
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('security')) {
+    function security()
+    {
+        static $instance = null;
+        if ($instance === null) {
+            $instance = new \Components\Security();
+        }
+
+        return $instance;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| FILES COMPONENT
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('files')) {
+    function files()
+    {
+        static $instance = null;
+        if ($instance === null) {
+            $instance = new \Components\Files();
+        }
+
+        return $instance;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
 | REQUEST COMPONENT
 |--------------------------------------------------------------------------
 */

@@ -123,7 +123,6 @@
                             <span class="text-danger">* Indicates a required field</span>
                             <div class="text-center mt-4">
                                 <input type="hidden" id="id" name="id" placeholder="email_id" readonly>
-                                <input type="hidden" name="_whitelist_field" value="email_body" readonly>
                                 <button id="submitBtn" type="submit" class="btn btn-md btn-info mb-3">
                                     <i class='bx bx-save'></i> Save
                                 </button>

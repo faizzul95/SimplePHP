@@ -50,6 +50,9 @@ $config['framework'] = [
         'web' => ['headers', 'request.safety', 'csrf', 'throttle:web'],
         'api' => ['headers', 'request.safety', 'throttle:api', 'xss', 'api.log'],
     ],
+    'middleware_override_aliases' => [
+        'xss',
+    ],
     'rate_limiters' => [
         'web' => [
             'max_attempts' => 120,

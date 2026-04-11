@@ -14,6 +14,16 @@ function sendUsingMailer($recipientData = NULL, $subject = NULL, $dataBody = NUL
 {
     global $config;
 
+    $recipientData = is_array($recipientData) ? $recipientData : [];
+    $primaryEmail = trim((string) ($recipientData['recipient_email'] ?? ''));
+    $primaryName = trim((string) ($recipientData['recipient_name'] ?? ''));
+    $subject = (string) ($subject ?? '');
+    $dataBody = (string) ($dataBody ?? '');
+
+    if ($primaryEmail === '' || filter_var($primaryEmail, FILTER_VALIDATE_EMAIL) === false) {
+        return ['success' => false, 'message' => 'Invalid recipient email address'];
+    }
+
     // Create an instance; passing `true` enables exceptions
     $mail = new PHPMailer(true);
 
@@ -37,17 +47,23 @@ function sendUsingMailer($recipientData = NULL, $subject = NULL, $dataBody = NUL
 
         // Recipients
         $mail->setFrom($config['mail']['from_email'], $config['mail']['from_name']);
-        $mail->addAddress($recipientData['recipient_email'], $recipientData['recipient_name']); // Add a recipient
+        $mail->addAddress($primaryEmail, $primaryName); // Add a recipient
 
         // Add a CC recipient
         if (array_key_exists("recipient_cc", $recipientData) && hasData($recipientData['recipient_cc'])) {
             $ccs = $recipientData['recipient_cc'];
             if (is_array($ccs)) {
                 foreach ($ccs as $cc) {
-                    $mail->addCC($cc);
+                    $cc = trim((string) $cc);
+                    if (filter_var($cc, FILTER_VALIDATE_EMAIL) !== false) {
+                        $mail->addCC($cc);
+                    }
                 }
             } else {
-                $mail->addCC($ccs);
+                $ccs = trim((string) $ccs);
+                if (filter_var($ccs, FILTER_VALIDATE_EMAIL) !== false) {
+                    $mail->addCC($ccs);
+                }
             }
         }
 
@@ -56,10 +72,16 @@ function sendUsingMailer($recipientData = NULL, $subject = NULL, $dataBody = NUL
             $bccs = $recipientData['recipient_bcc'];
             if (is_array($bccs)) {
                 foreach ($bccs as $bcc) {
-                    $mail->AddBCC($bcc);
+                    $bcc = trim((string) $bcc);
+                    if (filter_var($bcc, FILTER_VALIDATE_EMAIL) !== false) {
+                        $mail->addBCC($bcc);
+                    }
                 }
             } else {
-                $mail->AddBCC($bccs);
+                $bccs = trim((string) $bccs);
+                if (filter_var($bccs, FILTER_VALIDATE_EMAIL) !== false) {
+                    $mail->addBCC($bccs);
+                }
             }
         }
 
@@ -71,11 +93,11 @@ function sendUsingMailer($recipientData = NULL, $subject = NULL, $dataBody = NUL
         if (!empty($attachment)) {
             if (is_array($attachment)) {
                 foreach ($attachment as $files) {
-                    if (file_exists($files))
+                    if (is_string($files) && security()->canReadPath($files))
                         $mail->addAttachment($files);
                 }
             } else {
-                if (file_exists($attachment))
+                if (is_string($attachment) && security()->canReadPath($attachment))
                     $mail->addAttachment($attachment);
             }
         }

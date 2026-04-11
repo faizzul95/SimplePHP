@@ -585,6 +585,7 @@ class Router
 
         // Expand middleware groups first, then resolve aliases
         $expanded = $this->expandMiddlewareGroups($middleware);
+        $expanded = $this->normalizeOverridableMiddleware($expanded);
         $instances = [];
 
         foreach ($expanded as $item) {
@@ -614,6 +615,78 @@ class Router
 
         $this->middlewareCache[$cacheKey] = $instances;
         return $instances;
+    }
+
+    /**
+     * Normalize middleware aliases where a later declaration should override an
+     * earlier one with the same alias.
+     *
+     * Overridable aliases are configured in framework.middleware_override_aliases.
+     * This allows group defaults such as `xss` to stay enabled globally while a
+     * route-specific declaration like `xss:email_body` replaces the earlier one.
+     *
+     * @param string[] $middleware
+     * @return string[]
+     */
+    private function normalizeOverridableMiddleware(array $middleware): array
+    {
+        $overridable = $this->resolveOverridableMiddlewareAliases();
+        if (empty($overridable)) {
+            return $middleware;
+        }
+
+        $lastIndexByBase = [];
+
+        foreach ($middleware as $index => $item) {
+            $name = (string) $item;
+            $baseName = str_contains($name, ':') ? explode(':', $name, 2)[0] : $name;
+
+            if (in_array($baseName, $overridable, true)) {
+                $lastIndexByBase[$baseName] = $index;
+            }
+        }
+
+        if (empty($lastIndexByBase)) {
+            return $middleware;
+        }
+
+        $normalized = [];
+
+        foreach ($middleware as $index => $item) {
+            $name = (string) $item;
+            $baseName = str_contains($name, ':') ? explode(':', $name, 2)[0] : $name;
+
+            if (isset($lastIndexByBase[$baseName]) && $lastIndexByBase[$baseName] !== $index) {
+                continue;
+            }
+
+            $normalized[] = $name;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Resolve middleware aliases that use last-one-wins override semantics.
+     *
+     * @return string[]
+     */
+    private function resolveOverridableMiddlewareAliases(): array
+    {
+        if (!function_exists('config')) {
+            return ['xss'];
+        }
+
+        $configured = config('framework.middleware_override_aliases', ['xss']);
+        if (!is_array($configured)) {
+            return ['xss'];
+        }
+
+        return array_values(array_filter(array_map(static function ($value): string {
+            return trim((string) $value);
+        }, $configured), static function (string $value): bool {
+            return $value !== '';
+        }));
     }
 
     /**

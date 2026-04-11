@@ -6,7 +6,7 @@ This knowledge set documents only capabilities verified from the current codebas
 
 - `01`–`10`: core runtime and architecture (request flow, router, security, config, limits)
 - `11`–`18`: implementation surfaces (controller base, DB layer, auth/api, files, task runner)
-- `19`–`26`: operational and developer tooling (console, scheduler, collections, JS helpers, capability map, schema builder)
+- `19`–`27`: operational and developer tooling (console, scheduler, collections, JS helpers, capability map, schema builder, security component)
 
 Each file is intentionally topic-scoped so AI agents and junior developers can load only what they need.
 
@@ -46,6 +46,7 @@ Each file is intentionally topic-scoped so AI agents and junior developers can l
 - [24. Global Helpers & Hooks](24-global-helpers-hooks.md)
 - [25. Framework Capability Map](25-framework-capability-map.md)
 - [26. Schema Builder & Migration](26-schema-builder-migration.md)
+- [27. Security Component](27-security-component.md)
 
 ## How To Use This Knowledge Base
 

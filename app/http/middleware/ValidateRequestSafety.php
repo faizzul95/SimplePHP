@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use Components\Security;
 use Core\Http\Middleware\MiddlewareInterface;
 use Core\Http\Request;
 use Core\Http\Response;
@@ -10,8 +11,12 @@ class ValidateRequestSafety implements MiddlewareInterface
 {
     private array $config = [];
 
+    private Security $security;
+
     public function __construct()
     {
+        $this->security = new Security();
+
         $defaults = [
             'enabled' => true,
             'max_uri_length' => 2000,
@@ -43,17 +48,17 @@ class ValidateRequestSafety implements MiddlewareInterface
         }
 
         $uri = (string) ($_SERVER['REQUEST_URI'] ?? '/');
-        if (strlen($uri) > (int) ($this->config['max_uri_length'] ?? 2000)) {
+        if ($this->security->exceedsMaxLength($uri, (int) ($this->config['max_uri_length'] ?? 2000))) {
             return $this->reject($request, 414, 'Request URI too long.');
         }
 
         // Optional host allow-list hardening.
         $allowedHosts = (array) ($this->config['allowed_hosts'] ?? []);
         if (!empty($allowedHosts)) {
-            $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
-            $host = preg_replace('/:\\d+$/', '', $host);
-            $normalized = array_map(static function ($value) {
-                return strtolower(trim((string) $value));
+            $host = $this->security->normalizeHostHeader((string) ($_SERVER['HTTP_HOST'] ?? ''));
+            $security = $this->security;
+            $normalized = array_map(static function ($value) use ($security) {
+                return $security->normalizeHostHeader((string) $value);
             }, $allowedHosts);
 
             if ($host === '' || !in_array($host, $normalized, true)) {
@@ -67,7 +72,7 @@ class ValidateRequestSafety implements MiddlewareInterface
         }
 
         $userAgent = (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
-        if ($userAgent !== '' && strlen($userAgent) > (int) ($this->config['max_user_agent_length'] ?? 1024)) {
+        if ($userAgent !== '' && $this->security->exceedsMaxLength($userAgent, (int) ($this->config['max_user_agent_length'] ?? 1024))) {
             return $this->reject($request, 400, 'Invalid user agent length.');
         }
 

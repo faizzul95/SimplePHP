@@ -263,6 +263,32 @@ class SendWelcomeEmail extends Job
 }
 ```
 
+### HTML Template Queue Pattern
+
+When queueing work that renders HTML, prefer passing lightweight identifiers into the job instead of serializing full rendered HTML into the queue payload.
+
+This applies to:
+
+- Email templates
+- Receipt and invoice generation
+- Printable letters or reports
+- Other trusted admin-defined or config-defined HTML layouts
+
+Recommended flow:
+
+1. Store or define the trusted template in a database record, config value, seeded default, or view-like source.
+2. Dispatch the job with the template key or template ID plus placeholder data.
+3. Inside the job, resolve the template from its authoritative source.
+4. If the template comes from the database and includes HTML columns, use `safeOutputWithException([...])` for the HTML field so the markup is returned intact.
+5. Replace placeholders and render the final HTML inside the job.
+
+Benefits:
+
+- Keeps queue payloads small.
+- Avoids stale serialized template markup when templates are updated.
+- Preserves trusted HTML while still applying normal safe output rules to other columns.
+- Works for both config-based and database-based templates.
+
 ### 8) Queue — dispatching jobs
 
 ```php

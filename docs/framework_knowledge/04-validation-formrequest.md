@@ -219,6 +219,30 @@ Good rule of thumb:
 
 Built-in XSS patterns detect: script/iframe/svg tags, event handlers (`onclick`, `onload`, etc.), javascript/vbscript protocols, data URIs with executable types, CSS @import, Base64 encoded scripts, URL-encoded bypasses.
 
+### Trusted HTML
+
+Use `safe_html` only for fields that are intentionally allowed to store trusted HTML, such as email templates, receipt or invoice layouts, print templates, or curated CMS fragments.
+
+- `safe_html` is for trusted rich-text storage, not arbitrary user comments.
+- It allows a constrained tag set suitable for rendered template markup.
+- It rejects executable tags, event-handler attributes, unsafe `href` and `src` schemes, PHP tags, and dangerous inline CSS.
+- Keep generic text fields on `secure_value` or `xss` instead of switching them to `safe_html`.
+- For static templates stored in config files, validate or review the template at definition time and treat the config source as trusted application code, not user input.
+
+Recommended pattern for trusted template fields:
+
+```php
+'template_body' => 'required|string|min_length:5|max_length:200000|safe_html'
+```
+
+If you need to preserve markup, do not add `strip_tags` or `html_encode` sanitizers to that field.
+
+Common template sources:
+
+- Database-backed templates edited by admins.
+- Config-backed templates for receipts, invoices, letters, or print layouts.
+- Seeded default templates later overridden through admin tooling.
+
 ### SQL Injection Detection
 
 `no_sql_injection` rule blocks: UNION SELECT, DROP TABLE, INSERT INTO, DELETE FROM, admin'-- patterns, OR 1=1, xp_cmdshell, BENCHMARK, SLEEP patterns.

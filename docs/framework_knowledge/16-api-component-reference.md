@@ -7,6 +7,12 @@
 Source: `systems/Components/Api.php` (~540 lines).  
 Config: `app/config/api.php`.
 
+## Current Behavioral Notes
+
+- Configured table and column identifiers are validated strictly. Invalid values now fail fast instead of silently falling back to a different table or column name.
+- `handleRequest()` catches `\Throwable`, so PHP runtime errors in callbacks or downstream auth resolution are routed through the API error response path.
+- Rate-limit tracking performs the count-and-record step inside a database transaction when possible, which reduces race conditions under concurrent traffic.
+
 ## Complete API Reference
 
 ### Route Registration
@@ -45,7 +51,7 @@ Routes support `{param}` patterns (converted to named regex groups internally).
 The `handleRequest()` method executes this sequence automatically:
 
 1. **CORS handling** — Sets `Access-Control-Allow-*` headers. Auto-responds to `OPTIONS` preflight.
-2. **Rate limiting** — Enforces per-IP request limits using configurable DB table. Skips whitelisted IPs/URLs.
+2. **Rate limiting** — Enforces per-IP request limits using configurable DB table. Skips whitelisted IPs/URLs. The read-and-insert step is wrapped in a transaction when supported by the PDO driver.
 3. **Route matching** — Finds matching route (exact or regex with `{param}` extraction).
 4. **Authentication** — Resolves configured auth methods (`auth.methods`) in order. Skips for whitelisted URLs.
 5. **Callback execution** — Runs route callback, captures return value.
@@ -77,6 +83,11 @@ $config['api'] = [
     ],
 ];
 ```
+
+### Config Safety
+
+- `token_table` and `rate_limit_table` must resolve to valid SQL identifiers made from letters, digits, and underscores.
+- Invalid configured identifiers are treated as configuration errors rather than being silently replaced with unrelated defaults.
 
 ### Storage Tables
 

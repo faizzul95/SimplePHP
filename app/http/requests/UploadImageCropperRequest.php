@@ -8,7 +8,7 @@ class UploadImageCropperRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return permission('settings-upload-image');
+        return isSuperadmin() || permission('settings-upload-image');
     }
 
     public function primaryKey(): string|array

@@ -8,7 +8,15 @@ class SaveRoleRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        if ($this->isCreate()) {
+            return isSuperadmin() || permission('rbac-roles-create');
+        }
+
+        if ($this->isUpdate()) {
+            return isSuperadmin() || permission('rbac-roles-update');
+        }
+
+        return isSuperadmin();
     }
 
     public function primaryKey(): string|array

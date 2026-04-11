@@ -30,6 +30,11 @@ class CSRF
     private ?string $tokenCache = null;
 
     /**
+     * Shared security helper used for safe host normalization.
+     */
+    private Security $security;
+
+    /**
      * Default configuration values
      */
     private const DEFAULT_CONFIG = [
@@ -66,6 +71,7 @@ class CSRF
      */
     public function __construct(array $config = [])
     {
+        $this->security = new Security();
         $this->config = $this->validateAndMergeConfig($config);
         $this->currentUri = $this->getCurrentUri();
     }
@@ -374,7 +380,7 @@ class CSRF
         }
 
         $allowed = [];
-        $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+        $host = $this->safeHostForOrigin((string) ($_SERVER['HTTP_HOST'] ?? ''));
         if ($host !== '') {
             $scheme = $this->isHttps() ? 'https' : 'http';
             $allowed[] = $scheme . '://' . $host;
@@ -407,6 +413,48 @@ class CSRF
         }
 
         return in_array(rtrim($candidate, '/'), $allowed, true);
+    }
+
+    /**
+     * Normalize the current host header before using it in origin comparisons.
+     */
+    private function safeHostForOrigin(string $rawHost): string
+    {
+        $rawHost = trim($rawHost);
+        if ($rawHost === '') {
+            return '';
+        }
+
+        $hostPart = $rawHost;
+        $port = null;
+        $wrapIpv6 = false;
+
+        if (preg_match('/^\[([^\]]+)\](?::(\d+))?$/', $rawHost, $matches) === 1) {
+            $hostPart = $matches[1];
+            $port = $matches[2] ?? null;
+            $wrapIpv6 = true;
+        } elseif (substr_count($rawHost, ':') === 1 && preg_match('/^(.+):(\d+)$/', $rawHost, $matches) === 1) {
+            $hostPart = $matches[1];
+            $port = $matches[2];
+        }
+
+        $normalizedHost = $this->security->normalizeHostHeader($hostPart);
+        if ($normalizedHost === '') {
+            return '';
+        }
+
+        if ($wrapIpv6) {
+            $normalizedHost = '[' . $normalizedHost . ']';
+        }
+
+        if ($port !== null) {
+            $portNumber = (int) $port;
+            if ($portNumber >= 1 && $portNumber <= 65535) {
+                return strtolower($normalizedHost . ':' . $portNumber);
+            }
+        }
+
+        return strtolower($normalizedHost);
     }
 
     /**

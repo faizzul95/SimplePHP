@@ -1000,28 +1000,28 @@ class Debug
         $output .= $addRow('Kernel Version', php_uname('v'));
 
         // Get CPU info
-        if (function_exists('shell_exec')) {
-            if (PHP_OS_FAMILY === 'Windows') {
-                $cpuInfo = getenv("PROCESSOR_IDENTIFIER") ?: 'Unknown';
-                $cpuCores = getenv("NUMBER_OF_PROCESSORS") ?: 'Unknown';
-            } else {
-                $cpuModel = trim(shell_exec("cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d':' -f2")) ?: 'Unknown';
-                $cpuCores = trim(shell_exec('nproc')) ?: 'Unknown';
-                $cpuInfo = $cpuModel;
-            }
+        if (PHP_OS_FAMILY === 'Windows') {
+            $cpuInfo = getenv("PROCESSOR_IDENTIFIER") ?: 'Unknown';
+            $cpuCores = getenv("NUMBER_OF_PROCESSORS") ?: 'Unknown';
+            $output .= $addRow('CPU Info', $cpuInfo);
+            $output .= $addRow('CPU Cores', $cpuCores);
+        } else {
+            $cpuInfo = $this->getLinuxCpuModel();
+            $cpuCores = $this->getLinuxCpuCoreCount();
             $output .= $addRow('CPU Info', $cpuInfo);
             $output .= $addRow('CPU Cores', $cpuCores);
         }
 
         // Get RAM info
-        if (function_exists('shell_exec') && PHP_OS_FAMILY !== 'Windows') {
-            $ramTotal = trim(shell_exec("grep 'MemTotal' /proc/meminfo | awk '{print $2}'"));
-            $ramFree = trim(shell_exec("grep 'MemFree' /proc/meminfo | awk '{print $2}'"));
-            $ramAvailable = trim(shell_exec("grep 'MemAvailable' /proc/meminfo | awk '{print $2}'"));
+        if (PHP_OS_FAMILY !== 'Windows') {
+            $memoryStats = $this->getLinuxMemoryStats();
+            $ramTotal = $memoryStats['MemTotal'] ?? null;
+            $ramFree = $memoryStats['MemFree'] ?? null;
+            $ramAvailable = $memoryStats['MemAvailable'] ?? null;
 
-            if ($ramTotal) {
+            if ($ramTotal !== null && $ramAvailable !== null) {
                 $output .= $addRow('Total RAM', number_format($ramTotal / 1024, 2) . ' MB');
-                $output .= $addRow('Free RAM', number_format($ramFree / 1024, 2) . ' MB');
+                $output .= $addRow('Free RAM', number_format(($ramFree ?? 0) / 1024, 2) . ' MB');
                 $output .= $addRow('Available RAM', number_format($ramAvailable / 1024, 2) . ' MB');
 
                 // Calculate RAM usage percentage
@@ -1827,8 +1827,8 @@ class Debug
         $encoding = mb_detect_encoding($str, "UTF-8, ASCII, ISO-8859-1, Windows-1252", true);
         $output .= '<p><strong>Encoding:</strong> ' . ($encoding ?: 'Unknown') . '</p>';
 
-        // Check if it's a serialized string (safe mode: no object instantiation)
-        if (@unserialize($str, ['allowed_classes' => false]) !== false) {
+        // Check if it's serialized PHP data without instantiating classes.
+        if ($this->isSerializedString($str)) {
             $output .= '<p><strong>Format:</strong> Serialized PHP data</p>';
         }
 
@@ -1845,6 +1845,31 @@ class Debug
         }
 
         return $output;
+    }
+
+    /**
+     * Detect serialized PHP data safely, including valid serialized false values.
+     */
+    private function isSerializedString(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return false;
+        }
+
+        if ($value === 'b:0;') {
+            return true;
+        }
+
+        if (!preg_match('/^(?:a|O|C|s|i|d|b|N):/s', $value)) {
+            return false;
+        }
+
+        try {
+            return @unserialize($value, ['allowed_classes' => false]) !== false;
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**
@@ -1996,16 +2021,12 @@ class Debug
         $output .= $addRow('🏢', 'Server Machine Name', php_uname('n'));
 
         // Get CPU info
-        if (function_exists('shell_exec') && !in_array('shell_exec', explode(',', ini_get('disable_functions')))) {
-            if (PHP_OS_FAMILY === 'Windows') {
-                $cpuInfo = getenv("PROCESSOR_IDENTIFIER") ?: 'Unknown';
-                $output .= $addRow('🔌', 'CPU Info', $cpuInfo);
-            } else {
-                $cpuModel = trim(shell_exec("cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d':' -f2")) ?: 'Unknown';
-                $cpuCores = trim(shell_exec('nproc')) ?: 'Unknown';
-                $output .= $addRow('🔌', 'CPU Model', $cpuModel);
-                $output .= $addRow('🧮', 'CPU Cores', $cpuCores);
-            }
+        if (PHP_OS_FAMILY === 'Windows') {
+            $cpuInfo = getenv("PROCESSOR_IDENTIFIER") ?: 'Unknown';
+            $output .= $addRow('🔌', 'CPU Info', $cpuInfo);
+        } else {
+            $output .= $addRow('🔌', 'CPU Model', $this->getLinuxCpuModel());
+            $output .= $addRow('🧮', 'CPU Cores', $this->getLinuxCpuCoreCount());
         }
 
         if (function_exists('sys_getloadavg')) {
@@ -2421,22 +2442,12 @@ class Debug
      */
     private function getServerUptime()
     {
-        if (PHP_OS_FAMILY === 'Windows' || !function_exists('shell_exec')) {
+        if (PHP_OS_FAMILY === 'Windows') {
             return 'Unknown (Windows or shell_exec disabled)';
         }
 
-        $uptime = @shell_exec('uptime -p');
-
-        if ($uptime) {
-            return trim($uptime);
-        }
-
-        // Alternative approach if 'uptime -p' doesn't work
-        $uptime = @shell_exec('cat /proc/uptime');
-        if ($uptime) {
-            $uptime = explode(' ', $uptime)[0];
-            $uptime = (float)$uptime;
-
+        $uptime = $this->getLinuxUptimeSeconds();
+        if ($uptime !== null) {
             $days = floor($uptime / 86400);
             $hours = floor(($uptime % 86400) / 3600);
             $minutes = floor(($uptime % 3600) / 60);
@@ -2452,6 +2463,98 @@ class Debug
         }
 
         return 'Unknown';
+    }
+
+    /**
+     * Read a Linux procfs file if available.
+     */
+    private function readProcFile(string $path): ?string
+    {
+        if (PHP_OS_FAMILY === 'Windows' || !is_readable($path)) {
+            return null;
+        }
+
+        $contents = @file_get_contents($path);
+
+        return is_string($contents) && $contents !== '' ? $contents : null;
+    }
+
+    /**
+     * Read the primary Linux CPU model without invoking a shell.
+     */
+    private function getLinuxCpuModel(): string
+    {
+        $cpuInfo = $this->readProcFile('/proc/cpuinfo');
+        if ($cpuInfo === null) {
+            return 'Unknown';
+        }
+
+        foreach (preg_split('/\r\n|\r|\n/', $cpuInfo) as $line) {
+            if (stripos($line, 'model name') === 0) {
+                [, $value] = array_pad(explode(':', $line, 2), 2, '');
+                $value = trim($value);
+
+                return $value !== '' ? $value : 'Unknown';
+            }
+        }
+
+        return 'Unknown';
+    }
+
+    /**
+     * Count Linux CPU cores from procfs without invoking a shell.
+     */
+    private function getLinuxCpuCoreCount(): string
+    {
+        $cpuInfo = $this->readProcFile('/proc/cpuinfo');
+        if ($cpuInfo === null) {
+            return 'Unknown';
+        }
+
+        preg_match_all('/^processor\s*:/mi', $cpuInfo, $matches);
+        $count = count($matches[0] ?? []);
+
+        return $count > 0 ? (string) $count : 'Unknown';
+    }
+
+    /**
+     * Parse Linux memory stats from procfs in kilobytes.
+     *
+     * @return array<string, int>
+     */
+    private function getLinuxMemoryStats(): array
+    {
+        $memInfo = $this->readProcFile('/proc/meminfo');
+        if ($memInfo === null) {
+            return [];
+        }
+
+        $stats = [];
+        foreach (preg_split('/\r\n|\r|\n/', $memInfo) as $line) {
+            if (preg_match('/^(MemTotal|MemFree|MemAvailable):\s+(\d+)\s+kB$/i', trim($line), $matches) === 1) {
+                $stats[$matches[1]] = (int) $matches[2];
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Read Linux uptime in seconds from procfs.
+     */
+    private function getLinuxUptimeSeconds(): ?float
+    {
+        $uptime = $this->readProcFile('/proc/uptime');
+        if ($uptime === null) {
+            return null;
+        }
+
+        $parts = preg_split('/\s+/', trim($uptime));
+        if (!isset($parts[0]) || !is_numeric($parts[0])) {
+            return null;
+        }
+
+        return (float) $parts[0];
     }
 
     /**

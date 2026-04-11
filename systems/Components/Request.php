@@ -4,10 +4,74 @@ namespace Components;
 
 class Request
 {
+    private const CONTROL_CHARACTERS = [
+        "\x00", "\x01", "\x02", "\x03", "\x04", "\x05", "\x06", "\x07",
+        "\x08", "\x0B", "\x0C", "\x0E", "\x0F", "\x10", "\x11", "\x12",
+        "\x13", "\x14", "\x15", "\x16", "\x17", "\x18", "\x19", "\x1A",
+        "\x1B", "\x1C", "\x1D", "\x1E", "\x1F",
+    ];
+
+    private const DANGEROUS_TAGS = [
+        'script', 'object', 'embed', 'link', 'style', 'img', 'video', 'audio',
+        'iframe', 'frame', 'frameset', 'applet', 'form', 'input', 'button',
+        'textarea', 'select', 'option', 'meta', 'base', 'bgsound', 'blink',
+        'body', 'head', 'html', 'title', 'xml', 'xmp', 'svg', 'math',
+        'details', 'summary', 'menuitem', 'source', 'track', 'canvas',
+        'marquee', 'plaintext', 'listing', 'basefont', 'spacer', 'noframes',
+        'noscript', 'noembed', 'param', 'fieldset', 'legend', 'output',
+        'datalist', 'keygen', 'command', 'dialog', 'template', 'picture', 'map',
+        'area', 'colgroup', 'col', 'caption', 'del', 'ins', 'acronym', 'abbr',
+        'big', 'cite', 'code', 'dfn', 'kbd', 'samp', 'sub', 'sup', 'tt', 'u', 'var',
+    ];
+
+    private const EVENT_HANDLERS = [
+        'onload', 'onerror', 'onclick', 'onmouseover', 'onmouseout', 'onmousedown',
+        'onmouseup', 'onmousemove', 'onkeypress', 'onkeydown', 'onkeyup',
+        'onblur', 'onfocus', 'onchange', 'onsubmit', 'onreset', 'onselect',
+        'onabort', 'ondblclick', 'ondragdrop', 'onmove', 'onresize',
+        'onactivate', 'onafterprint', 'onafterupdate', 'onbeforeactivate',
+        'onbeforecopy', 'onbeforecut', 'onbeforedeactivate', 'onbeforeeditfocus',
+        'onbeforepaste', 'onbeforeprint', 'onbeforeunload', 'onbeforeupdate',
+        'oncontextmenu', 'oncontrolselect', 'oncopy', 'oncut', 'ondrag',
+        'ondragend', 'ondragenter', 'ondragleave', 'ondragover', 'ondragstart',
+        'ondrop', 'onerrorupdate', 'onfilterchange', 'onfinish', 'onfocusin',
+        'onfocusout', 'onhelp', 'onlosecapture', 'onmoveend', 'onmovestart',
+        'onpaste', 'onpropertychange', 'onreadystatechange', 'onresizeend',
+        'onresizestart', 'onrowenter', 'onrowexit', 'onrowsdelete', 'onrowsinserted',
+        'onscroll', 'onstart', 'onstop', 'onunload', 'ontouchstart', 'ontouchend',
+        'ontouchmove', 'ontouchcancel', 'onpointerdown', 'onpointerup',
+        'onpointermove', 'onpointerover', 'onpointerout', 'onpointerenter',
+        'onpointerleave', 'onpointercancel', 'onanimationstart', 'onanimationend',
+        'onanimationiteration', 'ontransitionend', 'onwheel', 'oninput', 'oninvalid',
+        'onsearch', 'onbeforeinput', 'onselectstart', 'onselectionchange', 'onshow',
+        'ontoggle', 'onratechange', 'onvolumechange', 'onwaiting', 'oncanplay',
+        'oncanplaythrough', 'ondurationchange', 'onemptied', 'onended', 'onloadeddata',
+        'onloadedmetadata', 'onloadstart', 'onpause', 'onplay', 'onplaying',
+        'onprogress', 'onstalled', 'onsuspend', 'ontimeupdate', 'onseeking',
+        'onseeked', 'oncuechange', 'onformdata', 'onclose', 'onopen', 'onmessage',
+        'onmousewheel', 'onstorage', 'onpopstate', 'onhashchange', 'onpageshow',
+        'onpagehide', 'onorientationchange', 'ondeviceorientation', 'ondevicemotion',
+        'ondeviceproximity', 'onuserproximity', 'onpointerlockchange', 'onpointerlockerror',
+        'onfullscreenchange', 'onfullscreenerror', 'onwebkitfullscreenchange', 'onwebkitfullscreenerror',
+        'onmsfullscreenchange', 'onmsfullscreenerror', 'onmozfullscreenchange', 'onmozfullscreenerror',
+        'onariarequest', 'onariaresponse', 'onariainvalid', 'onariaactive',
+        'onbeforescriptexecute', 'onafterscriptexecute',
+    ];
+
+    private const DANGEROUS_PROTOCOLS = [
+        'javascript', 'vbscript', 'jscript', 'data', 'about', 'mocha', 'livescript',
+        'behavior', 'mhtml', 'file', 'chrome', 'chrome-extension', 'resource',
+        'opera', 'opera-extension', 'ms-help', 'ms-settings', 'ms-appx', 'ms-appdata',
+        'x-schema', 'wss', 'ws', 'ftp', 'telnet', 'irc', 'irc6', 'ircs', 'git',
+        'ssh', 'sftp', 'blob', 'filesystem', 'mailto', 'cid', 'mid', 'sms', 'tel',
+    ];
+
     protected static $data;
     protected static $files;
     protected $secureRequest = true;
     protected $dataValidate = [];
+    private Security $security;
+    private ?array $inputStreamData = null;
 
     /**
      * Constructor
@@ -16,6 +80,7 @@ class Request
      */
     public function __construct()
     {
+        $this->security = new Security();
         self::$data = $this->sanitizeInput(array_merge(
             $_GET,
             $_POST,
@@ -29,25 +94,33 @@ class Request
      * 
      * @return array
      */
-    private function getInputStreamData()
+    private function getInputStreamData(): array
     {
+        if ($this->inputStreamData !== null) {
+            return $this->inputStreamData;
+        }
+
         if (in_array($this->method(), ['PUT', 'PATCH', 'DELETE'])) {
             $input = file_get_contents('php://input');
             $data = [];
 
             // Try to parse as JSON first
-            $json = json_decode($input, true);
-            if (json_last_error() === JSON_ERROR_NONE) {
+            $json = is_string($input) ? json_decode($input, true) : null;
+            if (json_last_error() === JSON_ERROR_NONE && is_array($json)) {
                 $data = $json;
             } else {
                 // Parse as form data
-                parse_str($input, $data);
+                parse_str(is_string($input) ? $input : '', $data);
             }
 
-            return $data;
+            $this->inputStreamData = is_array($data) ? $data : [];
+
+            return $this->inputStreamData;
         }
 
-        return [];
+        $this->inputStreamData = [];
+
+        return $this->inputStreamData;
     }
 
     /**
@@ -100,11 +173,11 @@ class Request
     {
         // Handle null, empty, or non-string values
         if (empty($str) || !is_string($str)) {
-             return $str;
+            return $str;
         }
 
         // Remove null bytes and other control characters
-        $str = str_replace([chr(0), chr(1), chr(2), chr(3), chr(4), chr(5), chr(6), chr(7), chr(8), chr(11), chr(12), chr(14), chr(15), chr(16), chr(17), chr(18), chr(19), chr(20), chr(21), chr(22), chr(23), chr(24), chr(25), chr(26), chr(27), chr(28), chr(29), chr(30), chr(31)], '', $str);
+        $str = str_replace(self::CONTROL_CHARACTERS, '', $str);
 
         // Decode HTML entities to catch encoded attacks
         $str = html_entity_decode($str, ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -123,78 +196,19 @@ class Request
         $str = preg_replace('/@import\s+[\'"][^\'"]+[\'"]/i', '', $str);
 
         // Remove potentially dangerous HTML tags (comprehensive list)
-        $dangerous_tags = [
-            'script', 'object', 'embed', 'link', 'style', 'img', 'video', 'audio',
-            'iframe', 'frame', 'frameset', 'applet', 'form', 'input', 'button',
-            'textarea', 'select', 'option', 'meta', 'base', 'bgsound', 'blink',
-            'body', 'head', 'html', 'title', 'xml', 'xmp', 'svg', 'math',
-            'details', 'summary', 'menuitem', 'source', 'track', 'canvas',
-            'marquee', 'plaintext', 'listing', 'basefont', 'spacer', 'noframes', 
-            'noscript', 'noembed', 'param', 'object', 'fieldset', 'legend', 'output', 
-            'datalist', 'keygen', 'command', 'dialog', 'template', 'picture', 'map', 
-            'area', 'colgroup', 'col', 'caption', 'del', 'ins', 'acronym', 'abbr', 
-            'big', 'cite', 'code', 'dfn', 'kbd', 'samp', 'sub', 'sup', 'tt', 'u', 'var'
-        ];
-
-        foreach ($dangerous_tags as $tag) {
+        foreach (self::DANGEROUS_TAGS as $tag) {
             $str = preg_replace('#<\s*' . $tag . '[^>]*>.*?<\s*/\s*' . $tag . '\s*>#is', '', $str);
             $str = preg_replace('#<\s*' . $tag . '[^>]*/?>#is', '', $str);
         }
 
         // Remove all event handlers (comprehensive list)
-        $event_handlers = [
-            'onload', 'onerror', 'onclick', 'onmouseover', 'onmouseout', 'onmousedown',
-            'onmouseup', 'onmousemove', 'onkeypress', 'onkeydown', 'onkeyup',
-            'onblur', 'onfocus', 'onchange', 'onsubmit', 'onreset', 'onselect',
-            'onabort', 'ondblclick', 'ondragdrop', 'onmove', 'onresize',
-            'onactivate', 'onafterprint', 'onafterupdate', 'onbeforeactivate',
-            'onbeforecopy', 'onbeforecut', 'onbeforedeactivate', 'onbeforeeditfocus',
-            'onbeforepaste', 'onbeforeprint', 'onbeforeunload', 'onbeforeupdate',
-            'oncontextmenu', 'oncontrolselect', 'oncopy', 'oncut', 'ondrag',
-            'ondragend', 'ondragenter', 'ondragleave', 'ondragover', 'ondragstart',
-            'ondrop', 'onerrorupdate', 'onfilterchange', 'onfinish', 'onfocusin',
-            'onfocusout', 'onhelp', 'onlosecapture', 'onmoveend', 'onmovestart',
-            'onpaste', 'onpropertychange', 'onreadystatechange', 'onresizeend',
-            'onresizestart', 'onrowenter', 'onrowexit', 'onrowsdelete', 'onrowsinserted',
-            'onscroll', 'onstart', 'onstop', 'onunload', 'ontouchstart', 'ontouchend',
-            'ontouchmove', 'ontouchcancel', 'onpointerdown', 'onpointerup',
-            'onpointermove', 'onpointerover', 'onpointerout', 'onpointerenter',
-            'onpointerleave', 'onpointercancel', 'onanimationstart', 'onanimationend',
-            'onanimationiteration', 'ontransitionend',
-            // Additional HTML5 and ARIA event handlers
-            'onwheel', 'oninput', 'oninvalid', 'onsearch', 'onbeforeinput', 'onselectstart',
-            'onselectionchange', 'onshow', 'ontoggle', 'onsubmit', 'onratechange',
-            'onvolumechange', 'onwaiting', 'oncanplay', 'oncanplaythrough', 'ondurationchange',
-            'onemptied', 'onended', 'onloadeddata', 'onloadedmetadata', 'onloadstart',
-            'onpause', 'onplay', 'onplaying', 'onprogress', 'onstalled', 'onsuspend',
-            'ontimeupdate', 'onseeking', 'onseeked', 'oncuechange', 'onformdata',
-            'onclose', 'onopen', 'onmessage', 'onmousewheel', 'onstorage', 'onpopstate',
-            'onhashchange', 'onpageshow', 'onpagehide', 'onafterprint', 'onbeforeprint',
-            'onbeforeunload', 'onorientationchange', 'ondeviceorientation', 'ondevicemotion',
-            'ondeviceproximity', 'onuserproximity', 'onpointerlockchange', 'onpointerlockerror',
-            'onfullscreenchange', 'onfullscreenerror', 'onwebkitfullscreenchange', 'onwebkitfullscreenerror',
-            'onmsfullscreenchange', 'onmsfullscreenerror', 'onmozfullscreenchange', 'onmozfullscreenerror',
-            // ARIA live region events
-            'onariarequest', 'onariaresponse', 'onariainvalid', 'onariaactive',
-            // Misc
-            'onbeforescriptexecute', 'onafterscriptexecute', 'onbeforecopy', 'onbeforecut', 'onbeforepaste'
-        ];
-
-        foreach ($event_handlers as $handler) {
+        foreach (self::EVENT_HANDLERS as $handler) {
             $str = preg_replace('#\s*' . $handler . '\s*=\s*["\'][^"\']*["\']#i', '', $str);
             $str = preg_replace('#\s*' . $handler . '\s*=\s*[^>\s]*#i', '', $str);
         }
 
         // Remove dangerous protocols (more comprehensive)
-        $dangerous_protocols = [
-            'javascript', 'vbscript', 'jscript', 'data', 'about', 'mocha', 'livescript',
-            'behavior', 'mhtml', 'file', 'chrome', 'chrome-extension', 'resource',
-            'opera', 'opera-extension', 'ms-help', 'ms-settings', 'ms-appx', 'ms-appdata',
-            'x-schema', 'wss', 'ws', 'ftp', 'telnet', 'irc', 'irc6', 'ircs', 'git',
-            'ssh', 'sftp', 'blob', 'filesystem', 'mailto', 'cid', 'mid', 'sms', 'tel'
-        ];
-
-        foreach ($dangerous_protocols as $protocol) {
+        foreach (self::DANGEROUS_PROTOCOLS as $protocol) {
             $str = preg_replace('#\s*' . $protocol . '\s*:#i', '', $str);
         }
 
@@ -621,7 +635,7 @@ class Request
     public function url()
     {
         $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
+        $host = $this->safeHostForUrl((string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost'));
         $uri = $this->uri();
 
         return $protocol . '://' . $host . '/' . $uri;
@@ -636,6 +650,48 @@ class Request
     {
         $query_string = $_SERVER['QUERY_STRING'] ?? '';
         return $this->url() . ($query_string ? '?' . $query_string : '');
+    }
+
+    /**
+     * Normalize a host header value before using it in generated absolute URLs.
+     */
+    private function safeHostForUrl(string $rawHost): string
+    {
+        $rawHost = trim($rawHost);
+        if ($rawHost === '') {
+            return 'localhost';
+        }
+
+        $hostPart = $rawHost;
+        $port = null;
+        $wrapIpv6 = false;
+
+        if (preg_match('/^\[([^\]]+)\](?::(\d+))?$/', $rawHost, $matches) === 1) {
+            $hostPart = $matches[1];
+            $port = $matches[2] ?? null;
+            $wrapIpv6 = true;
+        } elseif (substr_count($rawHost, ':') === 1 && preg_match('/^(.+):(\d+)$/', $rawHost, $matches) === 1) {
+            $hostPart = $matches[1];
+            $port = $matches[2];
+        }
+
+        $normalizedHost = $this->security->normalizeHostHeader($hostPart);
+        if ($normalizedHost === '') {
+            return 'localhost';
+        }
+
+        if ($wrapIpv6) {
+            $normalizedHost = '[' . $normalizedHost . ']';
+        }
+
+        if ($port !== null) {
+            $portNumber = (int) $port;
+            if ($portNumber >= 1 && $portNumber <= 65535) {
+                return $normalizedHost . ':' . $portNumber;
+            }
+        }
+
+        return $normalizedHost;
     }
 
     /**
@@ -657,59 +713,59 @@ class Request
         }
 
         // Define trusted IP headers in priority order
-		$ipKeys = [
-			'HTTP_CF_CONNECTING_IP',     // Cloudflare
-			'HTTP_CLIENT_IP',            // Shared internet
-			'HTTP_X_FORWARDED_FOR',      // Most common proxy header
-			'HTTP_X_FORWARDED',          // Alternative proxy header
-			'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster environments
-			'HTTP_FORWARDED_FOR',        // Legacy proxy header
-			'HTTP_FORWARDED',            // RFC 7239 standard
-		];
+        $ipKeys = [
+            'HTTP_CF_CONNECTING_IP',     // Cloudflare
+            'HTTP_CLIENT_IP',            // Shared internet
+            'HTTP_X_FORWARDED_FOR',      // Most common proxy header
+            'HTTP_X_FORWARDED',          // Alternative proxy header
+            'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster environments
+            'HTTP_FORWARDED_FOR',        // Legacy proxy header
+            'HTTP_FORWARDED',            // RFC 7239 standard
+        ];
 
-		foreach ($ipKeys as $key) {
-			if (array_key_exists($key, $_SERVER) && !empty($_SERVER[$key])) {
-				// Handle comma-separated IP lists (common with X-Forwarded-For)
-				$ips = explode(',', $_SERVER[$key]);
+        foreach ($ipKeys as $key) {
+            if (array_key_exists($key, $_SERVER) && !empty($_SERVER[$key])) {
+                // Handle comma-separated IP lists (common with X-Forwarded-For)
+                $ips = explode(',', $_SERVER[$key]);
 
-				foreach ($ips as $ip) {
-					// Sanitize the IP address
-					$ip = trim($ip);
+                foreach ($ips as $ip) {
+                    // Sanitize the IP address
+                    $ip = trim($ip);
 
-					// Additional security: Remove any non-IP characters
-					$ip = preg_replace('/[^0-9a-fA-F:.]/', '', $ip);
+                    // Additional security: Remove any non-IP characters
+                    $ip = preg_replace('/[^0-9a-fA-F:.]/', '', $ip);
 
-					// Validate IP format and exclude private/reserved ranges
-					if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false) {
-						// Additional IPv4 validation for common spoofing attempts
-						if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-							// Exclude additional ranges that might be problematic
-							$parts = explode('.', $ip);
-							if (count($parts) === 4) {
-								$first = (int)$parts[0];
-								// Exclude additional suspicious ranges
-								if ($first === 0 || $first === 169 || $first >= 224) {
-									continue;
-								}
-							}
-						}
+                    // Validate IP format and exclude private/reserved ranges
+                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false) {
+                        // Additional IPv4 validation for common spoofing attempts
+                        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                            // Exclude additional ranges that might be problematic
+                            $parts = explode('.', $ip);
+                            if (count($parts) === 4) {
+                                $first = (int) $parts[0];
+                                // Exclude additional suspicious ranges
+                                if ($first === 0 || $first === 169 || $first >= 224) {
+                                    continue;
+                                }
+                            }
+                        }
 
-						return $ip;
-					}
-				}
-			}
-		}
+                        return $ip;
+                    }
+                }
+            }
+        }
 
-		// Fallback to REMOTE_ADDR with validation
-		$fallbackIP = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        // Fallback to REMOTE_ADDR with validation
+        $fallbackIP = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
-		// Validate fallback IP
-		if (filter_var($fallbackIP, FILTER_VALIDATE_IP) !== false) {
-			return $fallbackIP;
-		}
+        // Validate fallback IP
+        if (filter_var($fallbackIP, FILTER_VALIDATE_IP) !== false) {
+            return $fallbackIP;
+        }
 
-		// Ultimate fallback
-		return '0.0.0.0';
+        // Ultimate fallback
+        return '0.0.0.0';
     }
 
     /**
@@ -719,27 +775,7 @@ class Request
      */
     public function userAgent()
     {
-       // Check if User Agent header exists
-        if (!isset($_SERVER['HTTP_USER_AGENT']) || empty($_SERVER['HTTP_USER_AGENT'])) {
-            return 'Unknown';
-        }
-        
-        // Get and sanitize the User Agent string
-        $userAgent = trim($_SERVER['HTTP_USER_AGENT']);
-        
-        // Security: Limit length to prevent memory issues (max 1000 characters)
-        if (strlen($userAgent) > 1000) {
-            $userAgent = substr($userAgent, 0, 1000);
-        }
-        
-        // Security: Remove null bytes and control characters that could cause issues
-        $userAgent = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $userAgent);
-        
-        // Additional security: Remove potentially dangerous characters
-        $userAgent = str_replace(["\n", "\r", "\t"], '', $userAgent);
-        
-        // Return sanitized User Agent or fallback
-        return !empty($userAgent) ? $userAgent : 'Unknown';
+        return $this->security->sanitizeUserAgent((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''));
     }
 
     /**
@@ -959,12 +995,12 @@ class Request
                 continue; // Skip whitelisted fields
             }
 
-            if ($this->containsXss($value)) {
+            if ($this->security->containsXss($value)) {
                 return true;
             }
             
             // Also check the key itself for XSS
-            if ($this->containsXss($key)) {
+            if ($this->security->containsXss($key)) {
                 return true;
             }
             
@@ -986,7 +1022,7 @@ class Request
                 continue; // Skip whitelisted fields
             }
 
-            if ($this->containsXss($key) || $this->containsXss($value)) {
+            if ($this->security->containsXss($key) || $this->security->containsXss($value)) {
                 return true;
             }
             
@@ -994,179 +1030,6 @@ class Request
                 if ($this->detectXssInArray($value, $ignoreList)) {
                     return true;
                 }
-            }
-        }
-        
-        return false;
-    }
-
-    private function containsXss($str)
-    {
-        // Handle null, empty, or non-string values
-        if (empty($str) || !is_string($str)) {
-            return false;
-        }
-        
-        // Convert to lowercase for case-insensitive matching
-        $lowerStr = strtolower($str);
-        
-        // Decode HTML entities to catch encoded attacks
-        $decodedStr = html_entity_decode($str, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        
-        // Check for dangerous HTML tags
-        $dangerousTags = [
-            'script', 'object', 'embed', 'link', 'style', 'img', 'video', 'audio',
-            'iframe', 'frame', 'frameset', 'applet', 'form', 'input', 'button',
-            'textarea', 'select', 'option', 'meta', 'base', 'bgsound', 'blink',
-            'body', 'head', 'html', 'title', 'xml', 'xmp', 'svg', 'math',
-            'details', 'summary', 'menuitem', 'source', 'track', 'canvas',
-            'marquee', 'plaintext', 'listing', 'basefont', 'spacer', 'noframes', 
-            'noscript', 'noembed', 'param', 'fieldset', 'legend', 'output', 
-            'datalist', 'keygen', 'command', 'dialog', 'template', 'picture'
-        ];
-        
-        foreach ($dangerousTags as $tag) {
-            // Check for opening tags
-            if (preg_match('#<\s*' . $tag . '[\s>]#i', $decodedStr)) {
-                return true;
-            }
-            // Check for closing tags
-            if (preg_match('#<\s*/\s*' . $tag . '\s*>#i', $decodedStr)) {
-                return true;
-            }
-            // Check for self-closing tags
-            if (preg_match('#<\s*' . $tag . '[^>]*/\s*>#i', $decodedStr)) {
-                return true;
-            }
-        }
-        
-        // Check for event handlers
-        $eventHandlers = [
-            'onload', 'onerror', 'onclick', 'onmouseover', 'onmouseout', 'onmousedown',
-            'onmouseup', 'onmousemove', 'onkeypress', 'onkeydown', 'onkeyup',
-            'onblur', 'onfocus', 'onchange', 'onsubmit', 'onreset', 'onselect',
-            'onabort', 'ondblclick', 'ondragdrop', 'onmove', 'onresize',
-            'onactivate', 'onafterprint', 'onafterupdate', 'onbeforeactivate',
-            'onbeforecopy', 'onbeforecut', 'onbeforedeactivate', 'onbeforeeditfocus',
-            'onbeforepaste', 'onbeforeprint', 'onbeforeunload', 'onbeforeupdate',
-            'oncontextmenu', 'oncontrolselect', 'oncopy', 'oncut', 'ondrag',
-            'ondragend', 'ondragenter', 'ondragleave', 'ondragover', 'ondragstart',
-            'ondrop', 'onerrorupdate', 'onfilterchange', 'onfinish', 'onfocusin',
-            'onfocusout', 'onhelp', 'onlosecapture', 'onmoveend', 'onmovestart',
-            'onpaste', 'onpropertychange', 'onreadystatechange', 'onresizeend',
-            'onresizestart', 'onrowenter', 'onrowexit', 'onrowsdelete', 'onrowsinserted',
-            'onscroll', 'onstart', 'onstop', 'onunload', 'ontouchstart', 'ontouchend',
-            'ontouchmove', 'ontouchcancel', 'onpointerdown', 'onpointerup',
-            'onpointermove', 'onpointerover', 'onpointerout', 'onpointerenter',
-            'onpointerleave', 'onpointercancel', 'onanimationstart', 'onanimationend',
-            'onanimationiteration', 'ontransitionend', 'onwheel', 'oninput', 'oninvalid'
-        ];
-        
-        foreach ($eventHandlers as $handler) {
-            if (preg_match('#\s*' . $handler . '\s*=\s*["\'][^"\']*["\']#i', $decodedStr)) {
-                return true;
-            }
-            if (preg_match('#\s*' . $handler . '\s*=\s*[^>\s]+#i', $decodedStr)) {
-                return true;
-            }
-        }
-        
-        // Check for dangerous protocols
-        $dangerousProtocols = [
-            'javascript', 'vbscript', 'jscript', 'data', 'about', 'mocha', 'livescript',
-            'behavior', 'mhtml', 'file', 'chrome', 'chrome-extension', 'resource',
-            'opera', 'opera-extension', 'ms-help', 'ms-settings', 'ms-appx', 'ms-appdata'
-        ];
-        
-        foreach ($dangerousProtocols as $protocol) {
-            if (preg_match('#\s*' . $protocol . '\s*:#i', $decodedStr)) {
-                return true;
-            }
-        }
-        
-        // Check for CSS expressions and other CSS-based attacks
-        if (preg_match('#expression\s*\(#i', $decodedStr)) {
-            return true;
-        }
-        
-        if (preg_match('#-moz-binding\s*:#i', $decodedStr)) {
-            return true;
-        }
-        
-        if (preg_match('#@import\s+["\']?[^"\']*["\']?#i', $decodedStr)) {
-            return true;
-        }
-        
-        // Check for CSS url() with javascript
-        if (preg_match('#url\s*\(\s*["\']?\s*javascript\s*:#i', $decodedStr)) {
-            return true;
-        }
-        
-        // Check for HTML comments that might contain scripts
-        if (preg_match('#<!--.*?script.*?-->#si', $decodedStr)) {
-            return true;
-        }
-        
-        // Check for CDATA sections that might contain scripts
-        if (preg_match('#<!\[CDATA\[.*?script.*?\]\]>#si', $decodedStr)) {
-            return true;
-        }
-        
-        // Check for Flash-related attacks
-        if (preg_match('#fscommand#i', $decodedStr)) {
-            return true;
-        }
-        
-        if (preg_match('#allowscriptaccess#i', $decodedStr)) {
-            return true;
-        }
-        
-        // Check for null bytes and control characters
-        if (preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', $str)) {
-            return true;
-        }
-        
-        // Check for common XSS patterns
-        $xssPatterns = [
-            '#<\s*script#i',
-            '#</\s*script\s*>#i',
-            '#alert\s*\(#i',
-            '#confirm\s*\(#i',
-            '#prompt\s*\(#i',
-            '#eval\s*\(#i',
-            '#document\s*\.\s*cookie#i',
-            '#document\s*\.\s*write#i',
-            '#window\s*\.\s*location#i',
-            '#document\s*\.\s*location#i',
-            '#setTimeout\s*\(#i',
-            '#setInterval\s*\(#i',
-            '#String\s*\.\s*fromCharCode#i'
-        ];
-        
-        foreach ($xssPatterns as $pattern) {
-            if (preg_match($pattern, $decodedStr)) {
-                return true;
-            }
-        }
-        
-        // Check for encoded script tags and common XSS vectors
-        $encodedPatterns = [
-            '&lt;script',
-            '&lt;/script',
-            '%3Cscript',
-            '%3C/script',
-            '&#60;script',
-            '&#x3C;script',
-            'javascript:',
-            'vbscript:',
-            'onload=',
-            'onerror=',
-            'onclick='
-        ];
-        
-        foreach ($encodedPatterns as $pattern) {
-            if (stripos($lowerStr, strtolower($pattern)) !== false) {
-                return true;
             }
         }
         

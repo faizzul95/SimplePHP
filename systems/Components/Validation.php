@@ -88,98 +88,9 @@ class Validation
     ];
 
     /**
-     * XSS patterns with comprehensive coverage
-     * 
-     * @var array
+     * Shared security helper.
      */
-    private $xssPatterns = [
-        // Script tags
-        '/<script[^>]*>.*?<\/script>/is',
-        '/<script[^>]*>/is',
-        
-        // Iframe and embed tags
-        '/<iframe[^>]*>.*?<\/iframe>/is',
-        '/<iframe[^>]*>/is',
-        '/<object[^>]*>.*?<\/object>/is',
-        '/<embed[^>]*>.*?<\/embed>/is',
-        '/<applet[^>]*>.*?<\/applet>/is',
-        
-        // Meta and link tags
-        '/<meta[^>]*>/is',
-        '/<link[^>]*>/is',
-        
-        // JavaScript / VBScript protocols
-        '/javascript\s*:/is',
-        '/vbscript\s*:/is',
-        
-        // Dangerous data: URI schemes (only block executable types, not all data: URIs)
-        '/data\s*:\s*text\/html/is',
-        '/data\s*:\s*application\/javascript/is',
-        '/data\s*:\s*application\/x-javascript/is',
-        '/data\s*:\s*application\/ecmascript/is',
-        '/data\s*:\s*text\/javascript/is',
-        '/data\s*:\s*text\/ecmascript/is',
-        '/data\s*:\s*image\/svg\+xml/is',
-        
-        // Event handlers — explicit high-risk patterns + catch-all
-        '/\bonclick\s*=/is',
-        '/\bonload\s*=/is',
-        '/\bonerror\s*=/is',
-        '/\bonmouseover\s*=/is',
-        '/\bonmouseout\s*=/is',
-        '/\bonmousemove\s*=/is',
-        '/\bonkeydown\s*=/is',
-        '/\bonkeyup\s*=/is',
-        '/\bonkeypress\s*=/is',
-        '/\bonfocus\s*=/is',
-        '/\bonblur\s*=/is',
-        '/\bonchange\s*=/is',
-        '/\bonsubmit\s*=/is',
-        '/\bonreset\s*=/is',
-        '/\bonselect\s*=/is',
-        '/\bonabort\s*=/is',
-        '/\bonresize\s*=/is',
-        '/\bonscroll\s*=/is',
-        '/\bonunload\s*=/is',
-        '/\bonbeforeunload\s*=/is',
-        '/\boncontextmenu\s*=/is',
-        '/\bondrag\w*\s*=/is',
-        '/\bonpaste\s*=/is',
-        '/\boncopy\s*=/is',
-        '/\boncut\s*=/is',
-        '/\boninput\s*=/is',
-        '/\boninvalid\s*=/is',
-        '/\bonsearch\s*=/is',
-        '/\bontoggle\s*=/is',
-        // Catch-all for any other on* event handlers not listed above
-        '/\bon\w+\s*=/is',
-        
-        // Style with javascript/expression
-        '/style\s*=\s*["\']?[^"\']*(?:javascript|expression|url\s*\()/is',
-        
-        // Form action hijack
-        '/<form[^>]*action\s*=\s*["\']?javascript/is',
-        
-        // CSS @import (can load external malicious styles)
-        '/@import\s/is',
-        
-        // SVG XSS vectors
-        '/<svg[^>]*>/is',
-        '/<use[^>]*>/is',
-        '/<math[^>]*>/is',
-        
-        // URL-encoded angle brackets (bypass filters)
-        '/%3C\s*s\s*c\s*r\s*i\s*p\s*t/is',
-        '/%3C\s*i\s*f\s*r\s*a\s*m\s*e/is',
-        
-        // HTML-encoded angle brackets used to sneak tags
-        '/&lt;\s*script/is',
-        '/&lt;\s*iframe/is',
-        '/&lt;\s*svg/is',
-        
-        // Base64 encoded scripts within data URIs
-        '/data:[^;]*;base64,.*(?:PHNjcmlwdA|amF2YXNjcmlwdA)/is',
-    ];
+    private Security $security;
 
     /**
      * Default error messages
@@ -273,6 +184,7 @@ class Validation
     public function __construct(array $data = [], array $rules = [], array $messages = [])
     {
         try {
+            $this->security = new Security();
             $this->data = $this->sanitizeInput($data);
             $this->rules = $rules;
             $this->messages = $messages;
@@ -1034,7 +946,10 @@ class Validation
     /**
      * Validate XSS protection
      */
-   private function validateXss(string $field, $value, array $params = []): bool
+    /**
+     * Validate untrusted plain-text fields against shared XSS heuristics.
+     */
+    private function validateXss(string $field, $value, array $params = []): bool
     {
         try {
             if (!is_string($value)) {
@@ -1043,29 +958,25 @@ class Validation
 
             $original = $value;
 
-            // Prepare decoding levels
-            $decodedLevels = [
+            $candidates = [
                 $original,
                 html_entity_decode($original, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
                 urldecode($original),
-                rawurldecode($original)
+                rawurldecode($original),
             ];
 
-            // Also recursively decode to handle double encoding
-            foreach ([$original, html_entity_decode($original), urldecode($original), rawurldecode($original)] as $input) {
-                $doubleDecoded = html_entity_decode(urldecode($input), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-                $decodedLevels[] = $doubleDecoded;
-            }
+            foreach ($candidates as $candidate) {
+                if (!is_string($candidate) || $candidate === '') {
+                    continue;
+                }
 
-            foreach ($decodedLevels as $decoded) {
-                $sanitized = strtolower($decoded);
-                $sanitized = preg_replace('/\s+/', '', $sanitized); // Remove all whitespace
-                $sanitized = str_replace(['%00', "\0"], '', $sanitized); // Remove null bytes
+                if ($this->security->containsXss($candidate)) {
+                    return false;
+                }
 
-                foreach ($this->xssPatterns as $pattern) {
-                    if (preg_match($pattern, $decoded) || preg_match($pattern, $sanitized)) {
-                        return false;
-                    }
+                $doubleDecoded = html_entity_decode(urldecode($candidate), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                if (is_string($doubleDecoded) && $doubleDecoded !== '' && $this->security->containsXss($doubleDecoded)) {
+                    return false;
                 }
             }
 
@@ -1078,6 +989,12 @@ class Validation
     /**
      * Validate safe HTML content
      */
+    /**
+     * Validate trusted HTML content such as email templates.
+     *
+     * Allows a constrained tag and attribute set while rejecting active content,
+     * unsafe protocols, executable tags, and dangerous inline CSS.
+     */
     private function validateSafehtml(string $field, $value, array $params = []): bool
     {
         try {
@@ -1085,29 +1002,124 @@ class Validation
                 return true;
             }
 
-            $cleanValue = null;
+            if (strpos($value, '<?') !== false || strpos($value, '<%') !== false) {
+                return false;
+            }
 
-            // Tags that should be removed
-            $safeTags = [
-                'p', 'br', 'strong', 'em', 'u', 'i', 'b', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-                'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'span', 'div', 'hr',
-                'a', 'img', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
-                'sup', 'sub', 'small', 'mark', 'del', 'ins', 'abbr', 'cite'
+            $allowedTags = [
+                'a', 'abbr', 'b', 'blockquote', 'br', 'caption', 'cite', 'code', 'col', 'colgroup',
+                'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'li', 'mark',
+                'ol', 'p', 'pre', 'small', 'span', 'strong', 'sub', 'sup', 'table', 'tbody',
+                'td', 'tfoot', 'th', 'thead', 'tr', 'u', 'ul'
             ];
 
-            // Remove all tags in the $safeTags list
-            $cleanValue = preg_replace_callback('#<(/?)([a-zA-Z0-9]+)([^>]*)>#', function ($matches) use ($safeTags) {
-                if (in_array(strtolower($matches[2]), $safeTags)) {
-                    return ''; // Remove the tag
-                }
-                return $matches[0]; // Keep the tag (not in safeTags)
-            }, $value);
+            $blockedTags = [
+                'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'form',
+                'input', 'button', 'textarea', 'select', 'option', 'meta', 'link', 'base',
+                'svg', 'math', 'video', 'audio', 'canvas', 'source'
+            ];
 
-            // Optionally validate against XSS patterns
-            return $this->validateXss($field, $cleanValue, $params);
+            if (preg_match_all('/<\/?\s*([a-z0-9:-]+)(?:\s[^>]*)?>/i', $value, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    $tagName = strtolower($match[1]);
+                    if (in_array($tagName, $blockedTags, true) || !in_array($tagName, $allowedTags, true)) {
+                        return false;
+                    }
+                }
+            }
+
+            if (preg_match_all('/<([a-z0-9]+)([^>]*)>/i', $value, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    $tagName = strtolower($match[1]);
+                    $attributeString = (string) ($match[2] ?? '');
+
+                    if ($attributeString === '') {
+                        continue;
+                    }
+
+                    if (preg_match('/\bon[a-z0-9_-]+\s*=|\bxmlns\b|\bformaction\b|\bxlink:href\b/i', $attributeString) === 1) {
+                        return false;
+                    }
+
+                    if (preg_match_all('/([a-z0-9:-]+)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s"\'>]+)/i', $attributeString, $attributeMatches, PREG_SET_ORDER)) {
+                        foreach ($attributeMatches as $attributeMatch) {
+                            $attributeName = strtolower($attributeMatch[1]);
+                            $rawAttributeValue = trim((string) $attributeMatch[2], " \t\n\r\0\x0B\"'");
+
+                            if (!$this->isAllowedHtmlAttribute($tagName, $attributeName)) {
+                                return false;
+                            }
+
+                            if (in_array($attributeName, ['href', 'src'], true) && !$this->isAllowedHtmlUrlValue($rawAttributeValue)) {
+                                return false;
+                            }
+
+                            if ($attributeName === 'style' && !$this->isSafeInlineStyle($rawAttributeValue)) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return true;
         } catch (Exception $e) {
             return false;
         }
+    }
+
+    /**
+     * Check whether an attribute is allowed for a given trusted HTML tag.
+     */
+    private function isAllowedHtmlAttribute(string $tagName, string $attributeName): bool
+    {
+        $globalAttributes = ['class', 'id', 'title', 'lang', 'dir', 'role', 'align', 'width', 'height', 'style'];
+        $tagSpecific = [
+            'a' => ['href', 'target', 'rel', 'name'],
+            'img' => ['src', 'alt', 'width', 'height'],
+            'table' => ['cellpadding', 'cellspacing', 'border'],
+            'td' => ['colspan', 'rowspan', 'valign'],
+            'th' => ['colspan', 'rowspan', 'scope', 'valign'],
+            'col' => ['span', 'width'],
+            'colgroup' => ['span', 'width'],
+        ];
+
+        if (str_starts_with($attributeName, 'data-') || str_starts_with($attributeName, 'aria-')) {
+            return true;
+        }
+
+        if (in_array($attributeName, $globalAttributes, true)) {
+            return true;
+        }
+
+        return in_array($attributeName, $tagSpecific[$tagName] ?? [], true);
+    }
+
+    /**
+     * Validate URL-bearing HTML attributes against safe schemes for email templates.
+     */
+    private function isAllowedHtmlUrlValue(string $value): bool
+    {
+        $value = trim(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if ($value === '' || str_starts_with($value, '#') || str_starts_with($value, '/')) {
+            return true;
+        }
+
+        if (preg_match('/^(https?:|mailto:|tel:|cid:)/i', $value) === 1) {
+            return true;
+        }
+
+        return preg_match('/^data:image\/(png|jpeg|jpg|gif|webp);base64,[a-z0-9+\/=\s]+$/i', $value) === 1;
+    }
+
+    /**
+     * Reject inline CSS constructs that can execute script or import active content.
+     */
+    private function isSafeInlineStyle(string $value): bool
+    {
+        $value = strtolower(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+        return preg_match('/expression\s*\(|javascript\s*:|vbscript\s*:|@import|behavior\s*:|-moz-binding|url\s*\(\s*["\']?\s*(javascript:|vbscript:|data:text\/html)/i', $value) !== 1;
     }
 
     /**
@@ -1116,79 +1128,9 @@ class Validation
     private function validateNosqlinjection(string $field, $value, array $params = []): bool
     {
         try {
-            if (!is_string($value)) {
-                return true;
-            }
+            $scan = $this->security->containsInjection($value, false);
 
-            $sqlPatterns = [
-                // Basic SQL keywords
-                '/(\s*(union|select|insert|update|delete|drop|create|alter|exec|execute)\s+)/i',
-
-                // Basic conditional tautologies
-                '/(\s*(or|and)\s+\d+\s*=\s*\d+)/i',
-                '/(\s*(\'|\"|`)\s*(or|and)\s*\d+\s*=\s*\d+\s*(\'|\"|`))/i',
-
-                // SQL comments
-                '/(\s*--\s*)/i',
-                '/(\s*\/\*.*?\*\/\s*)/i',
-                '/--/', // Single line comment
-                '/\/\*.*\*\//s', // Multi-line comment
-
-                // Common tautology patterns
-                '/(\'|\")\s*or\s*(\'|\")?\d+(\'|\")?\s*=\s*(\'|\")?\d+(\'|\")?/i',
-                '/(\'|\")\s*or\s*(\'|\")?\w+(\'|\")?\s*=\s*(\'|\")?\w+(\'|\")?/i',
-                '/\bor\b\s+\d+\s*=\s*\d+/i',
-                '/\bor\b\s+\w+\s*=\s*\w+/i',
-
-                // Chained queries
-                '/;\s*(drop|delete|insert|update|select|create|alter|exec|execute)\b/i',
-
-                // Union injection
-                '/\bunion\b.*\bselect\b/i',
-
-                // DDL/DML attacks
-                '/\bdrop\b\s+\btable\b/i',
-                '/\bdelete\b\s+\bfrom\b/i',
-                '/\binsert\b\s+\binto\b/i',
-                '/\bupdate\b\s+\w+\s+\bset\b/i',
-
-                // Sub-select attacks
-                '/\bselect\b\s+.*\bfrom\b\s+\(/i',
-
-                // Information schema targeting
-                '/\bfrom\b\s+information_schema\./i',
-                '/\bselect\b\s+.*\bfrom\b\s+mysql\./i',
-
-                // Hexadecimal injections
-                '/0x[0-9a-fA-F]+/i',
-
-                // LIKE, NOT LIKE, BETWEEN, IS NULL conditions
-                '/\blike\b\s+[\'"].*[\'"]/i',
-                '/\bnot\s+like\b\s+[\'"].*[\'"]/i',
-                '/\bbetween\b\s+.*\s+and\s+.*/i',
-                '/\bis\s+null\b/i',
-
-                // Concatenation operator
-                '/\bconcat\b\s*\(/i',
-
-                // Time-based attacks
-                '/\bsleep\s*\(\s*\d+\s*\)/i',
-                '/\bbenchmark\s*\(\s*\d+\s*,/i',
-
-                // Blind SQL injection pattern
-                '/\bif\s*\(.*\)/i',
-
-                // Comment at end of input
-                '/(--|#)\s*$/i'
-            ];
-
-            foreach ($sqlPatterns as $pattern) {
-                if (preg_match($pattern, $value)) {
-                    return false;
-                }
-            }
-
-            return true;
+            return ($scan['malicious'] ?? false) !== true;
         } catch (Exception $e) {
             return false;
         }
@@ -1243,7 +1185,7 @@ class Validation
             }
 
             $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-            if ($extension && in_array($extension, $this->dangerousExtensions, true)) {
+            if ($extension && ($this->security->isBlockedUploadExtension($extension) || in_array($extension, $this->dangerousExtensions, true))) {
                 return false;
             }
 
@@ -1282,6 +1224,9 @@ class Validation
     /**
      * File validation with security checks
      */
+    /**
+     * Validate uploaded file metadata and block unsafe extensions or MIME types.
+     */
     private function validateFile(string $field, $value, array $params = []): bool
     {
         try {
@@ -1299,6 +1244,18 @@ class Validation
                 return false;
             }
 
+            if (function_exists('finfo_open')) {
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                if ($finfo !== false) {
+                    $detectedType = finfo_file($finfo, $value['tmp_name']);
+                    finfo_close($finfo);
+
+                    if (is_string($detectedType) && $this->security->isBlockedUploadMimeType($detectedType)) {
+                        return false;
+                    }
+                }
+            }
+
             // Extract filename once if present
             $filename = $value['name'] ?? null;
 
@@ -1310,7 +1267,7 @@ class Validation
 
                 // Security: Check for dangerous extensions
                 $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-                if ($extension && in_array($extension, $this->dangerousExtensions, true)) {
+                if ($extension && ($this->security->isBlockedUploadExtension($extension) || in_array($extension, $this->dangerousExtensions, true))) {
                     return false;
                 }
             }
@@ -2020,6 +1977,9 @@ class Validation
     /**
      * Validate image rule
      */
+    /**
+     * Validate image uploads using server-side MIME detection instead of client metadata.
+     */
     private function validateImage(string $field, $value, array $params = []): bool
     {
         try {
@@ -2027,7 +1987,7 @@ class Validation
                 return false;
             }
 
-            $imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp', 'image/svg+xml'];
+            $imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
 
             // Use finfo for server-side MIME detection instead of trusting client-reported type
             $detectedType = null;
@@ -2037,7 +1997,12 @@ class Validation
                 finfo_close($finfo);
             }
 
-            return in_array($detectedType ?? $value['type'], $imageTypes);
+            $finalType = $detectedType ?? $value['type'];
+            if (is_string($finalType) && $this->security->isBlockedUploadMimeType($finalType)) {
+                return false;
+            }
+
+            return in_array($finalType, $imageTypes, true);
         } catch (Exception $e) {
             return false;
         }
@@ -2391,6 +2356,9 @@ class Validation
     /**
      * Validate Base64-encoding
      */
+    /**
+     * Validate Base64 text efficiently without decoding the entire payload.
+     */
     private function validateBase64(string $field, $value, array $params = []): bool
     {
         try {
@@ -2403,20 +2371,16 @@ class Validation
                 $value = preg_replace('/^data:[^;]+;base64,/', '', $value);
             }
 
-            // Check if valid base64 (must be divisible by 4, only valid chars)
-            if (!preg_match('/^[A-Za-z0-9+\/\r\n]+={0,2}$/', $value)) {
+            $value = preg_replace('/\s+/', '', (string) $value) ?? '';
+            if ($value === '') {
                 return false;
             }
 
-            // Decode and re-encode to verify
-            $decoded = base64_decode($value, true);
-            if ($decoded === false) {
+            if (strlen($value) % 4 !== 0) {
                 return false;
             }
-            // Check if re-encoding matches original (ignoring padding)
-            $reencoded = rtrim(base64_encode($decoded), '=');
-            $original = rtrim($value, '=');
-            return $reencoded === $original;
+
+            return preg_match('/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/', $value) === 1;
         } catch (Exception $e) {
             return false;
         }

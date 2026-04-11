@@ -125,7 +125,7 @@ $router->group(['prefix' => $apiPrefix, 'middleware' => ['auth', 'throttle:api']
 
 	// Uploads
 	$router->group(['prefix' => 'uploads', 'middleware' => ['permission:settings-upload-image']], function ($router) {
-		$router->post('/image-cropper', [UploadController::class, 'uploadImageCropper'])->middleware('xss')->name('uploads.image-cropper');
+		$router->post('/image-cropper', [UploadController::class, 'uploadImageCropper'])->middleware('xss:image')->name('uploads.image-cropper');
 		$router->post('/delete', [UploadController::class, 'removeUploadFiles'])->middleware('xss')->name('uploads.delete');
 	});
 });

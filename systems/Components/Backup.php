@@ -42,6 +42,8 @@ class Backup
     private string $filenamePrefix;
     private ?string $lastBackupPath = null;
 
+    private Security $security;
+
     public function __construct(array $config = [])
     {
         $this->config = array_merge($this->getDefaultConfig(), $config);
@@ -49,11 +51,9 @@ class Backup
         $this->filenamePrefix = $this->config['filename_prefix'];
         $this->directories = $this->config['directories'];
         $this->excludePatterns = $this->config['exclude'];
+        $this->security = new Security();
 
-        // Ensure backup directory exists
-        if (!is_dir($this->backupPath)) {
-            mkdir($this->backupPath, 0775, true);
-        }
+        $this->ensureBackupDirectoryExists();
     }
 
     /**
@@ -172,10 +172,7 @@ class Backup
     public function setBackupPath(string $path): self
     {
         $this->backupPath = rtrim($path, '/\\');
-
-        if (!is_dir($this->backupPath)) {
-            mkdir($this->backupPath, 0775, true);
-        }
+        $this->ensureBackupDirectoryExists();
 
         return $this;
     }
@@ -216,13 +213,9 @@ class Backup
     {
         $startTime = microtime(true);
         $timestamp = date('Y-m-d_H-i-s');
-        $tempDir = sys_get_temp_dir() . '/MythPHP_backup_' . $timestamp;
+        $tempDir = $this->createTemporaryBackupDirectory($timestamp);
 
         try {
-            if (!is_dir($tempDir)) {
-                mkdir($tempDir, 0775, true);
-            }
-
             $filesToZip = [];
 
             // 1. Database backup
@@ -268,7 +261,7 @@ class Backup
                 'success' => true,
                 'path' => $zipPath,
                 'filename' => $zipFilename,
-                'size' => $this->formatFileSize(filesize($zipPath)),
+                'size' => $this->formatFileSize((int) (filesize($zipPath) ?: 0)),
                 'elapsed' => $elapsed . 's',
                 'timestamp' => $timestamp,
                 'includes' => [
@@ -276,7 +269,7 @@ class Backup
                     'files' => $this->includeFiles,
                 ],
             ];
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             // Cleanup temp directory on error
             if (is_dir($tempDir)) {
                 $this->deleteDirectory($tempDir);
@@ -306,7 +299,8 @@ class Backup
             throw new Exception('Database configuration is missing. Check your database config.');
         }
 
-        $filename = 'database_' . $dbConfig['database'] . '_' . date('Y-m-d_H-i-s') . '.sql';
+        $databaseName = $this->security->sanitizeStorageSegment((string) $dbConfig['database']);
+        $filename = 'database_' . $databaseName . '_' . date('Y-m-d_H-i-s') . '.sql';
         $filePath = $tempDir . DIRECTORY_SEPARATOR . $filename;
 
         // Try mysqldump first (much faster)
@@ -323,33 +317,66 @@ class Backup
      */
     private function tryMysqldump(array $config, string $outputFile): bool
     {
+        if (!$this->isFunctionAvailable('proc_open')) {
+            return false;
+        }
+
         $mysqldump = $this->findMysqldump();
         if ($mysqldump === null) {
             return false;
         }
 
-        $host = escapeshellarg($config['host'] ?? 'localhost');
-        $port = escapeshellarg($config['port'] ?? '3306');
-        $user = escapeshellarg($config['username'] ?? '');
-        $pass = $config['password'] ?? '';
-        $database = escapeshellarg($config['database'] ?? '');
-        $output = escapeshellarg($outputFile);
+        $command = [
+            $mysqldump,
+            '--host=' . (string) ($config['host'] ?? 'localhost'),
+            '--port=' . (string) ($config['port'] ?? '3306'),
+            '--user=' . (string) ($config['username'] ?? ''),
+            '--single-transaction',
+            '--routines',
+            '--triggers',
+            '--add-drop-table',
+            (string) ($config['database'] ?? ''),
+        ];
 
-        $command = "{$mysqldump} --host={$host} --port={$port} --user={$user}";
-
-        if (!empty($pass)) {
-            $command .= ' --password=' . escapeshellarg($pass);
+        $password = (string) ($config['password'] ?? '');
+        if ($password !== '') {
+            array_splice($command, 4, 0, ['--password=' . $password]);
         }
 
-        $command .= " --single-transaction --routines --triggers --add-drop-table {$database} > {$output} 2>&1";
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['file', $outputFile, 'w'],
+            2 => ['pipe', 'w'],
+        ];
 
-        exec($command, $outputLines, $returnCode);
+        $pipes = [];
+        $process = @proc_open($command, $descriptors, $pipes, null, null, ['bypass_shell' => true]);
+        if (!is_resource($process)) {
+            return false;
+        }
+
+        if (isset($pipes[0]) && is_resource($pipes[0])) {
+            fclose($pipes[0]);
+        }
+
+        $stderr = '';
+        if (isset($pipes[2]) && is_resource($pipes[2])) {
+            $stderr = stream_get_contents($pipes[2]) ?: '';
+            fclose($pipes[2]);
+        }
+
+        $returnCode = proc_close($process);
 
         if ($returnCode !== 0) {
             // Clean up failed dump file
             if (file_exists($outputFile)) {
                 @unlink($outputFile);
             }
+
+            if ($stderr !== '') {
+                $this->logError('mysqldump failed: ' . trim($stderr));
+            }
+
             return false;
         }
 
@@ -364,13 +391,14 @@ class Backup
     {
         // 1. Check if a path was explicitly provided in config
         $configPath = $this->config['mysqldump_path'] ?? null;
-        if ($configPath !== null && file_exists($configPath)) {
+        if (is_string($configPath) && $this->isAllowedBinaryPath($configPath)) {
             return $configPath;
         }
 
-        $paths = [
-            'mysqldump', // system PATH
-        ];
+        $pathBinary = $this->locateBinaryOnPath(PHP_OS_FAMILY === 'Windows' ? ['mysqldump.exe', 'mysqldump'] : ['mysqldump']);
+        if ($pathBinary !== null) {
+            return $pathBinary;
+        }
 
         // 2. Resolve search paths from config (supports glob patterns)
         $searchPaths = $this->config['mysqldump_search_paths'] ?? [];
@@ -378,34 +406,64 @@ class Backup
             if (str_contains($entry, '*')) {
                 $found = glob($entry);
                 if (!empty($found)) {
-                    $paths = array_merge($paths, $found);
+                    foreach ($found as $path) {
+                        if ($this->isAllowedBinaryPath($path)) {
+                            return $path;
+                        }
+                    }
                 }
-            } else {
-                $paths[] = $entry;
+            } elseif ($this->isAllowedBinaryPath($entry)) {
+                return $entry;
             }
         }
 
-        foreach ($paths as $path) {
-            // If it's an absolute path, just check if file exists
-            if ($path !== 'mysqldump' && file_exists($path)) {
-                return $path;
+        return null;
+    }
+
+    /**
+     * Locate an allowed binary in the current PATH without invoking a shell.
+     *
+     * @param array<int, string> $binaryNames
+     */
+    private function locateBinaryOnPath(array $binaryNames): ?string
+    {
+        $pathEnv = getenv('PATH');
+        if (!is_string($pathEnv) || trim($pathEnv) === '') {
+            return null;
+        }
+
+        foreach (explode(PATH_SEPARATOR, $pathEnv) as $directory) {
+            $directory = trim($directory, " \t\n\r\0\x0B\"");
+            if ($directory === '' || !is_dir($directory)) {
+                continue;
             }
 
-            // Check system PATH for generic 'mysqldump' command
-            if ($path === 'mysqldump') {
-                $testCmd = PHP_OS_FAMILY === 'Windows'
-                    ? 'where mysqldump 2>NUL'
-                    : 'which mysqldump 2>/dev/null';
-
-                $output = [];
-                exec($testCmd, $output, $code);
-                if ($code === 0) {
-                    return $path;
+            foreach ($binaryNames as $binaryName) {
+                $candidate = rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $binaryName;
+                if ($this->isAllowedBinaryPath($candidate)) {
+                    return $candidate;
                 }
             }
         }
 
         return null;
+    }
+
+    /**
+     * Accept only readable local mysqldump binaries.
+     */
+    private function isAllowedBinaryPath(string $path): bool
+    {
+        $path = trim($path);
+        if ($path === '') {
+            return false;
+        }
+
+        if (!$this->security->canReadPath($path)) {
+            return false;
+        }
+
+        return is_file($path) && (PHP_OS_FAMILY === 'Windows' || is_executable($path));
     }
 
     /**
@@ -421,95 +479,114 @@ class Backup
             $config['database'] ?? ''
         );
 
-        $pdo = new \PDO($dsn, $config['username'] ?? '', $config['password'] ?? '', [
+        $pdoOptions = [
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-        ]);
+        ];
+
+        if (($config['driver'] ?? 'mysql') === 'mysql' && defined('PDO::MYSQL_ATTR_USE_BUFFERED_QUERY')) {
+            $pdoOptions[\PDO::MYSQL_ATTR_USE_BUFFERED_QUERY] = false;
+        }
+
+        $pdo = new \PDO($dsn, $config['username'] ?? '', $config['password'] ?? '', $pdoOptions);
 
         $handle = fopen($outputFile, 'w');
         if ($handle === false) {
             throw new Exception("Cannot create dump file: {$outputFile}");
         }
 
-        // Header
-        fwrite($handle, "-- MythPHP Database Backup\n");
-        fwrite($handle, "-- Generated: " . date('Y-m-d H:i:s') . "\n");
-        fwrite($handle, "-- Database: {$config['database']}\n");
-        fwrite($handle, "-- --------------------------------------------------------\n\n");
-        fwrite($handle, "SET NAMES utf8mb4;\n");
-        fwrite($handle, "SET FOREIGN_KEY_CHECKS = 0;\n\n");
+        try {
+            // Header
+            fwrite($handle, "-- MythPHP Database Backup\n");
+            fwrite($handle, "-- Generated: " . date('Y-m-d H:i:s') . "\n");
+            fwrite($handle, "-- Database: {$config['database']}\n");
+            fwrite($handle, "-- --------------------------------------------------------\n\n");
+            fwrite($handle, "SET NAMES utf8mb4;\n");
+            fwrite($handle, "SET FOREIGN_KEY_CHECKS = 0;\n\n");
 
-        // Get all tables
-        $tables = $pdo->query("SHOW TABLES")->fetchAll(\PDO::FETCH_COLUMN);
+            // Get all tables
+            $tables = $pdo->query("SHOW TABLES")->fetchAll(\PDO::FETCH_COLUMN);
 
-        foreach ($tables as $table) {
-            // Sanitize table name: only allow valid MySQL identifier characters
-            if (!preg_match('/^[a-zA-Z0-9_$]+$/', $table)) {
-                continue;
-            }
-
-            $quotedTable = '`' . str_replace('`', '``', $table) . '`';
-
-            // Get CREATE TABLE statement
-            $createStmt = $pdo->query("SHOW CREATE TABLE {$quotedTable}")->fetch();
-            $createSql = $createStmt['Create Table'] ?? $createStmt['Create View'] ?? '';
-
-            fwrite($handle, "-- Table: {$table}\n");
-            fwrite($handle, "DROP TABLE IF EXISTS {$quotedTable};\n");
-            fwrite($handle, $createSql . ";\n\n");
-
-            // Skip data for views
-            if (isset($createStmt['Create View'])) {
-                continue;
-            }
-
-            // Export data in chunks
-            $count = $pdo->query("SELECT COUNT(*) FROM {$quotedTable}")->fetchColumn();
-
-            if ($count > 0) {
-                $chunkSize = 1000;
-                $offset = 0;
-
-                while ($offset < $count) {
-                    $rows = $pdo->query("SELECT * FROM {$quotedTable} LIMIT {$chunkSize} OFFSET {$offset}")->fetchAll();
-
-                    if (empty($rows)) {
-                        break;
-                    }
-
-                    $columns = array_keys($rows[0]);
-                    $columnList = '`' . implode('`, `', array_map(fn($c) => str_replace('`', '``', $c), $columns)) . '`';
-
-                    fwrite($handle, "INSERT INTO {$quotedTable} ({$columnList}) VALUES\n");
-
-                    $valueLines = [];
-                    foreach ($rows as $row) {
-                        $values = array_map(function ($val) use ($pdo) {
-                            if ($val === null) {
-                                return 'NULL';
-                            }
-                            return $pdo->quote($val);
-                        }, array_values($row));
-
-                        $valueLines[] = '(' . implode(', ', $values) . ')';
-                    }
-
-                    fwrite($handle, implode(",\n", $valueLines) . ";\n\n");
-
-                    $offset += $chunkSize;
-
-                    // Free memory
-                    unset($rows, $valueLines);
+            foreach ($tables as $table) {
+                if (!is_string($table) || !preg_match('/^[a-zA-Z0-9_$]+$/', $table)) {
+                    continue;
                 }
+
+                $quotedTable = '`' . str_replace('`', '``', $table) . '`';
+
+                $createStmt = $pdo->query("SHOW CREATE TABLE {$quotedTable}")->fetch();
+                $createSql = $createStmt['Create Table'] ?? $createStmt['Create View'] ?? '';
+                if (!is_string($createSql) || $createSql === '') {
+                    continue;
+                }
+
+                fwrite($handle, "-- Table: {$table}\n");
+                fwrite($handle, "DROP TABLE IF EXISTS {$quotedTable};\n");
+                fwrite($handle, $createSql . ";\n\n");
+
+                if (isset($createStmt['Create View'])) {
+                    continue;
+                }
+
+                $statement = $pdo->query("SELECT * FROM {$quotedTable}");
+                $chunkSize = 500;
+                $rows = [];
+
+                while (($row = $statement->fetch(\PDO::FETCH_ASSOC)) !== false) {
+                    $rows[] = $row;
+                    if (count($rows) >= $chunkSize) {
+                        $this->writeInsertBatch($handle, $pdo, $quotedTable, $rows);
+                        $rows = [];
+                    }
+                }
+
+                if (!empty($rows)) {
+                    $this->writeInsertBatch($handle, $pdo, $quotedTable, $rows);
+                }
+
+                $statement->closeCursor();
+                unset($statement, $rows);
             }
+
+            fwrite($handle, "SET FOREIGN_KEY_CHECKS = 1;\n");
+            fwrite($handle, "\n-- Dump completed: " . date('Y-m-d H:i:s') . "\n");
+        } finally {
+            fclose($handle);
         }
 
-        fwrite($handle, "SET FOREIGN_KEY_CHECKS = 1;\n");
-        fwrite($handle, "\n-- Dump completed: " . date('Y-m-d H:i:s') . "\n");
-
-        fclose($handle);
-
         return $outputFile;
+    }
+
+    /**
+     * Write a chunk of row inserts to the SQL dump.
+     *
+     * @param resource $handle
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function writeInsertBatch($handle, \PDO $pdo, string $quotedTable, array $rows): void
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $columns = array_keys($rows[0]);
+        $columnList = '`' . implode('`, `', array_map(static fn($column) => str_replace('`', '``', (string) $column), $columns)) . '`';
+        fwrite($handle, "INSERT INTO {$quotedTable} ({$columnList}) VALUES\n");
+
+        $valueLines = [];
+        foreach ($rows as $row) {
+            $values = array_map(static function ($value) use ($pdo) {
+                if ($value === null) {
+                    return 'NULL';
+                }
+
+                return $pdo->quote((string) $value);
+            }, array_values($row));
+
+            $valueLines[] = '(' . implode(', ', $values) . ')';
+        }
+
+        fwrite($handle, implode(",\n", $valueLines) . ";\n\n");
     }
 
     // ─── File Backup ────────────────────────────────────────────
@@ -532,7 +609,7 @@ class Backup
             );
 
             foreach ($iterator as $file) {
-                if (!$file->isFile()) {
+                if (!$file->isFile() || $file->isLink() || !$file->isReadable()) {
                     continue;
                 }
 
@@ -544,7 +621,8 @@ class Backup
 
                 // Skip files larger than max limit
                 $maxBytes = ($this->config['max_file_size_mb'] ?? 512) * 1024 * 1024;
-                if ($file->getSize() > $maxBytes) {
+                $fileSize = $file->getSize();
+                if ($fileSize === false || $fileSize > $maxBytes) {
                     continue;
                 }
 
@@ -617,7 +695,9 @@ class Backup
                 $localName = 'files/' . basename($file);
             }
 
-            $zip->addFile($file, $localName);
+            if ($zip->addFile($file, $localName) !== true) {
+                throw new Exception("Failed to add file to ZIP archive: {$file}");
+            }
         }
 
         $zip->close();
@@ -646,7 +726,8 @@ class Backup
         }
 
         foreach ($files as $file) {
-            if (filemtime($file) < $threshold) {
+            $modifiedAt = filemtime($file);
+            if ($modifiedAt !== false && $modifiedAt < $threshold) {
                 if (@unlink($file)) {
                     $removed++;
                 }
@@ -674,12 +755,15 @@ class Backup
         });
 
         foreach ($files as $file) {
+            $fileSize = filesize($file);
+            $fileMtime = filemtime($file);
+
             $backups[] = [
                 'filename' => basename($file),
                 'path' => $file,
-                'size' => $this->formatFileSize(filesize($file)),
-                'created_at' => date('Y-m-d H:i:s', filemtime($file)),
-                'age_days' => (int) floor((time() - filemtime($file)) / 86400),
+                'size' => $this->formatFileSize((int) ($fileSize ?: 0)),
+                'created_at' => $fileMtime !== false ? date('Y-m-d H:i:s', $fileMtime) : 'Unknown',
+                'age_days' => $fileMtime !== false ? (int) floor((time() - $fileMtime) / 86400) : 0,
             ];
         }
 
@@ -733,6 +817,49 @@ class Backup
         }
 
         @rmdir($dir);
+    }
+
+    /**
+     * Create the configured backup directory if needed and ensure it is writable.
+     */
+    private function ensureBackupDirectoryExists(): void
+    {
+        if (!is_dir($this->backupPath)) {
+            if (!mkdir($this->backupPath, 0775, true) && !is_dir($this->backupPath)) {
+                throw new Exception('Unable to create backup directory: ' . $this->backupPath);
+            }
+        }
+
+        if (!$this->security->canWritePath($this->backupPath)) {
+            throw new Exception('Backup directory is not writable: ' . $this->backupPath);
+        }
+    }
+
+    /**
+     * Create an isolated temporary directory for the current backup run.
+     */
+    private function createTemporaryBackupDirectory(string $timestamp): string
+    {
+        $tempDir = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'MythPHP_backup_' . $timestamp . '_' . bin2hex(random_bytes(4));
+        if (!mkdir($tempDir, 0775, true) && !is_dir($tempDir)) {
+            throw new Exception('Unable to create temporary backup directory.');
+        }
+
+        return $tempDir;
+    }
+
+    /**
+     * Check whether a function exists and is not disabled.
+     */
+    private function isFunctionAvailable(string $functionName): bool
+    {
+        if (!function_exists($functionName)) {
+            return false;
+        }
+
+        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+
+        return !in_array($functionName, $disabled, true);
     }
 
     /**

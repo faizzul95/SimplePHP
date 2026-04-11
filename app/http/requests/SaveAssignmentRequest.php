@@ -8,7 +8,15 @@ class SaveAssignmentRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        if ($this->isCreate()) {
+            return isSuperadmin() || permission('assignments-create');
+        }
+
+        if ($this->isUpdate()) {
+            return isSuperadmin() || permission('assignments-edit');
+        }
+
+        return isSuperadmin();
     }
 
     public function primaryKey(): string|array

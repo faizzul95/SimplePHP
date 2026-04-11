@@ -113,7 +113,11 @@ class Logger
      */
     public function logWithContext($message, $context = [], $level = self::LOG_LEVEL_INFO)
     {
-        $contextString = json_encode($context);
+        $contextString = json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($contextString === false) {
+            $contextString = '{"error":"context_encoding_failed"}';
+        }
+
         $this->log("{$message} | Context: {$contextString}", $level);
     }
 
@@ -238,7 +242,17 @@ class Logger
     private function formatLogMessage($message, $level)
     {
         $timestamp = date(self::DATE_FORMAT);
-        return "[{$timestamp}] [{$level}] {$message}" . PHP_EOL;
+        return "[{$timestamp}] [{$this->sanitizeLogValue((string) $level)}] {$this->sanitizeLogValue((string) $message)}" . PHP_EOL;
+    }
+
+    /**
+     * Keep log records single-line and remove low ASCII control characters.
+     */
+    private function sanitizeLogValue(string $value): string
+    {
+        $value = str_replace(["\r", "\n", "\t"], ['[CR]', '[NL]', '[TAB]'], $value);
+
+        return preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value) ?? '';
     }
 
     /**

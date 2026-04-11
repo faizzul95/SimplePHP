@@ -8,7 +8,15 @@ class SaveUserRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        if ($this->isCreate()) {
+            return isSuperadmin() || permission('user-create');
+        }
+
+        if ($this->isUpdate()) {
+            return isSuperadmin() || permission('user-update');
+        }
+
+        return isSuperadmin();
     }
 
     public function primaryKey(): string|array
@@ -39,15 +47,6 @@ class SaveUserRequest extends FormRequest
             'email' => 'trim|lowercase',
             'user_contact_no' => 'trim|no_null_bytes',
             'username' => 'trim|strip_tags|normalize_spaces',
-        ];
-    }
-
-    public function defaults(): array
-    {
-        return [
-            'id' => null,
-            'username' => null,
-            'password' => null,
         ];
     }
 

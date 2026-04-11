@@ -387,7 +387,7 @@ if (!function_exists('asset')) {
 if (!function_exists('redirect')) {
 	function redirect($path, $permanent = false)
 	{
-		$target = (string) $path;
+		$target = str_replace(["\r", "\n", "\0"], '', (string) $path);
 
 		// If already absolute URL, use it directly
 		if (preg_match('/^https?:\/\//i', $target) === 1) {

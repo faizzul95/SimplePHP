@@ -8,7 +8,15 @@ class SaveEmailTemplateRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        if ($this->isCreate()) {
+            return isSuperadmin() || permission('email-templates-create');
+        }
+
+        if ($this->isUpdate()) {
+            return isSuperadmin() || permission('email-templates-edit');
+        }
+
+        return isSuperadmin();
     }
 
     public function primaryKey(): string|array
@@ -21,7 +29,7 @@ class SaveEmailTemplateRequest extends FormRequest
         return [
             'email_subject' => 'required|string|min_length:3|max_length:255|secure_value',
             'email_type' => 'required|string|min_length:3|max_length:255|secure_value',
-            'email_body' => 'required|string',
+            'email_body' => 'required|string|min_length:5|max_length:200000|safe_html',
             'email_status' => 'required|integer|min:0|max:1',
             'email_footer' => 'nullable|string',
             'email_cc' => 'nullable|string',
@@ -35,6 +43,7 @@ class SaveEmailTemplateRequest extends FormRequest
         return [
             'email_subject' => 'trim|strip_tags|normalize_spaces',
             'email_type' => 'trim|strip_tags|normalize_spaces',
+            'email_body' => 'no_null_bytes|normalize_newlines',
             'email_footer' => 'trim|no_null_bytes',
             'email_cc' => 'trim|no_null_bytes',
             'email_bcc' => 'trim|no_null_bytes',
@@ -72,6 +81,7 @@ class SaveEmailTemplateRequest extends FormRequest
             'email_type.required' => 'Email type is required.',
             'email_type.min_length' => 'Email type must be at least 3 characters.',
             'email_body.required' => 'Email body is required.',
+            'email_body.safe_html' => 'Email body contains unsafe HTML or disallowed attributes.',
         ];
     }
 }
