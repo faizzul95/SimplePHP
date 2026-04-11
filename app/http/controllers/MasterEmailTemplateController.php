@@ -91,19 +91,13 @@ class MasterEmailTemplateController extends Controller
 
     public function save(SaveEmailTemplateRequest $request): void
     {
-        $dataToSave = [
-            'email_type' => $request->validated('email_type'),
-            'email_subject' => $request->validated('email_subject'),
-            'email_body' => $request->validated('email_body'),
-            'email_status' => $request->validated('email_status'),
-            'email_footer' => $request->input('email_footer'),
-            'email_cc' => $request->input('email_cc'),
-            'email_bcc' => $request->input('email_bcc'),
-        ];
+        $dataToSave = $request->validated();
+        $templateId = $dataToSave['id'] ?? null;
+        unset($dataToSave['id']);
 
         $result = db()->table('master_email_templates')->insertOrUpdate(
             [
-                'id' => $request->input('id')
+                'id' => $templateId
             ],
             $dataToSave
         );

@@ -6,6 +6,16 @@ use Core\Http\FormRequest;
 
 class SaveEmailTemplateRequest extends FormRequest
 {
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function primaryKey(): string|array
+    {
+        return 'id';
+    }
+
     public function rules(): array
     {
         return [
@@ -13,7 +23,44 @@ class SaveEmailTemplateRequest extends FormRequest
             'email_type' => 'required|string|min_length:3|max_length:255|secure_value',
             'email_body' => 'required|string',
             'email_status' => 'required|integer|min:0|max:1',
-            'id' => 'numeric',
+            'email_footer' => 'nullable|string',
+            'email_cc' => 'nullable|string',
+            'email_bcc' => 'nullable|string',
+            'id' => 'nullable|numeric',
+        ];
+    }
+
+    public function sanitize(): array
+    {
+        return [
+            'email_subject' => 'trim|strip_tags|normalize_spaces',
+            'email_type' => 'trim|strip_tags|normalize_spaces',
+            'email_footer' => 'trim|no_null_bytes',
+            'email_cc' => 'trim|no_null_bytes',
+            'email_bcc' => 'trim|no_null_bytes',
+        ];
+    }
+
+    public function defaults(): array
+    {
+        return [
+            'id' => null,
+            'email_footer' => null,
+            'email_cc' => null,
+            'email_bcc' => null,
+        ];
+    }
+
+    public function casts(): array
+    {
+        return [
+            'email_subject' => 'trim',
+            'email_type' => 'trim',
+            'email_status' => 'int',
+            'email_footer' => 'nullable_string',
+            'email_cc' => 'nullable_string',
+            'email_bcc' => 'nullable_string',
+            'id' => 'int',
         ];
     }
 

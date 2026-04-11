@@ -610,6 +610,11 @@ class Validation
     {
         try {
             $rulesArray = explode('|', $rules);
+            $fieldExists = $this->fieldExists($field);
+            if (!$fieldExists) {
+                return;
+            }
+
             $value = $this->getFieldValue($field);
             $shouldBail = false;
 
@@ -619,7 +624,7 @@ class Validation
             }
 
             // Quick exit for sometimes
-            if (in_array('sometimes', $rulesArray) && !$this->fieldExists($field)) {
+            if (in_array('sometimes', $rulesArray) && !$fieldExists) {
                 return; // Skip validation if sometimes is present and field is missing
             }
 
@@ -829,6 +834,10 @@ class Validation
     private function fieldExists(string $field): bool
     {
         try {
+            if (strpos($field, '*') !== false) {
+                return !empty($this->getWildcardValues($field));
+            }
+
             if (strpos($field, '.') === false) {
                 return array_key_exists($field, $this->data);
             }

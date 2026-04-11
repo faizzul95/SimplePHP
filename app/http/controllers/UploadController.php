@@ -21,7 +21,7 @@ class UploadController extends Controller
             $entity_id = decodeID($request->validated('entity_id'));
             $entity_type = $request->validated('entity_type');
             $entity_file_type = $request->validated('entity_file_type');
-            $image = $request->input('image');
+            $image = $request->validated('image');
 
             $imageConvert = convertBase64String($image);
 
@@ -34,9 +34,9 @@ class UploadController extends Controller
             $extension = $imageConvert['extension'];
 
             $user_id = currentUserID();
-            $id = decodeID($request->input('id'));
-            $folder_group = $request->input('folder_group', 'unknown');
-            $folder_type = $request->input('folder_type', 'unknown');
+            $id = decodeID($request->validated('id'));
+            $folder_group = $request->validated('folder_group', 'unknown');
+            $folder_type = $request->validated('folder_type', 'unknown');
 
             $folder = folder($folder_group, $entity_id, $folder_type);
             $fileNameNew = $entity_id . "_" . date('dFY') . "_" . date('his') . '.' . $extension;

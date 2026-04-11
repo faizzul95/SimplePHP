@@ -160,6 +160,7 @@ class UserController extends Controller
     public function save(SaveUserRequest $request): void
     {
         $data = $request->validated();
+        $requestId = $data['id'] ?? null;
         $roleId = $data['role_id'] ?? null;
         unset($data['role_id']);
 
@@ -231,23 +232,9 @@ class UserController extends Controller
             unset($data['id']);
         }
 
-        if (empty($request->input('id'))) {
-            $username = $request->input('username');
-            if (empty($username)) {
-                $username = $request->input('email');
-            }
-
-            $password = $request->input('password');
-            if (empty($password)) {
-                $password = $request->input('user_contact_no');
-            }
-
-            $data = array_merge($data, ['username' => $username, 'password' => password_hash($password, PASSWORD_DEFAULT)]);
-        }
-
         $result = db()->table('users')->insertOrUpdate(
             [
-                'id' => $request->input('id')
+                'id' => $requestId
             ],
             $data
         );
@@ -257,7 +244,7 @@ class UserController extends Controller
         }
 
         // Capture the user ID (new insert returns auto-increment ID)
-        $userId = $request->input('id') ?: ($result['id'] ?? null);
+        $userId = $requestId ?: ($result['id'] ?? null);
 
         if ($userId && $roleId) {
             db()->table('user_profile')->insertOrUpdate(

@@ -96,11 +96,12 @@ class RoleController extends Controller
     public function save(SaveRoleRequest $request): void
     {
         $data = $request->validated();
+        $roleId = $data['id'] ?? null;
         unset($data['id']);
 
         $result = db()->table('master_roles')->insertOrUpdate(
             [
-                'id' => $request->input('id')
+                'id' => $roleId
             ],
             $data
         );

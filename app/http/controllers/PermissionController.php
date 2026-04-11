@@ -142,7 +142,7 @@ class PermissionController extends Controller
     public function saveAbilities(SaveAbilitiesRequest $request): void
     {
         $data = $request->validated();
-        $abilityId = $request->input('id');
+        $abilityId = $data['id'] ?? null;
         unset($data['id']);
 
         if (empty($abilityId) && !permission('rbac-abilities-create')) {
@@ -171,7 +171,7 @@ class PermissionController extends Controller
     {
         $roleID = $request->validated('role_id');
         $abilitiesID = $request->validated('abilities_id');
-        $isAllAccess = $request->validated('all_access');
+        $isAllAccess = $request->validated('all_access', 0);
         $permission = $request->validated('permission');
 
         if (empty($roleID) || empty($abilitiesID)) {

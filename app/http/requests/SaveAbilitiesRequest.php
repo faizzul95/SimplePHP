@@ -6,13 +6,50 @@ use Core\Http\FormRequest;
 
 class SaveAbilitiesRequest extends FormRequest
 {
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function primaryKey(): string|array
+    {
+        return 'id';
+    }
+
     public function rules(): array
     {
         return [
             'abilities_name' => 'required|string|min_length:5|max_length:50|secure_value',
             'abilities_slug' => 'required|string|min_length:5|max_length:100|secure_value',
-            'abilities_desc' => 'string|max_length:255|secure_value',
-            'id' => 'numeric',
+            'abilities_desc' => 'nullable|string|max_length:255|secure_value',
+            'id' => 'nullable|numeric',
+        ];
+    }
+
+    public function sanitize(): array
+    {
+        return [
+            'abilities_name' => 'trim|strip_tags|normalize_spaces',
+            'abilities_slug' => 'trim|strip_tags|no_null_bytes',
+            'abilities_desc' => 'trim|strip_tags|normalize_spaces',
+        ];
+    }
+
+    public function defaults(): array
+    {
+        return [
+            'id' => null,
+            'abilities_desc' => null,
+        ];
+    }
+
+    public function casts(): array
+    {
+        return [
+            'abilities_name' => 'trim|ucwords',
+            'abilities_slug' => 'trim|lowercase|slug',
+            'abilities_desc' => 'nullable_string',
+            'id' => 'int',
         ];
     }
 
