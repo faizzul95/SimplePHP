@@ -130,6 +130,11 @@ class ConnectionPool
             throw new \Exception("Unsupported database driver: '$driver'");
         }
 
+        // MariaDB uses the mysql PDO driver
+        if ($driver === 'mariadb') {
+            $driver = 'mysql';
+        }
+
         $host = $config['host'] ?? 'localhost';
         if (!preg_match('/^[a-zA-Z0-9._\-:]+$/', $host)) {
             throw new \Exception("Invalid host format for connection '$name'");
@@ -156,12 +161,14 @@ class ConnectionPool
             $dsn .= ";unix_socket={$config['socket']}";
         }
 
-        // Connection options
+        // Connection options - persistent connections disabled by default to prevent
+        // connection leaks in long-running processes (CLI workers, queue consumers)
+        $persistent = $config['persistent'] ?? false;
         $options = [
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
             \PDO::ATTR_EMULATE_PREPARES => false,
-            \PDO::ATTR_PERSISTENT => true, // Enable persistent connections for MySQL prepared statement cache
+            \PDO::ATTR_PERSISTENT => (bool) $persistent,
         ];
 
         if (isset($config['charset']) && !empty($config['charset'])) {

@@ -67,6 +67,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -90,6 +91,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -113,6 +115,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -136,6 +139,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -159,6 +163,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -182,6 +187,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -205,13 +211,13 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
     public function orWhereYear($column, $operator = null, $value = null)
     {
         try {
-
             $this->validateColumn($column);
 
             // Check if variable contains a full SQL statement
@@ -229,6 +235,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -245,7 +252,7 @@ class MySQLDriver extends BaseDatabase
                 $operator = '=';
             }
 
-            $formattedTime = $this->validateTime($value); // Custom method to validate 'HH:MM[:SS]'
+            $formattedTime = $this->validateTime($value);
             $this->validateOperator($operator);
 
             // Use TIME() function instead of DATE_FORMAT() for better index usage and semantics
@@ -253,6 +260,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -277,6 +285,7 @@ class MySQLDriver extends BaseDatabase
             return $this;
         } catch (\InvalidArgumentException $e) {
             $this->db_error_log($e, __FUNCTION__);
+            throw $e;
         }
     }
 
@@ -478,14 +487,18 @@ class MySQLDriver extends BaseDatabase
                 $this->_buildSelectQuery();
             }
 
-            // Extract only WHERE conditions from the query for better performance
-            if (preg_match('/\bWHERE\b(.*?)(?:\s+(?:GROUP|ORDER|LIMIT|HAVING)\s+BY|$)/is', $this->_query, $matches)) {
-                $whereClause = $matches[1];
-                $existsSql = "SELECT EXISTS(SELECT 1 FROM {$this->table} WHERE {$whereClause} LIMIT 1) AS row_exists";
-            } else {
-                // If no WHERE clause exists, just check if table has any rows
-                $existsSql = "SELECT EXISTS(SELECT 1 FROM {$this->table} LIMIT 1) AS row_exists";
-            }
+            // Wrap the full query (including JOINs) as a subquery for reliable EXISTS check.
+            // Remove ORDER BY, LIMIT, OFFSET from the inner query since they're irrelevant for existence checks.
+            $innerQuery = preg_replace(
+                '/\s+(?:ORDER\s+BY\s+[^;]*?(?=\s*(?:LIMIT|OFFSET|;|$))|LIMIT\s+\d+(?:\s+OFFSET\s+\d+)?|OFFSET\s+\d+)(?=\s*(?:;|$))/i',
+                '',
+                $this->_query
+            );
+
+            // Replace the SELECT columns with SELECT 1 for performance
+            $innerQuery = preg_replace('/^SELECT\s+.*?\s+FROM\b/is', 'SELECT 1 FROM', $innerQuery, 1);
+
+            $existsSql = "SELECT EXISTS({$innerQuery} LIMIT 1) AS row_exists";
 
             $stmt = $this->pdo[$this->connectionName]->prepare($existsSql);
 
@@ -494,10 +507,10 @@ class MySQLDriver extends BaseDatabase
                 $this->_bindParams($stmt, $this->_binds);
             }
 
-            // Log the query for debugging 
+            // Log the query for debugging
             $this->_profiler['profiling'][__FUNCTION__]['query'] = $existsSql;
 
-            // Generate the full query string with bound values 
+            // Generate the full query string with bound values
             $this->_generateFullQuery($existsSql, $this->_binds);
 
             $stmt->execute();
@@ -571,12 +584,215 @@ class MySQLDriver extends BaseDatabase
 
     public function batchInsert($data)
     {
-        return $this;
+        // Default response
+        $response = ['code' => 400, 'message' => 'Failed to batch insert data', 'action' => 'batchInsert'];
+
+        if (empty($data) || !is_array($data)) {
+            throw new \InvalidArgumentException('Data must be a non-empty array of associative arrays.');
+        }
+
+        if (empty($this->table)) {
+            throw new \InvalidArgumentException('Please specify the table.');
+        }
+
+        // Ensure data is a list of rows
+        $data = isset($data[0]) ? $data : [$data];
+
+        if (empty($data)) {
+            return $this->_returnResult(['code' => 200, 'affected_rows' => 0, 'message' => 'No data to insert', 'action' => 'batchInsert']);
+        }
+
+        // Start profiler
+        $this->_startProfiler(__FUNCTION__);
+
+        $validColumns = $this->getTableColumns();
+
+        try {
+            $this->beginTransaction();
+
+            $totalAffectedRows = 0;
+            $batchSize = 500;
+            $chunks = array_chunk($data, $batchSize);
+
+            foreach ($chunks as $chunk) {
+                // Sanitize and filter each row
+                $sanitizedBatch = [];
+                foreach ($chunk as $row) {
+                    if (!is_array($row) || empty($row)) continue;
+
+                    $cleanRow = array_intersect_key($row, array_flip($validColumns));
+                    if ($this->_secureInput) {
+                        $cleanRow = array_map(function ($value) {
+                            return $value === '' ? null : $this->sanitize($value);
+                        }, $cleanRow);
+                    } else {
+                        $cleanRow = array_map(function ($value) {
+                            return $value === '' ? null : $value;
+                        }, $cleanRow);
+                    }
+
+                    if (!empty($cleanRow)) {
+                        $sanitizedBatch[] = $cleanRow;
+                    }
+                }
+
+                if (empty($sanitizedBatch)) continue;
+
+                $columns = array_keys($sanitizedBatch[0]);
+                $escapedColumns = array_map(function ($col) {
+                    return '`' . str_replace('`', '``', $col) . '`';
+                }, $columns);
+
+                $escapedTable = '`' . str_replace('`', '``', $this->table) . '`';
+                $placeholderRow = '(' . str_repeat('?,', count($columns) - 1) . '?)';
+                $allPlaceholders = implode(',', array_fill(0, count($sanitizedBatch), $placeholderRow));
+
+                $sql = "INSERT INTO $escapedTable (" . implode(',', $escapedColumns) . ") VALUES $allPlaceholders";
+
+                $stmt = $this->pdo[$this->connectionName]->prepare($sql);
+
+                $bindValues = [];
+                foreach ($sanitizedBatch as $row) {
+                    foreach ($columns as $col) {
+                        $bindValues[] = $row[$col] ?? null;
+                    }
+                }
+
+                $stmt->execute($bindValues);
+                $totalAffectedRows += $stmt->rowCount();
+            }
+
+            $this->commit();
+
+            $response = [
+                'code' => 201,
+                'affected_rows' => $totalAffectedRows,
+                'message' => 'Batch insert completed successfully',
+                'action' => 'batchInsert'
+            ];
+        } catch (\Exception $e) {
+            $this->rollback();
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e;
+        }
+
+        // Stop profiler
+        $this->_stopProfiler();
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        return $this->_returnResult($response);
     }
 
     public function batchUpdate($data)
     {
-        return $this;
+        // Default response
+        $response = ['code' => 400, 'message' => 'Failed to batch update data', 'action' => 'batchUpdate'];
+
+        if (empty($data) || !is_array($data)) {
+            throw new \InvalidArgumentException('Data must be a non-empty array of associative arrays, each containing a primary key.');
+        }
+
+        if (empty($this->table)) {
+            throw new \InvalidArgumentException('Please specify the table.');
+        }
+
+        // Ensure data is a list of rows
+        $data = isset($data[0]) ? $data : [$data];
+
+        if (empty($data)) {
+            return $this->_returnResult(['code' => 200, 'affected_rows' => 0, 'message' => 'No data to update', 'action' => 'batchUpdate']);
+        }
+
+        // Start profiler
+        $this->_startProfiler(__FUNCTION__);
+
+        $validColumns = $this->getTableColumns();
+
+        try {
+            $this->beginTransaction();
+
+            $totalAffectedRows = 0;
+
+            foreach ($data as $row) {
+                if (!is_array($row) || empty($row)) continue;
+
+                $cleanRow = array_intersect_key($row, array_flip($validColumns));
+                if ($this->_secureInput) {
+                    $cleanRow = array_map(function ($value) {
+                        return $value === '' ? null : $this->sanitize($value);
+                    }, $cleanRow);
+                } else {
+                    $cleanRow = array_map(function ($value) {
+                        return $value === '' ? null : $value;
+                    }, $cleanRow);
+                }
+
+                if (empty($cleanRow)) continue;
+
+                // Use the where conditions set on the builder, or require 'id' in each row
+                if (!empty($this->where)) {
+                    // Build UPDATE with existing where clause
+                    $set = [];
+                    $bindValues = [];
+                    foreach ($cleanRow as $col => $val) {
+                        $set[] = '`' . str_replace('`', '``', $col) . '` = ?';
+                        $bindValues[] = $val;
+                    }
+
+                    $escapedTable = '`' . str_replace('`', '``', $this->table) . '`';
+                    $sql = "UPDATE $escapedTable SET " . implode(', ', $set) . " WHERE " . $this->where;
+
+                    $stmt = $this->pdo[$this->connectionName]->prepare($sql);
+                    $stmt->execute(array_merge($bindValues, $this->_binds));
+                    $totalAffectedRows += $stmt->rowCount();
+                } elseif (isset($cleanRow['id'])) {
+                    $id = $cleanRow['id'];
+                    unset($cleanRow['id']);
+
+                    if (empty($cleanRow)) continue;
+
+                    $set = [];
+                    $bindValues = [];
+                    foreach ($cleanRow as $col => $val) {
+                        $set[] = '`' . str_replace('`', '``', $col) . '` = ?';
+                        $bindValues[] = $val;
+                    }
+                    $bindValues[] = $id;
+
+                    $escapedTable = '`' . str_replace('`', '``', $this->table) . '`';
+                    $sql = "UPDATE $escapedTable SET " . implode(', ', $set) . " WHERE `id` = ?";
+
+                    $stmt = $this->pdo[$this->connectionName]->prepare($sql);
+                    $stmt->execute($bindValues);
+                    $totalAffectedRows += $stmt->rowCount();
+                } else {
+                    throw new \InvalidArgumentException('Each row must contain an "id" key or set where conditions on the builder.');
+                }
+            }
+
+            $this->commit();
+
+            $response = [
+                'code' => 200,
+                'affected_rows' => $totalAffectedRows,
+                'message' => 'Batch update completed successfully',
+                'action' => 'batchUpdate'
+            ];
+        } catch (\Exception $e) {
+            $this->rollback();
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e;
+        }
+
+        // Stop profiler
+        $this->_stopProfiler();
+
+        // Reset internal properties for next query
+        $this->reset();
+
+        return $this->_returnResult($response);
     }
 
     public function upsert($values, $uniqueBy = 'id', $updateColumns = null, $batchSize = 2000)

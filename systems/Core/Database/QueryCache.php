@@ -258,7 +258,7 @@ class QueryCache
      */
     public static function generateKey($query, array $binds = [], $connection = 'default')
     {
-        return dechex(crc32($connection . $query . serialize($binds)));
+        return md5($connection . $query . serialize($binds));
     }
 
     /**
