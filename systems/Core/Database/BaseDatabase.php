@@ -4755,7 +4755,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                     throw new \PDOException('Positional parameters require numeric keys', 400);
                 }
 
-                if (is_int($value)) {
+                if ($value === null) {
+                    $stmt->bindValue($key + 1, null, \PDO::PARAM_NULL);
+                } else if (is_int($value)) {
                     $stmt->bindValue($key + 1, $value, \PDO::PARAM_INT);
                 } else if (is_bool($value)) {
                     $stmt->bindValue($key + 1, $value, \PDO::PARAM_BOOL);
@@ -4774,8 +4776,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
 
             foreach ($binds as $key => $value) {
-                $type = is_int($value) ? \PDO::PARAM_INT : (is_bool($value) ? \PDO::PARAM_BOOL : \PDO::PARAM_STR);
-                $stmt->bindValue(':' . $key, $value, $type);
+                $type = $value === null
+                    ? \PDO::PARAM_NULL
+                    : (is_int($value) ? \PDO::PARAM_INT : (is_bool($value) ? \PDO::PARAM_BOOL : \PDO::PARAM_STR));
+                $placeholder = str_starts_with((string) $key, ':') ? (string) $key : ':' . $key;
+                $stmt->bindValue($placeholder, $value, $type);
                 $this->_binds[] = $value;
                 $this->_profiler['profiling'][$this->_profilerActive]['binds'][] = $value;
             }

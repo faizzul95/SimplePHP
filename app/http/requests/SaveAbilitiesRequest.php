@@ -65,12 +65,12 @@ class SaveAbilitiesRequest extends FormRequest
     {
         return [
             'abilities_name.required' => 'Abilities name is required.',
-            'abilities_name.min_length' => 'Abilities name must be at least 5 characters.',
-            'abilities_name.max_length' => 'Abilities name may not be greater than 50 characters.',
+            'abilities_name.min_length' => 'Abilities name must be at least :min characters.',
+            'abilities_name.max_length' => 'Abilities name may not be greater than :max characters.',
             'abilities_slug.required' => 'Abilities slug is required.',
-            'abilities_slug.min_length' => 'Abilities slug must be at least 5 characters.',
-            'abilities_slug.max_length' => 'Abilities slug may not be greater than 100 characters.',
-            'abilities_desc.max_length' => 'Description may not be greater than 255 characters.',
+            'abilities_slug.min_length' => 'Abilities slug must be at least :min characters.',
+            'abilities_slug.max_length' => 'Abilities slug may not be greater than :max characters.',
+            'abilities_desc.max_length' => 'Description may not be greater than :max characters.',
         ];
     }
 }

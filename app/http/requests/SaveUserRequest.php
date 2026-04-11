@@ -69,15 +69,15 @@ class SaveUserRequest extends FormRequest
     {
         return [
             'name.required' => 'Name is required.',
-            'name.min_length' => 'Name must be at least 3 characters.',
-            'name.max_length' => 'Name may not be greater than 255 characters.',
+            'name.min_length' => 'Name must be at least :min characters.',
+            'name.max_length' => 'Name may not be greater than :max characters.',
             'user_preferred_name.required' => 'Preferred name is required.',
             'email.required' => 'Email is required.',
             'email.email' => 'Email format is invalid.',
             'user_contact_no.required' => 'Contact number is required.',
             'user_contact_no.numeric' => 'Contact number must be numeric.',
-            'username.min_length' => 'Username must be at least 3 characters.',
-            'password.min_length' => 'Password must be at least 8 characters.',
+            'username.min_length' => 'Username must be at least :min characters.',
+            'password.min_length' => 'Password must be at least :min characters.',
             'role_id.required' => 'Role is required.',
             'user_status.required' => 'Status is required.',
         ];

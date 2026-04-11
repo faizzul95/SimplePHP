@@ -77,9 +77,9 @@ class SaveEmailTemplateRequest extends FormRequest
     {
         return [
             'email_subject.required' => 'Email subject is required.',
-            'email_subject.min_length' => 'Email subject must be at least 3 characters.',
+            'email_subject.min_length' => 'Email subject must be at least :min characters.',
             'email_type.required' => 'Email type is required.',
-            'email_type.min_length' => 'Email type must be at least 3 characters.',
+            'email_type.min_length' => 'Email type must be at least :min characters.',
             'email_body.required' => 'Email body is required.',
             'email_body.safe_html' => 'Email body contains unsafe HTML or disallowed attributes.',
         ];

@@ -70,6 +70,10 @@ class UploadImageCropperRequest extends FormRequest
             'entity_file_type.required' => 'Entity file type is required.',
             'entity_id.required' => 'Entity ID is required.',
             'image.required' => 'Image data is required.',
+            'entity_type.max_length' => 'Entity type may not be greater than :max characters.',
+            'entity_file_type.max_length' => 'Entity file type may not be greater than :max characters.',
+            'folder_group.max_length' => 'Folder group may not be greater than :max characters.',
+            'folder_type.max_length' => 'Folder type may not be greater than :max characters.',
         ];
     }
 }

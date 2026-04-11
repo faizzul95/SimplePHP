@@ -64,7 +64,7 @@ class SaveAssignmentRequest extends FormRequest
             'role_id.required' => 'Role ID is required.',
             'abilities_id.required' => 'Abilities ID is required.',
             'permission.required' => 'Permission action is required.',
-            'permission.in' => 'Permission action must be grant or revoke.',
+            'permission.in' => 'Permission action must be one of: :values.',
         ];
     }
 }

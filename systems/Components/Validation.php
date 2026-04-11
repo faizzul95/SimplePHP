@@ -521,22 +521,46 @@ class Validation
     private function validateField(string $field, string $rules): void
     {
         try {
-            $rulesArray = explode('|', $rules);
+            $rulesArray = array_values(array_filter(array_map('trim', explode('|', $rules)), static fn($rule) => $rule !== ''));
             $fieldExists = $this->fieldExists($field);
             if (!$fieldExists) {
-                return;
+                if (in_array('sometimes', $rulesArray, true)) {
+                    return;
+                }
+
+                $presenceRules = [
+                    'required',
+                    'required_if',
+                    'required_unless',
+                    'required_with',
+                    'required_without',
+                    'required_without_all',
+                    'filled',
+                    'accepted',
+                    'prohibited',
+                    'prohibited_if',
+                ];
+
+                $rulesArray = array_values(array_filter($rulesArray, static function ($rule) use ($presenceRules) {
+                    $ruleName = explode(':', $rule, 2)[0];
+                    return in_array($ruleName, $presenceRules, true);
+                }));
+
+                if (empty($rulesArray)) {
+                    return;
+                }
             }
 
-            $value = $this->getFieldValue($field);
+            $value = $fieldExists ? $this->getFieldValue($field) : null;
             $shouldBail = false;
 
             // Quick exit for nullable
-            if (in_array('nullable', $rulesArray) && is_null($value)) {
+            if (in_array('nullable', $rulesArray, true) && is_null($value)) {
                 return; // Skip validation if value is null and nullable is present
             }
 
             // Quick exit for sometimes
-            if (in_array('sometimes', $rulesArray) && !$fieldExists) {
+            if (in_array('sometimes', $rulesArray, true) && !$fieldExists) {
                 return; // Skip validation if sometimes is present and field is missing
             }
 
@@ -886,12 +910,22 @@ class Validation
             if (!empty($params)) {
                 switch ($rule) {
                     case 'min':
+                        $message = str_replace(':min', $params[0], $message);
+                        break;
                     case 'max':
+                        $message = str_replace(':max', $params[0], $message);
+                        break;
                     case 'min_length':
+                        $message = str_replace([':min_length', ':min'], [$params[0], $params[0]], $message);
+                        break;
                     case 'max_length':
+                        $message = str_replace([':max_length', ':max'], [$params[0], $params[0]], $message);
+                        break;
                     case 'size':
+                        $message = str_replace(':size', $params[0], $message);
+                        break;
                     case 'max_file_size':
-                        $message = str_replace(':' . $rule, $params[0], $message);
+                        $message = str_replace([':max_file_size', ':max'], [$params[0], $params[0]], $message);
                         break;
                     case 'between':
                         $message = str_replace([':min', ':max'], $params, $message);
@@ -933,6 +967,11 @@ class Validation
                         break;
                     case 'required_unless':
                         $message = str_replace([':other', ':values'], [$params[0] ?? '', implode(', ', array_slice($params, 1))], $message);
+                        break;
+                    case 'required_with':
+                    case 'required_without':
+                    case 'required_without_all':
+                        $message = str_replace(':values', implode(', ', $params), $message);
                         break;
                 }
             }
@@ -1861,9 +1900,11 @@ class Validation
             $oldLimit = ini_get('pcre.backtrack_limit');
             ini_set('pcre.backtrack_limit', '50000');
 
-            $result = preg_match($pattern, (string) $value);
-
-            ini_set('pcre.backtrack_limit', $oldLimit);
+            try {
+                $result = preg_match($pattern, (string) $value);
+            } finally {
+                ini_set('pcre.backtrack_limit', (string) $oldLimit);
+            }
 
             // preg_match returns false on error (backtrack limit hit)
             if ($result === false) {
@@ -2012,20 +2053,28 @@ class Validation
 
             $imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
 
-            // Use finfo for server-side MIME detection instead of trusting client-reported type
-            $detectedType = null;
-            if (function_exists('finfo_open') && !empty($value['tmp_name']) && file_exists($value['tmp_name'])) {
-                $finfo = finfo_open(FILEINFO_MIME_TYPE);
-                $detectedType = finfo_file($finfo, $value['tmp_name']);
-                finfo_close($finfo);
-            }
-
-            $finalType = $detectedType ?? $value['type'];
-            if (is_string($finalType) && $this->security->isBlockedUploadMimeType($finalType)) {
+            // Require server-side MIME detection instead of trusting client metadata.
+            if (!function_exists('finfo_open') || empty($value['tmp_name']) || !file_exists($value['tmp_name'])) {
                 return false;
             }
 
-            return in_array($finalType, $imageTypes, true);
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo === false) {
+                return false;
+            }
+
+            $detectedType = finfo_file($finfo, $value['tmp_name']);
+            finfo_close($finfo);
+
+            if (!is_string($detectedType) || $detectedType === '') {
+                return false;
+            }
+
+            if ($this->security->isBlockedUploadMimeType($detectedType)) {
+                return false;
+            }
+
+            return in_array($detectedType, $imageTypes, true);
         } catch (Exception $e) {
             return false;
         }
@@ -2038,6 +2087,10 @@ class Validation
     {
         try {
             if (!$this->validateFile($field, $value, $params)) {
+                return false;
+            }
+
+            if (empty($params) || !function_exists('finfo_open') || empty($value['tmp_name']) || !file_exists($value['tmp_name'])) {
                 return false;
             }
 
@@ -2121,26 +2174,35 @@ class Validation
                 'odp' => 'application/vnd.oasis.opendocument.presentation'
             ];
 
+            $allowedMimeTypes = [];
             foreach ($params as $extension) {
                 $extension = strtolower(trim($extension));
-                if (isset($mimeTypes[$extension]) && $value['type'] === $mimeTypes[$extension]) {
-                    return true;
+                if (isset($mimeTypes[$extension])) {
+                    $allowedMimeTypes[] = $mimeTypes[$extension];
                 }
             }
 
-            // Basic MIME type validation
-            if (isset($value['type'])) {
-                $finfo = finfo_open(FILEINFO_MIME_TYPE);
-                $actualMimeType = finfo_file($finfo, $value['tmp_name']);
-                finfo_close($finfo);
-
-                // Check if actual MIME type matches reported type
-                if ($actualMimeType !== $value['type']) {
-                    return false;
-                }
+            if (empty($allowedMimeTypes)) {
+                return false;
             }
 
-            return false;
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo === false) {
+                return false;
+            }
+
+            $actualMimeType = finfo_file($finfo, $value['tmp_name']);
+            finfo_close($finfo);
+
+            if (!is_string($actualMimeType) || $actualMimeType === '') {
+                return false;
+            }
+
+            if ($this->security->isBlockedUploadMimeType($actualMimeType)) {
+                return false;
+            }
+
+            return in_array($actualMimeType, array_values(array_unique($allowedMimeTypes)), true);
         } catch (Exception $e) {
             return false;
         }
@@ -2690,9 +2752,11 @@ class Validation
             $oldLimit = ini_get('pcre.backtrack_limit');
             ini_set('pcre.backtrack_limit', '50000');
 
-            $result = preg_match($pattern, (string) $value);
-
-            ini_set('pcre.backtrack_limit', $oldLimit);
+            try {
+                $result = preg_match($pattern, (string) $value);
+            } finally {
+                ini_set('pcre.backtrack_limit', (string) $oldLimit);
+            }
 
             if ($result === false) {
                 return false;

@@ -909,15 +909,12 @@ abstract class FormRequest
     }
 
     /**
-     * A primary key value is "present" when it is non-null, non-empty, non-zero.
-     * Treats null, '', '0', 0 as absent.
+     * A primary key value is "present" when it is non-null and non-empty.
+     * Zero is considered a valid identifier value.
      */
     private function isPrimaryKeyValuePresent(mixed $value): bool
     {
-        if ($value === null || $value === '' || $value === '0' || $value === 0) {
-            return false;
-        }
-        return !empty($value);
+        return !($value === null || $value === '');
     }
 
     /**
