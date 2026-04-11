@@ -1466,6 +1466,29 @@ class Validation
     }
 
     /**
+     * Validate nullable rule.
+     *
+     * This rule is primarily handled as a short-circuit in validateField().
+     * When execution reaches the rule dispatcher, it should behave as a no-op
+     * so it does not raise an "unknown rule" error.
+     */
+    private function validateNullable(string $field, $value, array $params = []): bool
+    {
+        return true;
+    }
+
+    /**
+     * Validate sometimes rule.
+     *
+     * Presence checks are handled in validateField(). If the field exists,
+     * this rule should not add any validation failure by itself.
+     */
+    private function validateSometimes(string $field, $value, array $params = []): bool
+    {
+        return true;
+    }
+
+    /**
      * Validate boolean rule
      */
     private function validateBoolean(string $field, $value, array $params = []): bool

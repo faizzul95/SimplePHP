@@ -370,7 +370,7 @@ abstract class FormRequest
         $allData = $this->request->all();
 
         // Step 5 — Validate
-        $validator = validator($allData, $rules, $this->messages());
+        $validator = validator($allData, $rules, $this->messages())->validate();
 
         if (!$validator->passed()) {
             throw new ValidationException(

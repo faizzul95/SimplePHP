@@ -1666,7 +1666,11 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 			// Check for meta tag 'secure_token' and append if exists and not empty
 			const csrfToken = getCsrfToken();
 			if (csrfToken) {
-				dataArr.append(csrf_token_name, csrfToken);
+				if (typeof dataArr.set === 'function') {
+					dataArr.set(csrf_token_name, csrfToken);
+				} else if (!dataArr.has(csrf_token_name)) {
+					dataArr.append(csrf_token_name, csrfToken);
+				}
 			}
 
 			const submitHeaders = {

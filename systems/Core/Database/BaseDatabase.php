@@ -3542,7 +3542,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 throw new \InvalidArgumentException('Data must be a non-empty associative array.');
             }
 
-            if (isset($conditions[$primaryKey]) && empty($conditions[$primaryKey])) {
+            if (array_key_exists($primaryKey, $conditions) && empty($conditions[$primaryKey])) {
                 unset($conditions[$primaryKey]); // removed from the conditions if exists
             }
 
