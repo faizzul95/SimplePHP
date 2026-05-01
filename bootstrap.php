@@ -5,7 +5,7 @@ if (!defined('ROOT_DIR')) {
 }
 
 if (!defined('APP_NAME')) {
-    define('APP_NAME', 'ResiConnect');
+    define('APP_NAME', 'SimplePHP');
 }
 
 if (!defined('REDIRECT_LOGIN')) {
