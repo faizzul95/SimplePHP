@@ -1,10 +1,10 @@
-<?php includeTemplate('header'); ?>
+@extends('_templates.layouts.app')
 
-<?php if (requirePagePermission()) : ?>
+@section('content')
     <div class="container-fluid flex-grow-1 container-p-y">
 
         <h4 class="fw-bold py-3 mb-4">
-            <?= showPageTitle() ?>
+            {!! showPageTitle() !!}
         </h4>
 
         <div class="col-lg-12 order-2 mb-4">
@@ -17,11 +17,11 @@
                                 <i class='bx bx-refresh'></i>
                             </button>
                             
-                            <?php if (permission('user-create')) : ?>
+                            @can('user-create')
                             <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addUser()" title="Add New User">
                                 <i class='bx bx-plus'></i> Add New User
                             </button>
-                            <?php endif; ?>
+                            @endcan
 
                             <select id="filter_user_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All Status </option>
@@ -51,7 +51,7 @@
                     <!-- DATATABLE -->
                     <div id="bodyDiv" class="row">
                         <div class="col-xl-12 mb-4">
-                            <div id="nodataDiv" style="display: none;"> <?= nodata() ?> </div>
+                            <div id="nodataDiv" style="display: none;"> {!! nodata() !!} </div>
                             <div id="dataListDiv" class="table-responsive" style="display: block;">
                                 <table id="dataList" class="table table-responsive table-hover table-striped table-bordered collapsed nowrap" width="100%">
                                     <thead class="table-dark">
@@ -76,14 +76,19 @@
 
     </div>
 
+@endsection
+
+@push('scripts')
     <script type="text/javascript">
+        let usersTableManager = null;
+
         $(document).ready(async function() {
             await getProfileList('filter_profile');
             await getDataList();
         });
 
         async function getProfileList(id, includeAll = true) {
-            const res = await callApi('post', "<?= route('roles.options') ?>", {});
+            const res = await callApi('post', "{{ route('roles.options') }}", {});
 
             if (isSuccess(res)) {
 
@@ -104,121 +109,132 @@
             }
         }
 
-        // GET DATATABLE (SERVER-SIDE)
-        async function getDataList() {
-            generateDatatableServer('dataList', '<?= route('users.list') ?>', 'nodataDiv', {
-                    'user_status_filter': $("#filter_user_status").val(),
-                    'user_gender_filter': $("#filter_gender_status").val(),
-                    'user_profile_filter': $("#filter_profile").val(),
-                    'user_deleted_filter': $("#filter_deleted_user").val()
+        async function getDataList(resetPaging = false) {
+            const tableConfig = {
+                tableId: 'dataList',
+                mode: 'server',
+                rowId: 'row_key',
+                ajax: {
+                    url: '{{ route("users.list") }}',
+                    method: 'POST',
+                    data: function() {
+                        return {
+                            user_status_filter: $("#filter_user_status").val(),
+                            user_gender_filter: $("#filter_gender_status").val(),
+                            user_profile_filter: $("#filter_profile").val(),
+                            user_deleted_filter: $("#filter_deleted_user").val()
+                        };
+                    }
                 },
-                [{
-                        "data": "avatar",
-                        "width": "5%",
-                        "targets": 0
-                    },
+                columns: [
+                    { data: 'avatar', width: '5%', targets: 0 },
+                    { data: 'name', targets: 1 },
+                    { data: 'contact', width: '35%', targets: 2 },
+                    { data: 'gender', width: '8%', targets: 3 },
+                    { data: 'status', width: '7%', targets: 4 },
                     {
-                        "data": "name",
-                        // "width": "40%",
-                        "targets": 1
-                    },
-                    {
-                        "data": "contact",
-                        "width": "35%",
-                        "targets": 2
-                    },
-                    {
-                        "data": "gender",
-                        "width": "8%",
-                        "targets": 3
-                    },
-                    {
-                        "data": "status",
-                        "width": "7%",
-                        "targets": 4
-                    },
-                    {
-                        // Action
-                        "data": "action",
-                        "render": function(data, type, row) {
+                        data: 'action',
+                        render: function(data) {
                             return data;
                         },
-                        "targets": -1,
-                        "width": "3%",
-                        "searchable": false,
-                        "orderable": false
+                        targets: -1,
+                        width: '3%',
+                        searchable: false,
+                        orderable: false
                     }
-                ], 'bodyDiv');
+                ],
+                ui: {
+                    emptyStateContainerId: 'nodataDiv',
+                    loadingContainerId: 'bodyDiv',
+                    useLoadingIndicator: true,
+                    renderEmptyState: function() {
+                        return nodata();
+                    }
+                },
+                mutation: {
+                    rowPath: null,
+                    shouldKeepRow: function(rowData) {
+                        const statusFilter = $("#filter_user_status").val();
+                        const genderFilter = $("#filter_gender_status").val();
+                        const profileFilter = $("#filter_profile").val();
+
+                        if (statusFilter !== '' && String(rowData.user_status_value) !== String(statusFilter)) {
+                            return false;
+                        }
+
+                        if (genderFilter !== '' && String(rowData.user_gender_value) !== String(genderFilter)) {
+                            return false;
+                        }
+
+                        if (profileFilter === '') {
+                            return true;
+                        }
+
+                        if (profileFilter === 'N/A') {
+                            return !rowData.has_profile;
+                        }
+
+                        return Array.isArray(rowData.profile_role_ids)
+                            && rowData.profile_role_ids.map(String).includes(String(profileFilter));
+                    }
+                }
+            };
+
+            if (!usersTableManager || !usersTableManager.instance) {
+                usersTableManager = datatableManager('dataList', tableConfig);
+                return usersTableManager.create(tableConfig);
+            }
+
+            usersTableManager = datatableManager('dataList', tableConfig);
+            usersTableManager.reload(resetPaging);
+            return usersTableManager.instance;
         }
 
         function addUser() {
-            loadFormContent('views/directory/_userForm.php', 'userForm', '550px', '<?= route('users.save') ?>', 'Add User', {}, 'offcanvas');
+            modalManager().showFormContent({
+                fileName: 'views/directory/_userForm.php',
+                overlayType: 'offcanvas',
+                size: '550px',
+                formAction: '{{ route("users.save") }}',
+                title: 'Add User',
+                dataArray: {}
+            });
         }
 
         async function editRecord(id) {
-            const res = await callApi('get', "<?= route('users.show') ?>".replace('{id}', id));
+            const res = await callApi('get', "{{ route('users.show') }}".replace('{id}', id));
 
             if (isSuccess(res)) {
-                loadFormContent('views/directory/_userForm.php', 'userForm', '550px', '<?= route('users.save') ?>', 'Update User', res.data.data, 'offcanvas');
+                await modalManager().showFormContent({
+                    fileName: 'views/directory/_userForm.php',
+                    overlayType: 'offcanvas',
+                    size: '550px',
+                    formAction: '{{ route("users.save") }}',
+                    title: 'Update User',
+                    dataArray: res.data.data
+                });
             }
         }
 
-        async function deleteRecord(id) {
-            Swal.fire({
-                title: 'Are you sure?',
-                html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Yes, Remove it!',
-                reverseButtons: true,
-                customClass: {
-                    container: 'swal2-customCss'
-                },
-            }).then(async (result) => {
-                if (result.isConfirmed) {
-                    const res = await callApi('delete', "<?= route('users.delete') ?>".replace('{id}', id));
-
-                    if (isSuccess(res)) {
-                        const response = res.data;
-                        noti(response.code, response.message);
-
-                        getDataList(); // reload
-                    }
+        async function deleteRecord(id, rowKey = null) {
+            await confirmDeleteAction({
+                url: "{{ route('users.delete') }}".replace('{id}', id),
+                onSuccess: function() {
+                    removeDatatableRow('dataList', rowKey);
                 }
-            })
+            });
         }
 
         async function resetPassword(id) {
-            Swal.fire({
-                title: 'Are you sure?',
+            await confirmApiAction({
                 html: 'This will reset the user\'s password. The user will need to change their password upon next login.<br><br><strong>Do you want to continue?</strong>',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
                 confirmButtonText: 'Yes, Reset NOW!',
-                reverseButtons: true,
-                customClass: {
-                    container: 'swal2-customCss'
-                },
-            }).then(async (result) => {
-                if (result.isConfirmed) {
-                    const res = await callApi('post', "<?= route('auth.reset-password') ?>", {
-                        'id': id
-                    });
-
-                    if (isSuccess(res)) {
-                        const response = res.data;
-                        noti(response.code, response.message);
-
-                        getDataList(); // reload
-                    }
+                method: 'post',
+                url: "{{ route('auth.reset-password') }}",
+                data: {
+                    id: id
                 }
-            })
+            });
         }
     </script>
-<?php endif; ?>
-
-<?php includeTemplate('footer'); ?>
+@endpush

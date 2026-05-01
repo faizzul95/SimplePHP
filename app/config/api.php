@@ -19,7 +19,8 @@ $defaultApiWhitelist .= '/auth/login';
 
 $config['api'] =  [
     'cors' => [
-        'allow_origin' => env_list('API_CORS_ALLOW_ORIGIN', ['*']),  // Restrict in production: ['https://yourdomain.com']
+        // Fail-secure default: no origins allowed. Set API_CORS_ALLOW_ORIGIN explicitly in .env (e.g. ['https://yourdomain.com']).
+        'allow_origin' => env_list('API_CORS_ALLOW_ORIGIN', []),
         'allow_methods' => env_list('API_CORS_ALLOW_METHODS', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']),
         'allow_headers' => env_list('API_CORS_ALLOW_HEADERS', ['Content-Type', 'Authorization', 'X-Requested-With']),
         // Credentials should only be true when allow_origin is specific (not *).

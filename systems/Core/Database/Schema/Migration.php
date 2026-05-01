@@ -110,10 +110,7 @@ abstract class Migration implements ForgeInterface
             }
         }
 
-        $this->grammarCache = match (strtolower($driver)) {
-            'mysql', 'mariadb' => new Grammars\MySQLGrammar(),
-            default => throw new \InvalidArgumentException("No schema grammar for driver: {$driver}"),
-        };
+        $this->grammarCache = \Core\Database\DriverRegistry::schemaGrammar($driver);
 
         return $this->grammarCache;
     }

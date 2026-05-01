@@ -6,6 +6,16 @@
 - The DB facade delegates driver calls through `Database::__call`.
 - Drivers: `MySQLDriver.php`, `MariaDBDriver.php` (in `systems/Core/Database/Drivers/`).
 - Entry point: `db()->table('table_name')` to begin any query chain.
+- Driver metadata now resolves through `systems/Core/Database/DriverRegistry.php`.
+- `Database` exposes `capabilities()`, `schemaGrammar()`, and `queryGrammar()` for the configured driver.
+
+### Driver registry and grammars
+
+- `DriverRegistry::resolveClass($driver)` resolves the concrete driver class.
+- `DriverRegistry::capabilities($driver)` returns `DriverCapabilities` feature flags.
+- `DriverRegistry::schemaGrammar($driver)` resolves schema DDL grammars.
+- `DriverRegistry::queryGrammar($driver)` resolves driver-specific query-expression helpers.
+- Temporal builder methods such as `whereDate()` and `whereTime()` now compile through the registered query grammar instead of hardcoded driver matches in each concrete driver.
 
 ---
 
@@ -229,9 +239,12 @@
 | `paginate` | `paginate(int $start = 0, int $limit = 10, int $draw = 1)` | `array` | Offset pagination |
 | `paginate_ajax` | `paginate_ajax(array $dataPost)` | `array` | DataTables server-side compatible (reads `start`, `length`, `draw`, `search`, `order` from `$dataPost`) |
 | `setPaginateFilterColumn` | `setPaginateFilterColumn(array $cols): self` | `self` | Configure searchable columns for `paginate_ajax` |
+| `setAllowedSortColumns` | `setAllowedSortColumns(array $cols): self` | `self` | Configure the only columns `paginate_ajax` may order by |
 | `chunk` | `chunk(int $size, callable $callback): void` | `void` | Process rows in fixed-size batches. Respects existing `limit()` if set. Callback receives `$rows` array per batch; return `false` to stop early. |
 | `cursor` | `cursor(int $chunkSize = 1000)` | `LazyCollection` | Returns streaming iterator for row-by-row processing |
 | `lazy` | `lazy(int $chunkSize = 1000)` | `LazyCollection` | Alternative to cursor. Returns `LazyCollection` |
+
+`paginate_ajax()` now clamps unsafe client pagination input and can keep search columns separate from sortable columns. For DataTables-style endpoints, set both `setPaginateFilterColumn([...])` and `setAllowedSortColumns([...])` when the rendered table columns do not map 1:1 to searchable columns.
 
 ### CRUD & Mutations
 
@@ -316,7 +329,7 @@
 | `enableQueryCache` | `enableQueryCache(int $ttl = 3600): self` | Enable query caching via `QueryCache`. Default TTL: 3600s. |
 | `disableQueryCache` | `disableQueryCache(): self` | Disable query caching |
 | `profiler` | `profiler()` | Get query execution profiling data |
-| `getPerformanceReport` | `getPerformanceReport(): array` | Full performance stats via `PerformanceMonitor::generateReport()` |
+| `getPerformanceReport` | `getPerformanceReport(array $options = []): array` | Full performance stats via `PerformanceMonitor::generateReport()`, including slow, recent, frequent, and heaviest-query slices |
 | `setProfilingEnabled` | `setProfilingEnabled(bool $enable = true): self` | Enable/disable profiling globally |
 | `isProfilingEnabled` | `isProfilingEnabled(): bool` | Check if profiling is active |
 
@@ -809,7 +822,7 @@ $users = db()->table('users')->whereNull('deleted_at')->get();
 $profile = db()->profiler();
 
 // Get full performance report
-$report = db()->getPerformanceReport();
+$report = db()->getPerformanceReport(['slow_limit' => 5, 'recent_limit' => 5]);
 
 // Disable when done
 db()->disableQueryCache();

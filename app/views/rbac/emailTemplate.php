@@ -1,10 +1,10 @@
-<?php includeTemplate('header'); ?>
+@extends('_templates.layouts.app')
 
-<?php if (requirePagePermission()) : ?>
+@section('content')
     <div class="container-fluid flex-grow-1 container-p-y">
 
         <h4 class="fw-bold py-3 mb-4">
-            <?= showPageTitle() ?>
+            {!! showPageTitle() !!}
         </h4>
 
         <div class="col-lg-12 order-2 mb-4">
@@ -16,11 +16,11 @@
                             <button type="button" class="btn btn-warning btn-sm float-end" onclick="getDataList()" title="Refresh">
                                 <i class='bx bx-refresh'></i>
                             </button>
-                            <?php if (permission('rbac-email-create')) : ?>
+                            @can('rbac-email-create')
                             <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="emailTemplateForm()" title="Add New Email Template">
                                 <i class='bx bx-plus'></i> Add New Email Template
                             </button>
-                            <?php endif; ?>
+                            @endcan
                             <select id="filter_email_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All </option>
                                 <option value="1"> Active </option>
@@ -32,7 +32,7 @@
                     <!-- DATATABLE -->
                     <div id="bodyDiv" class="row">
                         <div class="col-xl-12 mb-4">
-                            <div id="nodataDiv" style="display: none;"> <?= nodata() ?> </div>
+                            <div id="nodataDiv" style="display: none;"> {!! nodata() !!} </div>
                             <div id="dataListDiv" class="table-responsive" style="display: block;">
                                 <table id="dataList" class="table table-responsive table-hover table-striped table-bordered collapsed nowrap" width="100%">
                                     <thead class="table-dark">
@@ -57,95 +57,104 @@
 
     </div>
 
+@endsection
+
+@push('scripts')
     <script type="text/javascript">
+        let emailTemplatesTableManager = null;
+
         $(document).ready(async function() {
             await getDataList();
         });
 
-        // GET DATATABLE (SERVER-SIDE)
-        async function getDataList() {
-            generateDatatableServer('dataList', '<?= route('email-templates.list') ?>', 'nodataDiv', {
-                    'email_status': $("#filter_email_status").val()
+        async function getDataList(resetPaging = false) {
+            const tableConfig = {
+                tableId: 'dataList',
+                mode: 'server',
+                rowId: 'row_key',
+                ajax: {
+                    url: '{{ route("email-templates.list") }}',
+                    method: 'POST',
+                    data: function() {
+                        return {
+                            email_status: $("#filter_email_status").val()
+                        };
+                    }
                 },
-                [{
-                        "data": "type",
-                        "width": "22%",
-                        "targets": 0
-                    },
+                columns: [
+                    { data: 'type', width: '22%', targets: 0 },
+                    { data: 'subject', targets: 1 },
+                    { data: 'cc', width: '6%', targets: 2 },
+                    { data: 'bcc', width: '6%', targets: 3 },
+                    { data: 'status', width: '5%', targets: 4 },
                     {
-                        "data": "subject",
-                        // "width": "50%",
-                        "targets": 1
-                    },
-                    {
-                        "data": "cc",
-                        "width": "6%",
-                        "targets": 2
-                    },
-                    {
-                        "data": "bcc",
-                        "width": "6%",
-                        "targets": 3
-                    },
-                    {
-                        "data": "status",
-                        "width": "5%",
-                        "targets": 4
-                    },
-                    {
-                        // Action
-                        "data": "action",
-                        "render": function(data, type, row) {
+                        data: 'action',
+                        render: function(data) {
                             return data;
                         },
-                        "targets": -1,
-                        "width": "3%",
-                        "searchable": false,
-                        "orderable": false
+                        targets: -1,
+                        width: '3%',
+                        searchable: false,
+                        orderable: false
                     }
-                ], 'bodyDiv');
+                ],
+                ui: {
+                    emptyStateContainerId: 'nodataDiv',
+                    loadingContainerId: 'bodyDiv',
+                    useLoadingIndicator: true,
+                    renderEmptyState: function() {
+                        return nodata();
+                    }
+                },
+                mutation: {
+                    rowPath: null,
+                    shouldKeepRow: function(rowData) {
+                        const filterValue = $("#filter_email_status").val();
+
+                        if (filterValue === '') {
+                            return true;
+                        }
+
+                        return String(rowData.email_status_value) === String(filterValue);
+                    }
+                }
+            };
+
+            if (!emailTemplatesTableManager || !emailTemplatesTableManager.instance) {
+                emailTemplatesTableManager = datatableManager('dataList', tableConfig);
+                return emailTemplatesTableManager.create(tableConfig);
+            }
+
+            emailTemplatesTableManager = datatableManager('dataList', tableConfig);
+            emailTemplatesTableManager.reload(resetPaging);
+            return emailTemplatesTableManager.instance;
         }
 
         function emailTemplateForm(type = 'create', data = null) {
-            const modalTitle = (type == 'create') ? 'REGISTER EMAIL TEMPLATE' : 'UPDATE EMAIL TEMPLATE';
-            loadFileContent('views/rbac/_emailTemplateForm.php', 'generalContent', 'fullscreen', modalTitle, data);
+            modalManager().showFileContent({
+                fileName: 'views/rbac/_emailTemplateForm.php',
+                overlayType: 'modal',
+                size: 'fullscreen',
+                title: (type == 'create') ? 'REGISTER EMAIL TEMPLATE' : 'UPDATE EMAIL TEMPLATE',
+                dataArray: data
+            });
         }
 
         async function editRecord(id) {
-            const res = await callApi('get', "<?= route('email-templates.show') ?>".replace('{id}', id));
+            const res = await callApi('get', "{{ route('email-templates.show') }}".replace('{id}', id));
 
             if (isSuccess(res)) {
                 emailTemplateForm('update', res.data.data);
             }
         }
 
-        async function deleteRecord(id) {
-            Swal.fire({
-                title: 'Are you sure?',
-                html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Yes, Remove it!',
-                reverseButtons: true,
-                customClass: {
-                    container: 'swal2-customCss'
-                },
-            }).then(async (result) => {
-                if (result.isConfirmed) {
-                    const res = await callApi('delete', "<?= route('email-templates.delete') ?>".replace('{id}', id));
-
-                    if (isSuccess(res)) {
-                        const response = res.data;
-                        noti(response.code, response.message);
-
-                        getDataList(); // reload
-                    }
+        async function deleteRecord(id, rowKey = null) {
+            await confirmDeleteAction({
+                url: "{{ route('email-templates.delete') }}".replace('{id}', id),
+                onSuccess: function() {
+                    removeDatatableRow('dataList', rowKey);
                 }
-            })
+            });
         }
     </script>
-<?php endif; ?>
-
-<?php includeTemplate('footer'); ?>
+@endpush

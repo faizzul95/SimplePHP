@@ -1,5 +1,14 @@
 # 11. Controller Base Pattern
 
+## Shared controllers for web and API (commit `0006837`)
+
+A single controller class now serves both the browser page action and the matching API endpoint. The previous `app/http/controllers/Api/` split (e.g. `AuthApiController`, `UserApiController`) has been removed — do not recreate it.
+
+- Expose API-specific actions as explicit methods on the same controller: `loginApi`, `me`, `logout`, etc.
+- Routes attach the correct middleware (`auth.web` vs `auth.api`) per route rather than per controller class.
+- See [03-auth-tokens-api.md](03-auth-tokens-api.md) for the credential-issuance pattern used by the shared `AuthController`.
+- Keep controllers thin when practical, but preserve the current app structure while the upgrade is still in transition. Listing endpoints may stay inline if they are still being stabilized, as long as request input is normalized explicitly and pagination/sort allowlists stay enforced.
+
 ## Base Class
 
 - All app controllers extend `Core\Http\Controller` (abstract class).
@@ -13,7 +22,7 @@
 
 ### Page State
 
-- `setPageState(string $page, ?string $subpage, ?string $permission, string $titlePage, string $titleSubPage = '')` — Sets global menu/breadcrumb state. When `$permission` is not null, checks via `permission()` helper and calls `show_403()` + exit on failure.
+- `setPageState(string $page, ?string $subpage, string $titlePage, string $titleSubPage = '')` — Sets global menu/breadcrumb state only. Authorization should be enforced in routes and middleware.
 
 ### JSON Response Helpers (All terminate the request)
 
@@ -60,7 +69,7 @@ class UserController extends \Core\Http\Controller
 {
 	public function index(): void
 	{
-		$this->setPageState('directory', 'users', 'user-view', 'Users', 'User Management');
+		$this->setPageState('directory', 'users', 'Users', 'User Management');
 		$this->view('directory.users');
 	}
 
@@ -104,14 +113,23 @@ class UserController extends \Core\Http\Controller
 }
 ```
 
-### 2) Permission-gated page rendering
+### 2) Page rendering with route-enforced access
 
 ```php
 public function roles(): void
 {
-	$this->setPageState('rbac', 'roles', 'role-view', 'RBAC', 'Role Management');
+	$this->setPageState('rbac', 'roles', 'RBAC', 'Role Management');
 	$this->view('rbac.roles');
 }
+```
+
+Route enforcement should live in the route file:
+
+```php
+$router->get('/rbac/roles', [RoleController::class, 'index'])
+	->webAuth()
+	->can('rbac-roles-view')
+	->name('rbac.roles');
 ```
 
 ### 3) Inline auth check
@@ -130,20 +148,20 @@ public function profile(): void
 1. Extend `Core\Http\Controller` for all app controllers.
 2. Use `findByEncodedIdOrFail()` for single-record lookups with encoded IDs.
 3. Use `softDeleteByEncodedId()` / `restoreByEncodedId()` for standard soft-delete CRUD.
-4. Use `setPageState()` with permission slug for automatic page-level access control.
+4. Use `setPageState()` for menu, breadcrumb, and title state; keep access control in route middleware.
 5. Use `successResponse()` / `errorResponse()` for consistent JSON shape.
 
 ## What To Avoid
 
 - Avoid returning raw mixed array structures when helper methods standardize response format.
 - Avoid duplicating ID decode logic — use `decodeIdOrFail()` or `findByEncodedIdOrFail()`.
-- Avoid calling `permission()` manually when `setPageState()` already does it.
+- Avoid relying on `setPageState()` for page authorization when the route already declares `->webAuth()`, `->can()`, or related middleware.
 - Avoid using `$_SESSION` directly — use `authId()`, `authUser()`, `can()`.
 
 ## Benefits
 
 - Consistent API and page action behavior across all controllers.
-- Automatic error handling (400 for bad IDs, 403 for permissions, 404 for missing records).
+- Automatic error handling (400 for bad IDs, 403 for explicit controller authorization checks, 404 for missing records).
 - Less repetitive boilerplate for CRUD operations.
 - Built-in soft-delete and restore patterns.
 

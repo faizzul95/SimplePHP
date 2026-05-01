@@ -53,7 +53,7 @@ class PerformanceMonitor
     /**
      * @var bool Enable/disable monitoring
      */
-    protected static $enabled = true;
+    protected static $enabled = false;
 
     /**
      * @var array Performance statistics
@@ -343,16 +343,80 @@ class PerformanceMonitor
     }
 
     /**
+     * Get the most recent queries.
+     *
+     * @param int $limit Number of queries to return
+     * @return array
+     */
+    public static function getRecentQueries($limit = 10)
+    {
+        if ($limit <= 0) {
+            return [];
+        }
+
+        return array_slice(array_reverse(self::$queryLog), 0, $limit);
+    }
+
+    /**
+     * Get queries with the highest total execution time.
+     *
+     * @param int $limit Number of queries to return
+     * @return array
+     */
+    public static function getHeaviestQueries($limit = 10)
+    {
+        $queries = [];
+
+        foreach (self::$queryLog as $entry) {
+            $key = md5($entry['sql']);
+            if (!isset($queries[$key])) {
+                $queries[$key] = [
+                    'sql' => $entry['sql'],
+                    'query_type' => $entry['query_type'] ?? 'other',
+                    'count' => 0,
+                    'total_time' => 0.0,
+                    'avg_time' => 0.0,
+                    'max_time' => 0.0,
+                ];
+            }
+
+            $queries[$key]['count']++;
+            $queries[$key]['total_time'] += (float) ($entry['execution_time'] ?? 0);
+            $queries[$key]['max_time'] = max($queries[$key]['max_time'], (float) ($entry['execution_time'] ?? 0));
+        }
+
+        foreach ($queries as &$query) {
+            $query['avg_time'] = $query['count'] > 0
+                ? $query['total_time'] / $query['count']
+                : 0.0;
+        }
+        unset($query);
+
+        usort($queries, function ($left, $right) {
+            return $right['total_time'] <=> $left['total_time'];
+        });
+
+        return array_slice($queries, 0, $limit);
+    }
+
+    /**
      * Generate performance report
      *
      * @return array
      */
-    public static function generateReport()
+    public static function generateReport(array $options = [])
     {
+        $slowLimit = max(1, (int) ($options['slow_limit'] ?? 10));
+        $frequentLimit = max(1, (int) ($options['frequent_limit'] ?? 10));
+        $recentLimit = max(1, (int) ($options['recent_limit'] ?? 10));
+        $heavyLimit = max(1, (int) ($options['heavy_limit'] ?? 10));
+
         return [
             'summary' => self::getStats(),
-            'slow_queries' => self::getSlowQueries(10),
-            'frequent_queries' => self::getMostFrequentQueries(10),
+            'slow_queries' => self::getSlowQueries($slowLimit),
+            'frequent_queries' => self::getMostFrequentQueries($frequentLimit),
+            'recent_queries' => self::getRecentQueries($recentLimit),
+            'heavy_queries' => self::getHeaviestQueries($heavyLimit),
             'connection_stats' => ConnectionPool::getStats(),
             'statement_cache_stats' => StatementCache::getStats(),
             'query_cache_stats' => QueryCache::getStats(),

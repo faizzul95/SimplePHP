@@ -9,14 +9,14 @@ class SaveUserRequest extends FormRequest
     public function authorize(): bool
     {
         if ($this->isCreate()) {
-            return isSuperadmin() || permission('user-create');
+            return auth()->can('user-create');
         }
 
         if ($this->isUpdate()) {
-            return isSuperadmin() || permission('user-update');
+            return auth()->can('user-update');
         }
 
-        return isSuperadmin();
+        return false;
     }
 
     public function primaryKey(): string|array
@@ -31,6 +31,7 @@ class SaveUserRequest extends FormRequest
             'user_preferred_name' => 'required|string|min_length:3|max_length:255|secure_value',
             'email' => 'required|email|max_length:255|secure_value',
             'user_contact_no' => 'required|numeric|min_length:10|max_length:15',
+            'user_gender' => 'required|integer|in:1,2',
             'username' => 'nullable|string|min_length:3|max_length:255|secure_value',
             'password' => 'nullable|string|min_length:8|max_length:255',
             'role_id' => 'required|integer|min:1',
@@ -57,6 +58,7 @@ class SaveUserRequest extends FormRequest
             'user_preferred_name' => 'trim',
             'email' => 'trim|lowercase',
             'user_contact_no' => 'trim|string',
+            'user_gender' => 'int',
             'username' => 'nullable_string',
             'password' => 'nullable_string',
             'role_id' => 'int',
@@ -76,6 +78,7 @@ class SaveUserRequest extends FormRequest
             'email.email' => 'Email format is invalid.',
             'user_contact_no.required' => 'Contact number is required.',
             'user_contact_no.numeric' => 'Contact number must be numeric.',
+            'user_gender.required' => 'Gender is required.',
             'username.min_length' => 'Username must be at least :min characters.',
             'password.min_length' => 'Password must be at least :min characters.',
             'role_id.required' => 'Role is required.',

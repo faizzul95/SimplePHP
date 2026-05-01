@@ -27,9 +27,95 @@ class RouteDefinition
         return $this;
     }
 
+    public function auth(array|string|null $guards = null): self
+    {
+        if ($guards === null) {
+            return $this->middleware('auth');
+        }
+
+        $guardList = is_array($guards) ? $guards : [$guards];
+        $guardList = array_values(array_filter(array_map(static fn($guard) => trim((string) $guard), $guardList)));
+
+        return empty($guardList)
+            ? $this->middleware('auth')
+            : $this->middleware('auth:' . implode(',', $guardList));
+    }
+
+    public function webAuth(): self
+    {
+        return $this->middleware('auth.web');
+    }
+
+    public function apiAuth(): self
+    {
+        return $this->middleware('auth.api');
+    }
+
+    public function guestOnly(): self
+    {
+        return $this->middleware('guest');
+    }
+
+    public function permission(string $permission): self
+    {
+        $permission = trim($permission);
+        if ($permission === '') {
+            return $this;
+        }
+
+        return $this->middleware('permission:' . $permission);
+    }
+
+    public function can(string $permission): self
+    {
+        return $this->permission($permission);
+    }
+
+    public function permissionAny(array|string $permissions): self
+    {
+        $permissionList = is_array($permissions) ? $permissions : explode(',', (string) $permissions);
+        $permissionList = array_values(array_filter(array_map(static fn($permission) => trim((string) $permission), $permissionList)));
+
+        if (empty($permissionList)) {
+            return $this;
+        }
+
+        return $this->middleware('permission.any:' . implode(',', $permissionList));
+    }
+
+    public function canAny(array|string $permissions): self
+    {
+        return $this->permissionAny($permissions);
+    }
+
+    public function role(array|string $roles): self
+    {
+        $roleList = is_array($roles) ? $roles : explode(',', (string) $roles);
+        $roleList = array_values(array_filter(array_map(static fn($role) => trim((string) $role), $roleList)));
+
+        if (empty($roleList)) {
+            return $this;
+        }
+
+        return $this->middleware('role:' . implode(',', $roleList));
+    }
+
+    public function ability(array|string $abilities): self
+    {
+        $abilityList = is_array($abilities) ? $abilities : explode(',', (string) $abilities);
+        $abilityList = array_values(array_filter(array_map(static fn($ability) => trim((string) $ability), $abilityList)));
+
+        if (empty($abilityList)) {
+            return $this;
+        }
+
+        return $this->middleware('ability:' . implode(',', $abilityList));
+    }
+
     public function name(string $name): self
     {
         $this->name = $name;
+        Router::registerNamedRoute($name, $this->uri);
         return $this;
     }
 

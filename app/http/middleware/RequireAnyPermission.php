@@ -34,13 +34,6 @@ class RequireAnyPermission implements MiddlewareInterface
 
         $hasPermission = auth()->hasAnyPermission($this->permissions);
 
-        if (!$hasPermission && auth()->checkSession() && function_exists('permission')) {
-            $fallback = permission($this->permissions);
-            $hasPermission = is_array($fallback)
-                ? in_array(true, $fallback, true)
-                : $fallback === true;
-        }
-
         if (!$hasPermission) {
             if ($request->expectsJson()) {
                 Response::json([

@@ -559,22 +559,308 @@ const asset = (path, isPublic = true) => {
 
 // MODAL (BOOTSTRAP) HELPER
 
+const getBootstrapMajorVersion = () => {
+	const versionCandidates = [
+		window.bootstrap && window.bootstrap.Modal && window.bootstrap.Modal.VERSION,
+		window.bootstrap && window.bootstrap.Tooltip && window.bootstrap.Tooltip.VERSION,
+		$.fn.modal && $.fn.modal.Constructor && $.fn.modal.Constructor.VERSION,
+		$.fn.tooltip && $.fn.tooltip.Constructor && $.fn.tooltip.Constructor.VERSION,
+	];
+
+	for (let i = 0; i < versionCandidates.length; i++) {
+		const version = versionCandidates[i];
+		if (!version) {
+			continue;
+		}
+
+		const major = parseInt(String(version).split('.')[0], 10);
+		if (!Number.isNaN(major)) {
+			return major;
+		}
+	}
+
+	return 5;
+}
+
+const isBootstrap5OrNewer = () => getBootstrapMajorVersion() >= 5;
+
+const canUseBootstrapOffcanvas = () => {
+	return !!(
+		isBootstrap5OrNewer() &&
+		window.bootstrap &&
+		window.bootstrap.Offcanvas &&
+		typeof window.bootstrap.Offcanvas.getOrCreateInstance === 'function'
+	);
+}
+
+const getBootstrapDismissAttribute = (component) => {
+	return (isBootstrap5OrNewer() ? 'data-bs-dismiss' : 'data-dismiss') + '="' + component + '"';
+}
+
+const renderBootstrapCloseButton = (component, extraClasses = '') => {
+	const buttonClasses = extraClasses ? ' ' + extraClasses : '';
+
+	if (isBootstrap5OrNewer()) {
+		return '<button type="button" class="btn-close' + buttonClasses + '" ' + getBootstrapDismissAttribute(component) + ' aria-label="Close"></button>';
+	}
+
+	return '<button type="button" class="close' + buttonClasses + '" ' + getBootstrapDismissAttribute(component) + ' aria-label="Close"><span aria-hidden="true">&times;</span></button>';
+}
+
+const getBootstrapSecondaryButtonClass = () => {
+	if (getBootstrapMajorVersion() <= 3) {
+		return 'btn btn-default';
+	}
+
+	if (getBootstrapMajorVersion() === 4) {
+		return 'btn btn-secondary';
+	}
+
+	return 'btn btn-label-secondary';
+}
+
+const getBootstrapModalTitleTag = () => {
+	return getBootstrapMajorVersion() <= 4 ? 'h4' : 'h5';
+}
+
+const getBootstrapModalDialogClass = (size) => {
+	if (size === 'fullscreen') {
+		return isBootstrap5OrNewer() ? 'modal-fullscreen' : 'modal-lg';
+	}
+
+	return 'modal-' + size;
+}
+
+const showBootstrapModalElement = (element) => {
+	if (!element) {
+		return;
+	}
+
+	if (window.bootstrap && window.bootstrap.Modal && typeof window.bootstrap.Modal.getOrCreateInstance === 'function') {
+		window.bootstrap.Modal.getOrCreateInstance(element).show();
+		return;
+	}
+
+	$(element).modal('show');
+}
+
+const hideBootstrapModalElement = (element) => {
+	if (!element) {
+		return;
+	}
+
+	if (window.bootstrap && window.bootstrap.Modal && typeof window.bootstrap.Modal.getInstance === 'function') {
+		const instance = window.bootstrap.Modal.getInstance(element) || window.bootstrap.Modal.getOrCreateInstance(element);
+		instance.hide();
+		return;
+	}
+
+	$(element).modal('hide');
+}
+
+const showBootstrapOffcanvasElement = (element) => {
+	if (!element) {
+		return;
+	}
+
+	if (canUseBootstrapOffcanvas() && element.classList.contains('offcanvas')) {
+		window.bootstrap.Offcanvas.getOrCreateInstance(element).show();
+		return;
+	}
+
+	showBootstrapModalElement(element);
+}
+
+const hideBootstrapOffcanvasElement = (element) => {
+	if (!element) {
+		return;
+	}
+
+	if (canUseBootstrapOffcanvas() && element.classList.contains('offcanvas')) {
+		const instance = window.bootstrap.Offcanvas.getInstance(element) || window.bootstrap.Offcanvas.getOrCreateInstance(element);
+		instance.hide();
+		return;
+	}
+
+	hideBootstrapModalElement(element);
+}
+
+const buildGeneralModalHtml = (modalId, size, titleId, contentId) => {
+	const titleTag = getBootstrapModalTitleTag();
+	const dialogClass = getBootstrapModalDialogClass(size);
+	const closeButton = renderBootstrapCloseButton('modal');
+	const footerButtonClass = getBootstrapSecondaryButtonClass();
+
+	return [
+		'<div class="modal fade" id="' + modalId + '" tabindex="-1" aria-hidden="true">',
+		'    <div class="modal-dialog ' + dialogClass + '" role="document">',
+		'        <div class="modal-content">',
+		'            <div class="modal-header">',
+		'                <' + titleTag + ' class="modal-title" id="' + titleId + '"> General Modal </' + titleTag + '>',
+		'                ' + closeButton,
+		'            </div>',
+		'            <div class="modal-body" id="' + contentId + '">Please add content</div>',
+		'            <div class="modal-footer">',
+		'                <button type="button" class="' + footerButtonClass + '" ' + getBootstrapDismissAttribute('modal') + '>Close</button>',
+		'            </div>',
+		'        </div>',
+		'    </div>',
+		'</div>'
+	].join('');
+}
+
+const buildGeneralOffcanvasHtml = (offcanvasId) => {
+	const titleTag = getBootstrapModalTitleTag();
+
+	if (!canUseBootstrapOffcanvas()) {
+		return buildGeneralModalHtml(offcanvasId, 'lg', 'offCanvasTitle-right', 'offCanvasContent-right');
+	}
+
+	return [
+		'<div class="offcanvas offcanvas-end custom-width" data-bs-scroll="true" tabindex="-1" id="' + offcanvasId + '" aria-labelledby="offCanvasTitle-right" aria-modal="true" role="dialog">',
+		'    <div class="offcanvas-header border-bottom">',
+		'        <' + titleTag + ' class="offcanvas-title" id="offCanvasTitle-right">General Offcanvas</' + titleTag + '>',
+		'        ' + renderBootstrapCloseButton('offcanvas', 'text-reset'),
+		'    </div>',
+		'    <div class="offcanvas-body my-auto mx-0">',
+		'        <div class="p-2" id="offCanvasContent-right">Please add content</div>',
+		'    </div>',
+		'</div>'
+	].join('');
+}
+
 const showModal = (id, timeSet = 0) => {
 	setTimeout(function () {
-		$(id).modal('show');
+		showBootstrapModalElement(document.querySelector(id));
 	}, timeSet);
 }
 
 const closeModal = (id, timeSet = 250) => {
 	setTimeout(function () {
-		$(id).modal('hide');
+		hideBootstrapModalElement(document.querySelector(id));
 	}, timeSet);
 }
 
 const closeOffcanvas = (id, timeSet = 250) => {
 	setTimeout(function () {
-		$(id).offcanvas('toggle');
+		hideBootstrapOffcanvasElement(document.querySelector(id));
 	}, timeSet);
+}
+
+const closeOverlayBySelector = (id, timeSet = 250) => {
+	const overlayElement = document.querySelector(id);
+	if (!(overlayElement instanceof Element)) {
+		return;
+	}
+
+	if (overlayElement.classList.contains('offcanvas')) {
+		closeOffcanvas(id, timeSet);
+		return;
+	}
+
+	closeModal(id, timeSet);
+}
+
+const getVisibleOverlayElements = () => {
+	return Array.from(document.querySelectorAll('.modal.show, .modal.in, .offcanvas.show, .offcanvas.showing'));
+}
+
+const getVisibleBackdropElements = () => {
+	return Array.from(document.querySelectorAll('.modal-backdrop, .offcanvas-backdrop'));
+}
+
+const reindexOverlayStack = () => {
+	const overlayBaseZIndex = 2000;
+	const backdropBaseZIndex = overlayBaseZIndex - 10;
+	const overlayStep = 20;
+	const visibleOverlays = getVisibleOverlayElements();
+	const visibleBackdrops = getVisibleBackdropElements();
+
+	visibleOverlays.forEach((element, index) => {
+		element.style.zIndex = String(overlayBaseZIndex + (index * overlayStep));
+		element.setAttribute('data-overlay-stack-index', String(index));
+	});
+
+	visibleBackdrops.forEach((element, index) => {
+		element.style.zIndex = String(backdropBaseZIndex + (index * overlayStep));
+		element.setAttribute('data-overlay-stack-index', String(index));
+	});
+
+	if (visibleOverlays.some(element => element.classList.contains('modal'))) {
+		document.body.classList.add('modal-open');
+	} else {
+		document.body.classList.remove('modal-open');
+	}
+}
+
+const syncOverlayStack = () => {
+	window.setTimeout(reindexOverlayStack, 0);
+}
+
+const initializeOverlayStackManager = () => {
+	if (window.__overlayStackManagerInitialized) {
+		return;
+	}
+
+	window.__overlayStackManagerInitialized = true;
+	document.addEventListener('shown.bs.modal', syncOverlayStack);
+	document.addEventListener('hidden.bs.modal', syncOverlayStack);
+	document.addEventListener('shown.bs.offcanvas', syncOverlayStack);
+	document.addEventListener('hidden.bs.offcanvas', syncOverlayStack);
+}
+
+initializeOverlayStackManager();
+
+const normalizePreviewPdfModal = () => {
+	const previewModal = document.getElementById('previewPdfModal');
+	if (!previewModal) {
+		return;
+	}
+
+	if (isBootstrap5OrNewer()) {
+		previewModal.setAttribute('data-bs-backdrop', 'static');
+		previewModal.setAttribute('data-bs-keyboard', 'false');
+		previewModal.removeAttribute('data-backdrop');
+		previewModal.removeAttribute('data-keyboard');
+	} else {
+		previewModal.setAttribute('data-backdrop', 'static');
+		previewModal.setAttribute('data-keyboard', 'false');
+		previewModal.removeAttribute('data-bs-backdrop');
+		previewModal.removeAttribute('data-bs-keyboard');
+	}
+
+	const dismissButtons = previewModal.querySelectorAll('[data-preview-dismiss="modal"]');
+	dismissButtons.forEach((button) => {
+		if (isBootstrap5OrNewer()) {
+			button.setAttribute('data-bs-dismiss', 'modal');
+			button.removeAttribute('data-dismiss');
+		} else {
+			button.setAttribute('data-dismiss', 'modal');
+			button.removeAttribute('data-bs-dismiss');
+		}
+	});
+
+	const headerCloseButton = document.getElementById('previewPdfModalCloseButton');
+	if (!headerCloseButton) {
+		return;
+	}
+
+	if (isBootstrap5OrNewer()) {
+		headerCloseButton.className = 'btn-close';
+		headerCloseButton.setAttribute('aria-label', 'Close');
+		headerCloseButton.innerHTML = '';
+		return;
+	}
+
+	headerCloseButton.className = 'close';
+	headerCloseButton.setAttribute('aria-label', 'Close');
+	headerCloseButton.innerHTML = '<span aria-hidden="true">&times;</span>';
+}
+
+if (document.readyState === 'loading') {
+	document.addEventListener('DOMContentLoaded', normalizePreviewPdfModal);
+} else {
+	normalizePreviewPdfModal();
 }
 
 // DATA HELPER
@@ -1696,11 +1982,8 @@ const submitApi = async (url, dataObj, formID = null, reloadFunction = null, clo
 						if (closedModal) {
 							var modalID = $('#' + formID).attr('data-modal');
 							setTimeout(function () {
-								if (modalID == '#generaloffcanvas-right') {
-									$(modalID).offcanvas('toggle');
-								} else {
-									// $('#' + modalID).modal('hide');
-									$(modalID).modal('hide');
+								if (isDef(modalID) && modalID !== '') {
+									closeOverlayBySelector(modalID, 0);
 								}
 							}, 350);
 						}
@@ -2082,6 +2365,121 @@ const noti = (code = 400, text = 'Something went wrong') => {
 	Command: toastr[type](messageText, title)
 }
 
+const confirmAction = async (options = {}) => {
+	const {
+		title = 'Are you sure?',
+		html = 'Please confirm this action.',
+		icon = 'warning',
+		showCancelButton = true,
+		confirmButtonColor = '#3085d6',
+		cancelButtonColor = '#d33',
+		confirmButtonText = 'Yes, Confirm!',
+		reverseButtons = true,
+		customClass = {},
+		onConfirm = null,
+		onCancel = null,
+		...swalOptions
+	} = options;
+
+	const result = await Swal.fire({
+		title,
+		html,
+		icon,
+		showCancelButton,
+		confirmButtonColor,
+		cancelButtonColor,
+		confirmButtonText,
+		reverseButtons,
+		customClass: {
+			container: 'swal2-customCss',
+			...customClass,
+		},
+		...swalOptions,
+	});
+
+	if (result.isConfirmed) {
+		if (typeof onConfirm === 'function') {
+			return await onConfirm(result);
+		}
+
+		return result;
+	}
+
+	if (typeof onCancel === 'function') {
+		await onCancel(result);
+	}
+
+	return null;
+}
+
+const confirmApiAction = async (options = {}) => {
+	const {
+		method = 'delete',
+		url = null,
+		data = null,
+		apiOptions = {},
+		token = null,
+		autoNotify = true,
+		onSuccess = null,
+		onError = null,
+		onCancel = null,
+		...confirmOptions
+	} = options;
+
+	if (!url) {
+		throw new Error('confirmApiAction(): url is required');
+	}
+
+	return confirmAction({
+		title: 'Are you sure?',
+		html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
+		confirmButtonText: 'Yes, Remove it!',
+		...confirmOptions,
+		onCancel,
+		onConfirm: async (result) => {
+			const res = await callApi(method, url, data, apiOptions, token);
+
+			if (isSuccess(res)) {
+				const response = res.data || {};
+
+				if (autoNotify) {
+					noti(response.code ?? res.status, response.message ?? 'Success');
+				}
+
+				if (typeof onSuccess === 'function') {
+					await onSuccess(res, result);
+				}
+				return res;
+			}
+
+			if (typeof onError === 'function') {
+				await onError(res, result);
+			}
+
+			return res;
+		}
+	});
+}
+
+const confirmDeleteAction = async (options = {}) => {
+	return confirmApiAction({
+		title: 'Are you sure?',
+		html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
+		confirmButtonText: 'Yes, Remove it!',
+		method: 'delete',
+		...options,
+	});
+}
+
+const confirmSubmitAction = async (options = {}) => {
+	return confirmAction({
+		title: 'Are you sure?',
+		html: 'Form will be submitted!',
+		confirmButtonText: 'Yes, Confirm!',
+		...options,
+	});
+}
+
 const isSuccess = (res) => {
 	const successStatus = [200, 201, 302];
 	const status = typeof res === 'number' ? res : res.status;
@@ -2295,406 +2693,176 @@ const getImageDefault = (imageName, path = 'public/upload/default/') => {
 	return urls(path + imageName);
 }
 
+window.__bootstrapDataTableDefaults = window.__bootstrapDataTableDefaults || {};
+
+const setBootstrapDataTableDefaults = (options = {}) => {
+	if (!options || typeof options !== 'object') {
+		return window.__bootstrapDataTableDefaults;
+	}
+
+	window.__bootstrapDataTableDefaults = $.extend(true, {}, window.__bootstrapDataTableDefaults, options);
+	return window.__bootstrapDataTableDefaults;
+}
+
+setBootstrapDataTableDefaults({
+	language: {
+		searchPlaceholder: 'Search...',
+		sSearch: '',
+		lengthMenu: '_MENU_ item / page',
+		paginate: {
+			first: 'First',
+			last: 'The End',
+			previous: 'Previous',
+			next: 'Next',
+		},
+		info: 'Showing _START_ to _END_ of _TOTAL_ items',
+		sInfo: 'Showing _START_ to _END_ of _TOTAL_ items',
+		emptyTable: 'No data is available in the table',
+		infoEmpty: 'Showing 0 to 0 of 0 items',
+		sInfoEmpty: 'Showing 0 to 0 of 0 items',
+		infoFiltered: '(filtered from _MAX_ number of items)',
+		sInfoFiltered: '(filtered from _MAX_ number of items)',
+		zeroRecords: 'No matching records',
+		processing: "<span class='text-danger font-weight-bold font-italic'>Processing ... Please wait a moment..</span>",
+		loadingRecords: 'Loading...',
+	}
+});
+
+const datatableManager = (tableId = null, options = {}) => {
+	if (typeof BootstrapDataTable !== 'function') {
+		throw new Error('BootstrapDataTable is not available');
+	}
+
+	window.__sharedBootstrapDataTables = window.__sharedBootstrapDataTables || {};
+	const normalizedId = tableId ? String(tableId).replace(/^#/, '') : null;
+	const registryKey = normalizedId || ('datatable-' + Object.keys(window.__sharedBootstrapDataTables).length);
+
+	if (!window.__sharedBootstrapDataTables[registryKey]) {
+		window.__sharedBootstrapDataTables[registryKey] = new BootstrapDataTable({
+			tableId: normalizedId,
+			...options,
+		});
+	}
+
+	if (options && Object.keys(options).length > 0) {
+		window.__sharedBootstrapDataTables[registryKey].options = window.__sharedBootstrapDataTables[registryKey].mergeDeep(
+			window.__sharedBootstrapDataTables[registryKey].options,
+			options,
+		);
+	}
+
+	return window.__sharedBootstrapDataTables[registryKey];
+}
+
+const generateDatatable = (config = {}) => {
+	const manager = datatableManager(config.tableId || config.id, config);
+	return manager.create(config);
+}
+
 const generateDatatableServer = (id, url = null, nodatadiv = 'nodatadiv', dataObj = null, filterColumn = [], screenLoadID = null) => {
-
-	const tableID = $('#' + id);
-	var table = tableID.DataTable().clear().destroy();
-
-	$.ajaxSetup({
-		data: {
-
-		}
+	return datatableManager(id).create({
+		tableId: id,
+		mode: 'server',
+		columnDefs: filterColumn,
+		ajax: {
+			url: url,
+			method: 'POST',
+			data: dataObj,
+		},
+		ui: {
+			emptyStateContainerId: nodatadiv,
+			loadingContainerId: screenLoadID,
+			useLoadingIndicator: true,
+			renderEmptyState: () => typeof nodata === 'function' ? nodata() : '<div class="alert alert-light border text-center mb-0">No data available.</div>',
+		},
 	});
-
-	if (dataObj != null) {
-		dataSent = dataObj;
-	} else {
-		dataSent = null;
-	}
-
-	if (screenLoadID != null) {
-		loading('#' + screenLoadID, true);
-	}
-
-	if (dataSent == null) {
-		return tableID.DataTable({
-			// "pagingType": "full_numbers",
-			"processing": true,
-			"serverSide": true,
-			"responsive": true,
-			"iDisplayLength": 10,
-			"bLengthChange": true,
-			"searching": true,
-			"autoWidth": false,
-			"ajax": {
-				type: 'POST',
-				url: $('meta[name="base_url"]').attr('content') + url,
-				dataType: "JSON",
-				// data: dataSent,
-				headers: {
-					'X-Requested-With': 'XMLHttpRequest',
-					'content-type': 'application/x-www-form-urlencoded',
-				},
-				"error": function (xhr, error, exception) {
-					if (exception) {
-						if (isError(xhr.status))
-							noti(xhr.status, exception);
-					}
-				}
-			},
-			"language": {
-				"searchPlaceholder": 'Search...',
-				"sSearch": '',
-				// "lengthMenu": '_MENU_ item / page',
-				// "paginate": {
-				// 	"first": "First",
-				// 	"last": "The End",
-				// 	"previous": "Previous",
-				// 	"next": "Next"
-				// },
-				// "info": "Showing _START_ to _END_ of _TOTAL_ items",
-				// "emptyTable": "No data is available in the table",
-				// "info": "Showing _START_ to _END_ of _TOTAL_ items",
-				// "infoEmpty": "Showing 0 to 0 of 0 items",
-				// "infoFiltered": "(filtered from _MAX_ number of items)",
-				// "zeroRecords": "No matching records",
-				// "processing": "<span class='text-danger font-weight-bold font-italic'> Processing ... Please wait a moment.. ",
-				// "loadingRecords": "Loading...",
-				// "infoPostFix": "",
-				// "thousands": ",",
-			},
-			"columnDefs": filterColumn,
-			initComplete: function () {
-
-				var totalData = this.api().data().length;
-
-				if (totalData > 0) {
-					$('#' + nodatadiv).hide();
-					$('#' + id + 'Div').show();
-				} else {
-					tableID.DataTable().clear().destroy();
-					$('#' + id + 'Div').hide();
-					$('#' + nodatadiv).show();
-				}
-
-				if (screenLoadID != null) {
-					setTimeout(function () {
-						loading('#' + screenLoadID, false);
-					}, 100);
-				}
-			}
-		});
-	} else {
-		return tableID.DataTable({
-			// "pagingType": "full_numbers",
-			"processing": true,
-			"serverSide": true,
-			"responsive": true,
-			"iDisplayLength": 10,
-			"bLengthChange": true,
-			"searching": true,
-			"ajax": {
-				type: 'POST',
-				url: $('meta[name="base_url"]').attr('content') + url,
-				dataType: "JSON",
-				data: dataSent,
-				headers: {
-					'X-Requested-With': 'XMLHttpRequest',
-					'content-type': 'application/x-www-form-urlencoded',
-				},
-				"error": function (xhr, error, exception) {
-					if (exception) {
-						if (isError(xhr.status))
-							noti(xhr.status, exception);
-					}
-				}
-			},
-			"language": {
-				"searchPlaceholder": 'Search...',
-				"sSearch": '',
-				// "lengthMenu": '_MENU_ item / page',
-				// "paginate": {
-				// 	"first": "First",
-				// 	"last": "The End",
-				// 	"previous": "Previous",
-				// 	"next": "Next"
-				// },
-				// "info": "Showing _START_ to _END_ of _TOTAL_ items",
-				// "emptyTable": "No data is available in the table",
-				// "info": "Showing _START_ to _END_ of _TOTAL_ items",
-				// "infoEmpty": "Showing 0 to 0 of 0 items",
-				// "infoFiltered": "(filtered from _MAX_ number of items)",
-				// "zeroRecords": "No matching records",
-				"processing": "<span class='text-danger font-weight-bold font-italic'> Processing ... Please wait a moment.. ",
-				"loadingRecords": "Loading...",
-				// "infoPostFix": "",
-				// "thousands": ",",
-			},
-			"columnDefs": filterColumn,
-			initComplete: function () {
-
-				var totalData = this.api().data().length;
-
-				if (totalData > 0) {
-					$('#' + nodatadiv).hide();
-					$('#' + id + 'Div').show();
-				} else {
-					tableID.DataTable().clear().destroy();
-					$('#' + id + 'Div').hide();
-					$('#' + nodatadiv).show();
-				}
-
-				if (screenLoadID != null) {
-					setTimeout(function () {
-						loading('#' + screenLoadID, false);
-					}, 100);
-				}
-
-			}
-		});
-	}
 }
 
 const generateDatatableClient = async (id, url = null, dataObj = null, filterColumn = [], nodatadiv = 'nodatadiv', screenLoadID = 'nodata') => {
-
-	const tableID = $('#' + id);
-	var table = tableID.DataTable().clear().destroy();
-
-	$.ajaxSetup({
-		data: {
-
-		}
+	return datatableManager(id).create({
+		tableId: id,
+		mode: 'client',
+		columnDefs: filterColumn,
+		ajax: {
+			url: url,
+			method: 'POST',
+			data: dataObj,
+		},
+		ui: {
+			emptyStateContainerId: nodatadiv,
+			loadingContainerId: screenLoadID,
+			useLoadingIndicator: true,
+			renderEmptyState: () => typeof nodata === 'function' ? nodata() : '<div class="alert alert-light border text-center mb-0">No data available.</div>',
+		},
 	});
+}
 
-	loading('#' + screenLoadID, true);
+const generateDatatableSimple = (config = {}) => {
+	return generateDatatable({
+		...config,
+		mode: 'simple',
+	});
+}
 
-	const res = await callApi('post', url, dataObj);
+const generateDatatableCursor = async (config = {}) => {
+	return generateDatatable({
+		...config,
+		mode: 'cursor',
+	});
+}
 
-	if (isSuccess(res)) {
-		if (hasData(res.data)) {
-			table = tableID.DataTable({
-				"data": res.data,
-				"deferRender": true,
-				"processing": true,
-				"serverSide": false,
-				'paging': true,
-				'ordering': true,
-				'info': true,
-				'responsive': true,
-				'iDisplayLength': 10,
-				'bLengthChange': true,
-				'searching': true,
-				'autoWidth': false,
-				'language': {
-					"searchPlaceholder": 'Search...',
-					"sSearch": '',
-					// "lengthMenu": '_MENU_ item / page',
-					// "paginate": {
-					// 	"first": "First",
-					// 	"last": "The End",
-					// 	"previous": "Previous",
-					// 	"next": "Next"
-					// },
-					// "info": "Showing _START_ to _END_ of _TOTAL_ items",
-					// "emptyTable": "No data is available in the table",
-					// "info": "Showing _START_ to  _END_ of  _TOTAL_ items",
-					// "infoEmpty": "Showing 0 to 0 of 0 items",
-					// "infoFiltered": "(filtered from _MAX_ number of items)",
-					// "zeroRecords": "No matching records",
-					// "processing": "<span class='text-danger font-weight-bold font-italic'> Processing ... Please wait a moment..",
-					// "loadingRecords": "Loading...",
-					// "infoPostFix": "",
-					// "thousands": ",",
-				},
-				'columnDefs': filterColumn,
-			});
+const syncDatatableRow = (tableId, payload, options = {}) => {
+	return datatableManager(tableId).syncRowFromPayload(payload, options);
+}
 
-			$('#' + nodatadiv).hide();
-			$('#' + id + 'Div').show();
+const removeDatatableRow = (tableId, payloadOrRowKey, options = {}) => {
+	return datatableManager(tableId).removeRowByPayload(payloadOrRowKey, options);
+}
 
-			// Add draw event listener
-			// table.on('draw', function () {
-			// 	loading('#' + screenLoadID, false);
-			// });
-		} else {
-			$('#' + nodatadiv).empty(); // reset
-			$('#' + nodatadiv).html(nodata());
-			$('#' + nodatadiv).show();
-			$('#' + id + 'Div').hide();
-		}
+window.datatableManager = datatableManager;
+window.generateDatatable = generateDatatable;
+window.generateDatatableServer = generateDatatableServer;
+window.generateDatatableClient = generateDatatableClient;
+window.generateDatatableSimple = generateDatatableSimple;
+window.generateDatatableCursor = generateDatatableCursor;
+window.syncDatatableRow = syncDatatableRow;
+window.removeDatatableRow = removeDatatableRow;
+
+const modalManager = () => {
+	if (typeof ModalManager !== 'function') {
+		throw new Error('ModalManager is not available');
 	}
 
-	loading('#' + screenLoadID, false);
+	if (!window.__sharedModalManagerInstance) {
+		window.__sharedModalManagerInstance = new ModalManager();
+	}
 
-	return table;
+	return window.__sharedModalManagerInstance;
 }
 
 const loadFileContent = (fileName, idToLoad, sizeModal = 'lg', title = 'Default Title', dataArray = null, typeModal = 'modal', retryOnCsrfMismatch = true) => {
-	const csrfToken = getCsrfToken();
-
-	if (typeModal == 'modal') {
-		var idContent = idToLoad + "-" + sizeModal;
-	} else {
-		var idContent = "offCanvasContent-right";
-	}
-
-	$('#' + idContent).empty(); // reset
-	const modalContentUrl = $('meta[name="route.modal.content"]').attr('content') || 'modal/content';
-
-	return $.ajax({
-		type: "POST",
-		url: urls(modalContentUrl),
-		data: {
-			fileName: fileName,
-			dataArray: dataArray,
-		},
-		headers: {
-			'X-Requested-With': 'XMLHttpRequest',
-			'X-CSRF-TOKEN': csrfToken,
-			'content-type': 'application/x-www-form-urlencoded',
-		},
-		dataType: "html",
-		success: function (data) {
-			$('#' + idContent).append(data);
-			ensureCsrfFieldsInContainer(document.getElementById(idContent));
-
-			setTimeout(function () {
-				if (typeof getPassData == 'function') {
-					getPassData($('meta[name="base_url"]').attr('content'), dataArray);
-				} else {
-					console.log('function getPassData not initialize!');
-				}
-			}, 50);
-
-			if (typeModal == 'modal') {
-				$('#generalTitle-' + sizeModal).text(title);
-				$('#generalModal-' + sizeModal).modal('show');
-			} else {
-				// reset
-				$('.custom-width').css('width', '400px');
-
-				$('#offCanvasTitle-right').text(title);
-				$('#generaloffcanvas-right').offcanvas('toggle');
-				$('.custom-width').css('width', sizeModal);
-			}
-		},
-		error: function (xhr) {
-			syncCsrfTokenFromJqXhr(xhr);
-
-			if (xhr && xhr.status === 419 && retryOnCsrfMismatch) {
-				return loadFileContent(fileName, idToLoad, sizeModal, title, dataArray, typeModal, false);
-			}
-
-			noti(xhr && xhr.status ? xhr.status : 500, 'Failed to load modal content');
-		}
+	return modalManager().loadFileContent({
+		fileName,
+		idToLoad,
+		sizeModal,
+		title,
+		dataArray,
+		typeModal,
+		retryOnCsrfMismatch,
 	});
 }
 
 const loadFormContent = (fileName, idToLoad, sizeModal = 'lg', urlFunc = null, title = 'Default Title', dataArray =
 	null, typeModal = 'modal', retryOnCsrfMismatch = true) => {
-	const csrfToken = getCsrfToken();
-
-	if (typeModal == 'modal') {
-		var idContent = idToLoad + "-" + sizeModal;
-	} else {
-		var idContent = "offCanvasContent-right";
-	}
-
-	$('#' + idContent).empty(); // reset
-	const modalContentUrl = $('meta[name="route.modal.content"]').attr('content') || 'modal/content';
-
-	return $.ajax({
-		type: "POST",
-		url: urls(modalContentUrl),
-		data: {
-			fileName: fileName,
-			dataArray: dataArray,
-		},
-		headers: {
-			'X-Requested-With': 'XMLHttpRequest',
-			'X-CSRF-TOKEN': csrfToken,
-			'content-type': 'application/x-www-form-urlencoded',
-		},
-		dataType: "html",
-		success: function (response) {
-			$('#' + idContent).append(response);
-			ensureCsrfFieldsInContainer(document.getElementById(idContent));
-
-			setTimeout(function () {
-				if (typeof getPassData == 'function') {
-					getPassData($('meta[name="base_url"]').attr('content'), dataArray);
-				} else {
-					console.log('function getPassData not initialize!');
-				}
-			}, 50);
-
-			// get form id
-			var formID = $('#' + idContent + ' > form').attr('id');
-			// > div:first-child
-
-			$("#" + formID)[0].reset(); // reset form
-			document.getElementById(formID).reset(); // reset form
-			$("#" + formID).attr('action', urlFunc); // set url
-
-			if (typeModal == 'modal') {
-				$('#generalTitle-' + sizeModal).text(title);
-				$('#generalModal-' + sizeModal).modal('show');
-				$("#" + formID).attr("data-modal", '#generalModal-' + sizeModal);
-			} else {
-				// reset
-				$('.custom-width').css('width', '400px');
-
-				$('#offCanvasTitle-right').text(title);
-				$('#generaloffcanvas-right').offcanvas('toggle');
-				$("#" + formID).attr("data-modal", '#generaloffcanvas-right');
-				$('.custom-width').css('width', sizeModal);
-			}
-
-			if (dataArray != null) {
-				$.each($('input, select ,textarea', "#" + formID), function (k) {
-					var type = $(this).prop('type');
-					var name = $(this).attr('name');
-
-					if (type == 'radio' || type == 'checkbox') {
-						$("input[name=" + name + "][value='" + dataArray[name] + "']").prop(
-							"checked", true);
-					} else {
-						$('#' + name).val(dataArray[name]);
-					}
-
-				});
-			}
-
-		},
-		error: function (xhr, status, error) {
-			syncCsrfTokenFromJqXhr(xhr);
-
-			if (xhr && xhr.status === 419 && retryOnCsrfMismatch) {
-				return loadFormContent(fileName, idToLoad, sizeModal, urlFunc, title, dataArray, typeModal, false);
-			}
-
-        	var statusCode = xhr.status; // HTTP status code (e.g., 404, 500)
-			
-			var message;
-			if (xhr.responseJSON) {
-				message = xhr.responseJSON.message;
-			} else {
-				try {
-					var json = JSON.parse(xhr.responseText);
-					message = json.message;
-				} catch (e) {
-					message = xhr.responseText; // fallback to raw text
-				}
-			}
-
-			if (isError(statusCode)) {
-				noti(statusCode, message);
-			} else if (isUnauthorized(statusCode)) {
-				noti(statusCode, "Unauthorized: Access is denied");
-			} else {
-				log(error, 'ERROR loadFormContent');
-			}
-		}
+	return modalManager().loadFormContent({
+		fileName,
+		idToLoad,
+		sizeModal,
+		urlFunc,
+		title,
+		dataArray,
+		typeModal,
+		retryOnCsrfMismatch,
 	});
 }
 

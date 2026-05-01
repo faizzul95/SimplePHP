@@ -47,6 +47,7 @@ Each file is intentionally topic-scoped so AI agents and junior developers can l
 - [25. Framework Capability Map](25-framework-capability-map.md)
 - [26. Schema Builder & Migration](26-schema-builder-migration.md)
 - [27. Security Component](27-security-component.md)
+- [28. Startup Lifecycle Maintenance](28-startup-lifecycle-maintenance.md)
 
 ## How To Use This Knowledge Base
 

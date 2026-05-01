@@ -1,6 +1,21 @@
 # 15. Auth Component Reference
 
+## Recent additions (router + auth redesign, commit `0006837`)
+
+- **Session concurrency** — single-device and max-device enforcement with optional oldest-session invalidation. See [Section 4 / 5 below](#4-single-device-login-force-1-browserdevice).
+- **`systems_login_policy`** — credential lockout, audit trail, password rotation, and user-status enforcement. See [Section 6](#6-systems_login_policy-credential-lockout--audit).
+- **Session security fingerprint** — UA + optional IP binding with configurable strict/normalized/family modes. See [Section 7 troubleshooting](#7-troubleshooting-unauthorized-401).
+- **`issueApiCredential()`** — gated API-credential issuance replacing raw `createToken()` calls in controllers. See [Issue API Credential](#issue-api-credential) below.
+- **Shared request-auth resolvers** — `App\Support\Auth\AccessCredentialService` now owns JWT, OAuth2, API key, Basic, and Digest request-auth resolution while `Components\Auth` remains the stable public surface.
+- **Guard alias normalization** — `App\Support\Auth\AuthMethodResolver` is the single source of truth for `web/session`, `api/token`, and the other request-auth aliases used by `AuthManager` guards and `Components\Auth`.
+
 ## Session + Token Unified Auth (`Components\Auth`)
+
+Runtime structure:
+- `App\Support\Auth\AuthManager` is the primary `auth()` service entry point and extends `Components\Auth`.
+- `App\Support\Auth\AuthGuard` provides named guard views such as `auth()->guard('web')` and `auth()->guard('api')`.
+- `App\Support\Auth\AccessCredentialService` resolves request credentials for `jwt`, `oauth2`, `api_key`, `basic`, and `digest`.
+- `App\Support\Auth\TokenService` remains responsible for personal access token lifecycle operations.
 
 Supported methods:
 - Session
@@ -45,7 +60,18 @@ Supported methods:
 - `attempt(array $credentials): array|false` — Verify credentials (password_verify). Returns user array or false.
 - `login(int $userId, array $sessionData = []): bool` — Start session for user.
 - `loginUsingId(int $userId, array $sessionData = []): bool` — Alias for `login()`.
+- `sessions(?int $userId = null): array` — List active browser sessions from the session-concurrency registry, defaulting to the current session user.
+- `revokeSession(string $sessionId): bool` — Remove a browser session from the registry; revoking the current session also logs it out locally.
+- `logoutOtherDevices(string $password): bool` — Verify the current session user password, then keep only the active browser session in the session-concurrency registry.
 - `logout(bool $destroySession = false): void` — Clear session + revoke current token.
+
+Current API exposure for the current authenticated user:
+- `GET /api/v1/auth/devices`
+- `DELETE /api/v1/auth/devices/{sessionId}`
+- `POST /api/v1/auth/logout-other-devices`
+- `GET /api/v1/auth/tokens`
+- `GET /api/v1/auth/tokens/current`
+- `POST /api/v1/auth/tokens/rotate`
 
 Browser landing behavior:
 - The browser login flow returns a `redirectUrl` based on `resolveAuthenticatedLandingUrl()` when available.
@@ -54,10 +80,13 @@ Browser landing behavior:
 
 ### Personal Access Tokens
 
-- `createToken(int $userId, string $name = 'Default Token', ?int $expiresAt = null, array $abilities = ['*']): ?string` — Create token, returns plain-text token.
-- `revokeToken(string $plainToken): bool` — Revoke specific token.
+- `createToken(int $userId, string $name = 'Default Token', ?int $expiresAt = null, array $abilities = ['*']): ?string` — Create token, returns `token_id|secret` when possible and falls back to the legacy plain token string when an insert id is unavailable.
+- `revokeToken(string $plainToken): bool` — Revoke specific token. Returns `true` only when an active matching row was actually removed.
 - `revokeCurrentToken(): bool` — Revoke the token used in current request.
 - `revokeAllTokens(int $userId): bool` — Revoke all tokens for user.
+- `tokens(?int $userId = null): array` — List personal access tokens for a user, defaulting to the currently resolved authenticated user.
+- `currentToken(): ?array` — Resolve the current personal access token metadata from the bearer credential when token auth is in use.
+- `rotateToken(string $plainToken, string $name = '', ?int $expiresAt = null, array $abilities = []): ?string` — Revoke a token and issue a replacement token, preserving existing metadata when overrides are omitted.
 - `hasAbility(string $ability): bool` — Check if current token has ability.
 
 ### API Keys
@@ -72,21 +101,31 @@ Security note:
 ### OAuth2 Tokens
 
 - `createOAuth2Token(int $userId, string $name = 'Default OAuth2 Token', ?int $expiresAt = null, array $scopes = ['*']): ?string` — Create OAuth2 token, returns plain token.
-- `revokeOAuth2Token(string $plainToken): bool` — Revoke specific OAuth2 token.
+- `revokeOAuth2Token(string $plainToken): bool` — Revoke specific OAuth2 token. Returns `true` only when a matching row was actually updated.
 - `revokeCurrentOAuth2Token(): bool` — Revoke OAuth2 token from current request.
+
+### API Credential Resolution
+
+- `apiMethods(array|string|null $methods = null): array` — Resolve runtime API auth methods from `api.auth.methods` with `auth.api_methods` fallback.
+- `apiCredentialMethods(array|string|null $methods = null): array` — Resolve only enabled credential-issuance methods (`token`, `oauth2`).
+- `preferredApiMethod(array|string|null $methods = null, array $allowed = ['token', 'oauth2']): string` — Pick the preferred method from configured/allowed methods.
+- `issueApiCredential(int $userId, string $method = 'token', string $name = 'Default Token', ?int $expiresAt = null, array $abilities = ['*']): ?array` — Issue an enabled API credential and return method metadata plus the plain credential.
 
 JWT/Digest hardening:
 - JWT validation enforces configured algorithm and verifies signature/time-window claims.
 - Digest validation enforces realm/opaque/qop, binds digest URI to current request URI, validates nonce TTL/skew, and rejects replayed nonce counters.
+- Digest request resolution now fails closed when `cnonce` is missing or when configured Digest username/HA1 columns sanitize down to invalid identifiers.
 
 Session hijack hardening:
 - Session auth validates an auth fingerprint per session (`auth.session_security`).
 - Fingerprint binds to user-agent by default, and optionally to client IP.
+- IP binding now resolves through `request()->ip()`, so trusted proxy rules are respected consistently.
 
 Session concurrency hardening:
 - Control how many active browser/device sessions a user can keep (`auth.session_concurrency`).
 - Supports single-device mode or max-device limits.
 - Optional oldest-session invalidation when login limit is exceeded.
+- Session registry mutations are synchronized with per-user file locks under storage cache locks to reduce race conditions during concurrent logins/logout.
 
 ### Social Login
 
@@ -191,7 +230,7 @@ Behavior:
 - If 3 active sessions already exist, next login attempt fails (`auth()->login(...)` returns `false`).
 
 Implementation note:
-- Concurrency tracking uses `cache()` keys per user. Keep cache configured and writable for strict enforcement.
+- Concurrency tracking uses `cache()` keys per user plus a per-user file lock during registry mutation. Keep cache configured and storage writable for strict enforcement.
 
 ### 6) systems_login_policy (credential lockout + audit)
 
@@ -315,6 +354,19 @@ if (auth()->check(['jwt', 'api_key', 'basic', 'digest'])) {
 // $config['auth']['api_methods'] = ['token', 'jwt', 'api_key', 'oauth2', 'basic', 'digest'];
 ```
 
+Guard API examples:
+
+```php
+if (auth()->guard('web')->check()) {
+	$user = auth()->guard('web')->user();
+}
+
+if (auth()->guard('api')->check()) {
+	$method = auth()->guard('api')->via();
+	$user = auth()->guard('api')->user();
+}
+```
+
 ### 2d) Dedicated Middleware Aliases
 
 Available aliases in `app/config/framework.php`:
@@ -325,7 +377,7 @@ Available aliases in `app/config/framework.php`:
 Examples:
 
 ```php
-$router->get('/api/v1/private', [UserApiController::class, 'index'])->middleware('auth.token');
+$router->get('/api/v1/auth/me', [AuthController::class, 'me'])->middleware('auth.token');
 $router->get('/api/v1/reports', [ReportController::class, 'index'])->middleware('auth.jwt');
 $router->get('/api/v1/client', [IntegrationController::class, 'index'])->middleware('auth.oauth2');
 
@@ -360,7 +412,7 @@ $router->get('/dashboard', [DashboardController::class, 'index'])->middleware('a
 $router->get('/oauth/profile', [OAuthController::class, 'profile'])->middleware('auth:oauth');
 
 // API routes by credential type
-$router->get('/api/v1/users', [UserApiController::class, 'index'])->middleware('auth:token');
+$router->get('/api/v1/auth/me', [AuthController::class, 'me'])->middleware('auth:token');
 $router->get('/api/v2/reports', [ReportController::class, 'index'])->middleware('auth:jwt');
 $router->get('/api/v2/integrations', [IntegrationController::class, 'index'])->middleware('auth:api_key');
 $router->get('/api/v2/internal-basic', [InternalController::class, 'basic'])->middleware('auth:basic');
@@ -376,7 +428,7 @@ $router->get('/api/v2/fallback', [FallbackController::class, 'index'])
 ```php
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use Core\Http\Controller;
 use Core\Http\Request;
@@ -434,6 +486,11 @@ class AuthTypeDemoController extends Controller
 }
 ```
 
+Project note:
+
+- API routes now use the same controller classes as web routes.
+- Keep API-specific actions in explicit methods such as `loginApi`, `me`, and `logout` rather than maintaining a separate `App\Http\Controllers\Api` namespace.
+
 Routes:
 
 ```php
@@ -449,16 +506,39 @@ $router->group(['prefix' => '/api/v2'], function ($router) {
 });
 ```
 
-### 3) Create personal access token
+### 3) Issue API Credential
+
+`issueApiCredential()` is the canonical way to mint a credential for an API consumer. It consults `apiCredentialMethods()` to confirm the requested method is enabled, issues the token through the matching code path (`token` or `oauth2`), and returns metadata the caller can hand back to the client verbatim.
+
+```php
+$credential = auth()->issueApiCredential(
+	userId: $user['id'],
+	method: 'oauth2',                         // or 'token'
+	name: 'Mobile App',
+	expiresAt: time() + (30 * 24 * 60 * 60),  // 30 days
+	abilities: ['users.read']
+);
+
+// [
+//   'method' => 'oauth2',
+//   'credential' => '<plain-token>',   // show once; never retrievable again
+//   'token_type' => 'Bearer',
+//   'expires_at' => 1776000000,
+//   'abilities' => ['users.read'],
+// ]
+```
+
+Return the plaintext `credential` to the client. Only the SHA-256 hash is persisted.
+
+Legacy direct call (skips the enabled-methods gate):
 
 ```php
 $plainToken = auth()->createToken(
 	userId: $user['id'],
 	name: 'Mobile App',
-	expiresAt: time() + (30 * 24 * 60 * 60), // 30 days
+	expiresAt: time() + (30 * 24 * 60 * 60),
 	abilities: ['read', 'write']
 );
-// Return $plainToken to client — it cannot be retrieved again
 ```
 
 ### 4) Social login

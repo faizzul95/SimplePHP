@@ -4,19 +4,31 @@ namespace Core\Http;
 
 class Request
 {
+    private static ?self $current = null;
+    private const CONTROL_CHARACTERS = [
+        "\x00", "\x01", "\x02", "\x03", "\x04", "\x05", "\x06", "\x07",
+        "\x08", "\x0B", "\x0C", "\x0E", "\x0F", "\x10", "\x11", "\x12",
+        "\x13", "\x14", "\x15", "\x16", "\x17", "\x18", "\x19", "\x1A",
+        "\x1B", "\x1C", "\x1D", "\x1E", "\x1F",
+    ];
+
     private string $method;
     private string $path;
     private array $query;
     private array $request;
     private array $server;
+    private array $files;
     private array $headers;
     private array $routeParams = [];
+    private array $attributes = [];
+    private ?string $rawBody = null;
 
-    public function __construct(array $query = [], array $request = [], array $server = [])
+    public function __construct(array $query = [], array $request = [], array $server = [], array $files = [])
     {
         $this->query = $query;
         $this->request = $request;
         $this->server = $server;
+        $this->files = $files;
         $this->headers = $this->extractHeaders($server);
         $this->method = strtoupper($server['REQUEST_METHOD'] ?? 'GET');
         $this->path = $this->resolvePath($server);
@@ -24,17 +36,36 @@ class Request
 
     public static function capture(): self
     {
-        $request = new self($_GET, $_POST, $_SERVER);
+        $request = new self($_GET, $_POST, $_SERVER, $_FILES);
+
+        $rawBody = file_get_contents('php://input');
+        $request->rawBody = is_string($rawBody) ? $rawBody : '';
 
         if ($request->isJson()) {
-            $raw = file_get_contents('php://input');
-            $json = json_decode((string) $raw, true);
+            $json = json_decode((string) $request->rawBody, true);
             if (is_array($json)) {
                 $request->request = array_merge($request->request, $json);
             }
+        } elseif (in_array($request->method(), ['PUT', 'PATCH', 'DELETE'], true) && $request->rawBody !== null) {
+            parse_str($request->rawBody, $parsedBody);
+            if (is_array($parsedBody) && !empty($parsedBody)) {
+                $request->request = array_merge($request->request, $parsedBody);
+            }
         }
 
+        self::$current = $request;
+
         return $request;
+    }
+
+    public static function current(): ?self
+    {
+        return self::$current;
+    }
+
+    public static function setCurrent(?self $request): void
+    {
+        self::$current = $request;
     }
 
     public function method(): string
@@ -70,6 +101,49 @@ class Request
     public function all(): array
     {
         return array_merge($this->query, $this->request);
+    }
+
+    public function detectXss(string|array|null $ignoreList = null): bool
+    {
+        $ignoredKeys = $this->normalizeIgnoredKeys($ignoreList);
+
+        return $this->containsSuspiciousPayload($this->all(), $ignoredKeys);
+    }
+
+    public function files(?string $key = null, $default = null)
+    {
+        if ($key === null) {
+            return $this->files;
+        }
+
+        return $this->files[$key] ?? $default;
+    }
+
+    public function server(?string $key = null, $default = null)
+    {
+        if ($key === null) {
+            return $this->server;
+        }
+
+        return $this->server[$key] ?? $default;
+    }
+
+    public function headers(?string $key = null, $default = null)
+    {
+        if ($key === null) {
+            return $this->headers;
+        }
+
+        return $this->header($key, $default);
+    }
+
+    public function rawBody(): string
+    {
+        if ($this->rawBody === null) {
+            return '';
+        }
+
+        return $this->rawBody;
     }
 
     /**
@@ -161,6 +235,27 @@ class Request
         return $scheme . '://' . $host . $this->path;
     }
 
+    public function uri(): string
+    {
+        return ltrim($this->path, '/');
+    }
+
+    public function allSegments(): array
+    {
+        $uri = $this->uri();
+        if ($uri === '') {
+            return [];
+        }
+
+        return explode('/', $uri);
+    }
+
+    public function segment(int $index = 0): ?string
+    {
+        $segments = $this->allSegments();
+        return $segments[$index] ?? null;
+    }
+
     public function header(string $key, $default = null)
     {
         $normalized = strtolower($key);
@@ -220,6 +315,86 @@ class Request
         }
 
         return strtolower((string) ($this->header('x-forwarded-proto', ''))) === 'https';
+    }
+
+    private function normalizeIgnoredKeys(string|array|null $ignoreList): array
+    {
+        if ($ignoreList === null) {
+            return [];
+        }
+
+        $keys = is_array($ignoreList) ? $ignoreList : explode(',', $ignoreList);
+        $normalized = [];
+
+        foreach ($keys as $key) {
+            $normalizedKey = strtolower(trim((string) $key));
+            if ($normalizedKey === '') {
+                continue;
+            }
+
+            $normalized[$normalizedKey] = true;
+        }
+
+        return $normalized;
+    }
+
+    private function containsSuspiciousPayload(mixed $value, array $ignoredKeys, string $path = ''): bool
+    {
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                $keyName = strtolower(trim((string) $key));
+                $nestedPath = $path === '' ? $keyName : $path . '.' . $keyName;
+
+                if ($keyName !== '' && (isset($ignoredKeys[$keyName]) || isset($ignoredKeys[$nestedPath]))) {
+                    continue;
+                }
+
+                if ($this->containsSuspiciousPayload($item, $ignoredKeys, $nestedPath)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (!is_string($value) || $value === '') {
+            return false;
+        }
+
+        return $this->stringHasSuspiciousPayload($value);
+    }
+
+    private function stringHasSuspiciousPayload(string $value): bool
+    {
+        $candidate = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $candidate = str_replace(self::CONTROL_CHARACTERS, '', $candidate);
+        $normalized = strtolower(trim($candidate));
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        $patterns = [
+            '/<\s*script\b/i',
+            '/<\s*iframe\b/i',
+            '/<\s*svg\b/i',
+            '/<\s*img\b[^>]*\bon\w+\s*=/i',
+            '/\bon\w+\s*=\s*["\']?[^"\'>\s]+/i',
+            '/\bjavascript\s*:/i',
+            '/\bvbscript\s*:/i',
+            '/\bdata\s*:\s*text\/html/i',
+            '/expression\s*\(/i',
+            '/@import\s+["\']?/i',
+            '/<\s*[a-z][^>]*>/i',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $candidate) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function isTrustedProxy(string $remoteAddr, array $trustedProxies): bool
@@ -377,6 +552,40 @@ class Request
         return $this->routeParams[$key] ?? $default;
     }
 
+    public function attributes(?string $key = null, $default = null)
+    {
+        if ($key === null) {
+            return $this->attributes;
+        }
+
+        return $this->attributes[$key] ?? $default;
+    }
+
+    public function setAttribute(string $key, mixed $value): static
+    {
+        $normalizedKey = trim($key);
+        if ($normalizedKey === '') {
+            return $this;
+        }
+
+        $this->attributes[$normalizedKey] = $value;
+
+        return $this;
+    }
+
+    public function setAttributes(array $attributes): static
+    {
+        foreach ($attributes as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            $this->setAttribute($key, $value);
+        }
+
+        return $this;
+    }
+
     private function resolvePath(array $server): string
     {
         $route = $this->query['__route'] ?? null;
@@ -416,18 +625,25 @@ class Request
         foreach ($server as $key => $value) {
             if (str_starts_with($key, 'HTTP_')) {
                 $headerName = strtolower(str_replace('_', '-', substr($key, 5)));
-                $headers[$headerName] = $value;
+                $headers[$headerName] = $this->sanitizeHeaderValue($value);
             }
         }
 
         if (isset($server['CONTENT_TYPE'])) {
-            $headers['content-type'] = $server['CONTENT_TYPE'];
+            $headers['content-type'] = $this->sanitizeHeaderValue($server['CONTENT_TYPE']);
         }
 
         if (isset($server['CONTENT_LENGTH'])) {
-            $headers['content-length'] = $server['CONTENT_LENGTH'];
+            $headers['content-length'] = $this->sanitizeHeaderValue($server['CONTENT_LENGTH']);
         }
 
         return $headers;
+    }
+
+    private function sanitizeHeaderValue(mixed $value): string
+    {
+        // Strip CR/LF/NUL from header values so upstream code that reflects
+        // them into responses cannot be tricked into header/response splitting.
+        return str_replace(["\r", "\n", "\0"], '', (string) $value);
     }
 }

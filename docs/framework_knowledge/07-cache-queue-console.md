@@ -67,6 +67,7 @@ Config: `app/config/queue.php`.
 - Options: `--queue=<name>`, `--sleep=<seconds>`, `--tries=<count>`, `--timeout=<seconds>`, `--once`
 - Reservation + retry mechanism with exponential backoff.
 - Failed jobs stored in `failed_jobs` table with error snapshot.
+- Worker payloads now fail fast when the DB row contains invalid JSON or missing serialized `data`; the worker routes deserialization through `Job::fromPayload()` so malformed payloads are marked failed/retried instead of drifting into partial processing.
 - Failed job operations: list (`queue:failed`), retry one/all (`queue:retry`), flush (`queue:flush`), clear queue (`queue:clear`).
 
 ---

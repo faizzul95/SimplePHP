@@ -2,6 +2,9 @@
 
 namespace Core\Database;
 
+use Core\Database\Query\Grammars\QueryGrammar;
+use Core\Database\Schema\Grammars\SchemaGrammar;
+
 /**
  * Database Class
  *
@@ -16,15 +19,8 @@ namespace Core\Database;
 class Database
 {
     protected $db;
-
-    /**
-     * @var array The list of database support.
-     */
-    protected $listDatabaseSupport = [
-        'mysql' => 'MySQL',
-        'mariadb' => 'MariaDB',
-        '-' => 'Unknown'
-    ];
+    protected string $driver;
+    protected DriverCapabilities $capabilities;
 
     public function __construct(string $driver = 'mysql')
     {
@@ -33,13 +29,26 @@ class Database
         }
 
         $dbPlatform = strtolower($driver);
+        $this->driver = $dbPlatform;
 
-        if (!isset($this->listDatabaseSupport[$dbPlatform])) {
-            throw new \InvalidArgumentException("Unsupported database driver: {$dbPlatform}");
-        }
-
-        $driverClass = "Core\\Database\\Drivers\\" . $this->listDatabaseSupport[$dbPlatform] . "Driver";
+        $driverClass = DriverRegistry::resolveClass($dbPlatform);
+        $this->capabilities = DriverRegistry::capabilities($dbPlatform);
         $this->db = new $driverClass;
+    }
+
+    public function capabilities(): DriverCapabilities
+    {
+        return $this->capabilities;
+    }
+
+    public function schemaGrammar(): SchemaGrammar
+    {
+        return DriverRegistry::schemaGrammar($this->driver);
+    }
+
+    public function queryGrammar(): QueryGrammar
+    {
+        return DriverRegistry::queryGrammar($this->driver);
     }
 
     public function __call($method, $args)

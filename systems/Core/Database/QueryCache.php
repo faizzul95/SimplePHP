@@ -270,14 +270,12 @@ class QueryCache
      */
     protected static function getCacheFilePath($key)
     {
-        // Validate cache key - only allow alphanumeric, dashes, underscores, dots
-        if (!preg_match('/^[a-zA-Z0-9_\-.]+$/', $key)) {
+        // Keys are derived from md5() in generateKey(); restrict the accepted
+        // set to the characters md5 can actually produce so any malformed or
+        // adversarial key is rejected early. Dots are disallowed to eliminate
+        // any residual path-traversal concern on quirky filesystems.
+        if (!preg_match('/^[a-zA-Z0-9_\-]+$/', $key)) {
             throw new \InvalidArgumentException('Invalid cache key format: contains disallowed characters');
-        }
-
-        // Additional path traversal protection
-        if (strpos($key, '..') !== false || strpos($key, '/') !== false || strpos($key, '\\') !== false) {
-            throw new \InvalidArgumentException('Invalid cache key: path traversal detected');
         }
 
         return self::$cacheDir . DIRECTORY_SEPARATOR . $key . '.cache';
@@ -316,6 +314,17 @@ class QueryCache
      */
     protected static function addToMemoryCache($key, $data, $expires)
     {
+        // If this key already exists, refresh it in place (prevents duplicate
+        // entries with different timestamps from bloating the cache).
+        if (isset(self::$memoryCache[$key])) {
+            self::$memoryCache[$key] = [
+                'data' => $data,
+                'expires' => $expires,
+                'created' => time(),
+            ];
+            return;
+        }
+
         // If memory cache is full, remove oldest item
         if (count(self::$memoryCache) >= self::$memoryCacheSize) {
             $oldest = null;

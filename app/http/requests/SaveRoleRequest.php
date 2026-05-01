@@ -9,14 +9,14 @@ class SaveRoleRequest extends FormRequest
     public function authorize(): bool
     {
         if ($this->isCreate()) {
-            return isSuperadmin() || permission('rbac-roles-create');
+            return auth()->can('rbac-roles-create');
         }
 
         if ($this->isUpdate()) {
-            return isSuperadmin() || permission('rbac-roles-update');
+            return auth()->can('rbac-roles-update');
         }
 
-        return isSuperadmin();
+        return false;
     }
 
     public function primaryKey(): string|array

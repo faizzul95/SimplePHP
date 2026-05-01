@@ -14,7 +14,7 @@ class DashboardController extends Controller
 
     public function index(): void
     {
-        $this->setPageState('dashboard', null, null, 'Dashboard', 'Dashboard');
+        $this->setPageState('dashboard', null, 'Dashboard');
         $this->view('dashboard.admin');
     }
 

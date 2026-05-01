@@ -1,14 +1,8 @@
 <?php
 
 use App\Http\Controllers\AuthController;
-use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MasterEmailTemplateController;
-use App\Http\Controllers\PermissionController;
-use App\Http\Controllers\RoleController;
 use App\Http\Controllers\UploadController;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\Api\AuthApiController;
-use App\Http\Controllers\Api\UserApiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -60,72 +54,47 @@ if (($apiVersioning['enabled'] ?? true) === true) {
 
 // ─── External Token API ──────────────────────────────────────────────────────
 
-$router->post($apiPrefix . '/auth/login', [AuthApiController::class, 'login'])
-	->middleware('throttle:auth')
-	->middleware('xss')
+$router->post($apiPrefix . '/auth/login', [AuthController::class, 'loginApi'])
+	->middleware('api.public.submit')
 	->name('api.auth.login');
 
-$router->group(['prefix' => $apiPrefix, 'middleware' => ['auth.api', 'xss']], function ($router) {
-	$router->get('/auth/me', [AuthApiController::class, 'me'])->name('api.auth.me');
-	$router->post('/auth/logout', [AuthApiController::class, 'logout'])->name('api.auth.logout');
-	$router->resource('/users', UserApiController::class);
+$router->group(['prefix' => $apiPrefix, 'middleware' => ['api.external.auth']], function ($router) {
+	$router->get('/auth/me', [AuthController::class, 'me'])->name('api.auth.me');
+	$router->post('/auth/logout', [AuthController::class, 'logout'])->name('api.auth.logout');
+	$router->get('/auth/tokens/current', [AuthController::class, 'currentToken'])->name('api.auth.tokens.current');
+	$router->post('/auth/tokens/rotate', [AuthController::class, 'rotateCurrentToken'])->name('api.auth.tokens.rotate');
 });
 
 // ─── Application API (Web Front-End) ────────────────────────────────────────
 
-$router->group(['prefix' => $apiPrefix, 'middleware' => ['auth', 'throttle:api']], function ($router) {
+$router->group(['prefix' => $apiPrefix, 'middleware' => ['api.app']], function ($router) {
 
 	// Auth
 	$router->post('/auth/reset-password', [AuthController::class, 'resetPassword'])
 		->middleware('throttle:5,1,auth-route')
 		->middleware('xss')
-		->middleware('permission:user-update')
+		->permission('user-update')
 		->name('auth.reset-password');
+	$router->get('/auth/devices', [AuthController::class, 'devices'])->name('auth.devices');
+	$router->delete('/auth/devices/{sessionId}', [AuthController::class, 'revokeDevice'])->name('auth.devices.revoke');
+	$router->post('/auth/logout-other-devices', [AuthController::class, 'logoutOtherDevices'])->middleware('xss')->name('auth.logout-other-devices');
+	$router->get('/auth/tokens', [AuthController::class, 'tokens'])->name('auth.tokens');
 
-	// Dashboard
-	$router->post('/dashboard/count-admin', [DashboardController::class, 'countAdminDashboard'])
-		->middleware('throttle:30,1,auth-route')
-		->middleware('permission:management-view')
-		->name('dashboard.count-admin');
-
-	// Users
-	$router->group(['prefix' => 'users'], function ($router) {
-		$router->post('/list', [UserController::class, 'listUserDatatable'])->middleware('permission:user-view')->name('users.list');
-		$router->get('/show/{id}', [UserController::class, 'show'])->middleware('permission:user-view')->name('users.show');
-		$router->post('/save', [UserController::class, 'save'])->middleware('xss')->middleware('permission.any:user-create,user-update')->name('users.save');
-		$router->delete('/delete/{id}', [UserController::class, 'destroy'])->middleware('permission:user-delete')->name('users.delete');
-	});
-
-	// Roles
-	$router->group(['prefix' => 'roles', 'middleware' => ['permission:rbac-roles-view']], function ($router) {
-		$router->post('/list', [RoleController::class, 'listRolesDatatable'])->name('roles.list');
-		$router->get('/show/{id}', [RoleController::class, 'show'])->name('roles.show');
-		$router->post('/save', [RoleController::class, 'save'])->middleware('xss')->middleware('permission.any:rbac-roles-create,rbac-roles-update')->name('roles.save');
-		$router->delete('/delete/{id}', [RoleController::class, 'destroy'])->middleware('permission:rbac-roles-delete')->name('roles.delete');
-		$router->post('/options', [RoleController::class, 'listSelectOptionRole'])->name('roles.options');
-	});
-
-	// Permissions
-	$router->group(['prefix' => 'permissions'], function ($router) {
-		$router->post('/list', [PermissionController::class, 'listPermissionDatatable'])->middleware('permission:rbac-abilities-view')->name('permissions.list');
-		$router->post('/list-assignment', [PermissionController::class, 'listPermissionAssignDatatable'])->middleware('permission:rbac-roles-view')->name('permissions.list-assignment');
-		$router->get('/show/{id}', [PermissionController::class, 'show'])->middleware('permission:rbac-abilities-view')->name('permissions.show');
-		$router->post('/save', [PermissionController::class, 'saveAbilities'])->middleware('xss')->middleware('permission.any:rbac-abilities-create,rbac-abilities-update')->name('permissions.save');
-		$router->post('/save-assignment', [PermissionController::class, 'saveAssignment'])->middleware('xss')->middleware('permission:rbac-roles-update')->name('permissions.save-assignment');
-		$router->delete('/delete/{id}', [PermissionController::class, 'destroy'])->middleware('permission:rbac-abilities-delete')->name('permissions.delete');
-	});
+	require_once __DIR__ . '/API/dashboard.php';
+	require_once __DIR__ . '/API/users.php';
+	require_once __DIR__ . '/API/rbac_roles_permissions.php';
 
 	// Email Templates
-	$router->group(['prefix' => 'email-templates', 'middleware' => ['permission:rbac-email-view']], function ($router) {
+	$router->group(['prefix' => 'email-templates', 'middleware' => ['permission:rbac-email-view', 'feature:email-template']], function ($router) {
 		$router->post('/list', [MasterEmailTemplateController::class, 'listEmailTemplateDatatable'])->name('email-templates.list');
 		$router->get('/show/{id}', [MasterEmailTemplateController::class, 'show'])->name('email-templates.show');
-		$router->post('/save', [MasterEmailTemplateController::class, 'save'])->middleware('xss:email_body')->middleware('permission.any:rbac-email-create,rbac-email-update')->name('email-templates.save');
-		$router->delete('/delete/{id}', [MasterEmailTemplateController::class, 'destroy'])->middleware('permission:rbac-email-delete')->name('email-templates.delete');
+		$router->post('/save', [MasterEmailTemplateController::class, 'save'])->middleware('xss:email_body')->permissionAny(['rbac-email-create', 'rbac-email-update'])->name('email-templates.save');
+		$router->delete('/delete/{id}', [MasterEmailTemplateController::class, 'destroy'])->permission('rbac-email-delete')->name('email-templates.delete');
 	});
 
 	// Uploads
-	$router->group(['prefix' => 'uploads', 'middleware' => ['permission:settings-upload-image']], function ($router) {
-		$router->post('/image-cropper', [UploadController::class, 'uploadImageCropper'])->middleware('xss:image')->name('uploads.image-cropper');
-		$router->post('/delete', [UploadController::class, 'removeUploadFiles'])->middleware('xss')->name('uploads.delete');
+	$router->group(['prefix' => 'uploads'], function ($router) {
+		$router->post('/image-cropper', [UploadController::class, 'uploadImageCropper'])->permission('settings-upload-image')->middleware('api.upload.image')->middleware('xss:image')->name('uploads.image-cropper');
+		$router->post('/delete', [UploadController::class, 'removeUploadFiles'])->permission('settings-upload-image')->middleware('api.upload.action')->middleware('xss')->name('uploads.delete');
 	});
 });

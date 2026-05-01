@@ -2,10 +2,20 @@
 
 namespace Components;
 
+use App\Support\Auth\AuthorizationService;
+use App\Support\Auth\AccessCredentialService;
+use App\Support\Auth\AuthMethodResolver;
+use App\Support\Auth\LoginPolicy;
+use App\Support\Auth\TokenService;
+
 class Auth
 {
     private array $config;
-    private array $lastAttemptStatus = [];
+    private LoginPolicy $loginPolicy;
+    private AuthorizationService $authorizationService;
+    private TokenService $tokenService;
+    private AccessCredentialService $accessCredentialService;
+    private AuthMethodResolver $methodResolver;
     private ?array $tokenUserCache = null;
     private ?array $sessionUserCache = null;
     private ?array $jwtUserCache = null;
@@ -114,6 +124,19 @@ class Auth
                 'force_reset_column' => 'force_password_change',
                 'require_password_changed_at' => false,
             ],
+            'password_hashing' => [
+                'enabled' => true,
+                'algorithm' => 'default',
+                'bcrypt_rounds' => 12,
+                'argon_memory_cost' => PASSWORD_ARGON2_DEFAULT_MEMORY_COST,
+                'argon_time_cost' => PASSWORD_ARGON2_DEFAULT_TIME_COST,
+                'argon_threads' => PASSWORD_ARGON2_DEFAULT_THREADS,
+            ],
+            'audit_logging' => [
+                'enabled' => true,
+                'level' => 'INFO',
+                'include_user_agent' => true,
+            ],
         ],
         'token_columns' => [
             'id'           => 'id',
@@ -199,7 +222,6 @@ class Auth
         ],
         'rbac' => [
             'enabled' => true,
-            'cache_session_permissions' => true,
             'only_active_profiles' => true,
             'only_active_roles' => true,
             'tables' => [
@@ -234,7 +256,7 @@ class Auth
         ],
     ];
 
-    public function __construct(array $config = [])
+    public function __construct(array $config = [], ?LoginPolicy $loginPolicy = null, ?AuthorizationService $authorizationService = null, ?TokenService $tokenService = null, ?AccessCredentialService $accessCredentialService = null)
     {
         $defaults = self::DEFAULTS;
 
@@ -254,7 +276,7 @@ class Auth
         }
 
         if (isset($config['systems_login_policy']) && is_array($config['systems_login_policy'])) {
-            foreach (['attempts_columns', 'history_columns', 'password_rotation'] as $policyNestedKey) {
+            foreach (['attempts_columns', 'history_columns', 'password_rotation', 'password_hashing', 'audit_logging'] as $policyNestedKey) {
                 if (isset($config['systems_login_policy'][$policyNestedKey]) && is_array($config['systems_login_policy'][$policyNestedKey])) {
                     $config['systems_login_policy'][$policyNestedKey] = array_merge(
                         $defaults['systems_login_policy'][$policyNestedKey],
@@ -300,6 +322,11 @@ class Auth
         }
 
         $this->config = array_merge($defaults, $config);
+        $this->loginPolicy = $loginPolicy ?? new LoginPolicy($this->config);
+        $this->authorizationService = $authorizationService ?? new AuthorizationService($this->config);
+        $this->tokenService = $tokenService ?? new TokenService($this->config);
+        $this->accessCredentialService = $accessCredentialService ?? new AccessCredentialService($this->config);
+        $this->methodResolver = new AuthMethodResolver();
     }
 
     // ─── Authentication State ────────────────────────────────
@@ -398,7 +425,7 @@ class Auth
         unset($credentials['password']);
 
         if (empty($credentials) || empty($password)) {
-            $this->setLastAttemptStatus('invalid_credentials', 'Invalid username or password', 400);
+            $this->markAttemptStatus('invalid_credentials', 'Invalid username or password', 400, [], $credentials);
             return false;
         }
 
@@ -428,16 +455,16 @@ class Auth
         }
 
         if ($appliedCredentialCount < 1) {
-            $this->setLastAttemptStatus('invalid_credentials', 'Invalid username or password', 400);
+            $this->markAttemptStatus('invalid_credentials', 'Invalid username or password', 400, [], $credentials);
             return false;
         }
 
-        $user = $query->safeOutput()->fetch();
+        $user = $query->fetch();
 
         $passwordCol = $uc['password'] ?? 'password';
         if (empty($user)) {
             $this->registerLoginFailure($credentials);
-            $this->setLastAttemptStatus('invalid_credentials', 'Invalid username or password', 401);
+            $this->markAttemptStatus('invalid_credentials', 'Invalid username or password', 401, [], $credentials);
             return false;
         }
 
@@ -447,21 +474,24 @@ class Auth
             $allowed = array_map('intval', (array) ($policy['allowed_user_status'] ?? [1]));
             $currentStatus = (int) ($user[$statusColumn] ?? 0);
             if (!in_array($currentStatus, $allowed, true)) {
-                $this->registerLoginFailure($credentials, (int) ($user[$uc['id'] ?? 'id'] ?? 0));
-                $this->setLastAttemptStatus('account_status_restricted', 'Your account is not allowed to sign in.', 403, [
+                $userId = (int) ($user[$uc['id'] ?? 'id'] ?? 0);
+                $this->registerLoginFailure($credentials, $userId);
+                $this->markAttemptStatus('account_status_restricted', 'Your account is not allowed to sign in.', 403, [
                     'user_status' => $currentStatus,
-                ]);
+                ], $credentials, $userId);
                 return false;
             }
         }
 
         if (!password_verify((string) $password, (string) ($user[$passwordCol] ?? ''))) {
-            $this->registerLoginFailure($credentials, (int) ($user[$uc['id'] ?? 'id'] ?? 0));
-            $this->setLastAttemptStatus('invalid_credentials', 'Invalid username or password', 401);
+            $userId = (int) ($user[$uc['id'] ?? 'id'] ?? 0);
+            $this->registerLoginFailure($credentials, $userId);
+            $this->markAttemptStatus('invalid_credentials', 'Invalid username or password', 401, [], $credentials, $userId);
             return false;
         }
 
         $userId = (int) ($user[$uc['id'] ?? 'id'] ?? 0);
+        $this->maybeRefreshPasswordHash($userId, (string) $password, (string) ($user[$passwordCol] ?? ''), $user);
         $this->clearLoginFailures($credentials, $userId);
 
         if (!$this->passesPasswordRotationPolicy($user)) {
@@ -476,7 +506,7 @@ class Auth
 
     public function lastAttemptStatus(): array
     {
-        return $this->lastAttemptStatus;
+        return $this->loginPolicy->lastAttemptStatus();
     }
 
     /**
@@ -523,10 +553,46 @@ class Auth
 
         $this->recordLoginHistory($userId, $this->resolveLoginType($sessionData));
 
-        // Clear cache so subsequent calls fetch fresh data
-        $this->sessionUserCache = null;
+        $this->resetResolvedAuthCaches();
 
         return true;
+    }
+
+    protected function maybeRefreshPasswordHash(int $userId, string $plainPassword, string $currentHash, array $user = []): void
+    {
+        try {
+            $this->loginPolicy->maybeRefreshPasswordHash($userId, $plainPassword, $currentHash, $user, function (int $resolvedUserId, string $rehash, array $resolvedUser): void {
+                $this->persistPasswordRehash($resolvedUserId, $rehash, $resolvedUser);
+            });
+        } catch (\Throwable $e) {
+            // Rehash failures must not block a valid login.
+        }
+    }
+
+    protected function passwordHashConfiguration(): array
+    {
+        return $this->loginPolicy->passwordHashConfiguration();
+    }
+
+    protected function persistPasswordRehash(int $userId, string $rehash, array $user = []): void
+    {
+        $usersTable = $this->safeTable((string) ($this->config['users_table'] ?? 'users'));
+        $uc = (array) ($this->config['user_columns'] ?? []);
+        $passwordColumn = $this->safeColumn((string) ($uc['password'] ?? 'password'), 'password');
+
+        $updates = [
+            $passwordColumn => $rehash,
+        ];
+
+        $rotation = (array) (($this->config['systems_login_policy'] ?? [])['password_rotation'] ?? []);
+        $changedAtColumn = $this->safeColumn((string) ($rotation['password_changed_at_column'] ?? ($uc['password_changed_at'] ?? 'password_changed_at')), 'password_changed_at');
+        if ($this->tableAndColumnsExist($usersTable, [$changedAtColumn])) {
+            $updates[$changedAtColumn] = date('Y-m-d H:i:s');
+        }
+
+        \db()->table($usersTable)
+            ->where($this->safeColumn((string) ($uc['id'] ?? 'id'), 'id'), $userId)
+            ->update($updates);
     }
 
     /**
@@ -578,16 +644,129 @@ class Auth
         }
 
         $keys = $this->config['session_keys'];
+        $roles = $this->roles($userId);
+        $primaryRole = is_array($roles) && !empty($roles) ? (array) $roles[0] : [];
 
         $this->sessionUserCache = array_merge($user, [
             'auth_type'   => 'session',
-            'role_id'     => \getSession($keys['roleID']),
-            'role_rank'   => \getSession($keys['roleRank']),
-            'role_name'   => \getSession($keys['roleName']),
-            'permissions' => \getSession($keys['permissions']) ?? [],
+            'role_id'     => (int) ($primaryRole['id'] ?? \getSession($keys['roleID'])),
+            'role_rank'   => (int) ($primaryRole['rank'] ?? \getSession($keys['roleRank'])),
+            'role_name'   => (string) ($primaryRole['name'] ?? \getSession($keys['roleName']) ?? ''),
+            'permissions' => $this->permissions($userId, false),
         ]);
 
         return $this->sessionUserCache;
+    }
+
+    public function sessions(?int $userId = null): array
+    {
+        $resolvedUserId = $userId;
+        if ($resolvedUserId === null) {
+            $resolvedUserId = $this->id('session');
+        }
+
+        if ($resolvedUserId === null || $resolvedUserId < 1) {
+            return [];
+        }
+
+        $registry = $this->readSessionRegistry($resolvedUserId, $ok);
+        if (!$ok) {
+            return [];
+        }
+
+        $currentSessionId = $this->currentSessionIdentifier();
+        $sessions = [];
+        foreach ($registry as $sid => $entry) {
+            if (!is_string($sid) || $sid === '' || !is_array($entry)) {
+                continue;
+            }
+
+            $sessions[] = [
+                'session_id' => $sid,
+                'current' => $currentSessionId !== '' && hash_equals($sid, $currentSessionId),
+                'ip' => (string) ($entry['ip'] ?? ''),
+                'user_agent' => (string) ($entry['ua'] ?? ''),
+                'issued_at' => (int) ($entry['issued_at'] ?? 0),
+                'last_seen_at' => (int) ($entry['last_seen_at'] ?? 0),
+            ];
+        }
+
+        usort($sessions, static function (array $left, array $right): int {
+            return ($right['last_seen_at'] ?? 0) <=> ($left['last_seen_at'] ?? 0);
+        });
+
+        return $sessions;
+    }
+
+    public function revokeSession(string $sessionId): bool
+    {
+        $sessionId = trim($sessionId);
+        if ($sessionId === '') {
+            return false;
+        }
+
+        $userId = $this->id('session');
+        if ($userId === null || $userId < 1) {
+            return false;
+        }
+
+        $removed = false;
+        $result = $this->mutateSessionRegistry($userId, static function (array $registry) use ($sessionId, &$removed): array {
+            if (isset($registry[$sessionId])) {
+                unset($registry[$sessionId]);
+                $removed = true;
+            }
+
+            return $registry;
+        }, $ok);
+
+        if (!$ok || !$result || !$removed) {
+            return false;
+        }
+
+        if (hash_equals($sessionId, $this->currentSessionIdentifier())) {
+            $this->logout(true);
+        }
+
+        return true;
+    }
+
+    public function logoutOtherDevices(string $password): bool
+    {
+        if ($password === '') {
+            return false;
+        }
+
+        $userId = $this->id('session');
+        if ($userId === null || $userId < 1) {
+            return false;
+        }
+
+        $uc = (array) ($this->config['user_columns'] ?? []);
+        $idColumn = $this->safeColumn((string) ($uc['id'] ?? 'id'), 'id');
+        $passwordColumn = $this->safeColumn((string) ($uc['password'] ?? 'password'), 'password');
+        $user = $this->findConfiguredUserRecord($userId, implode(', ', [$idColumn, $passwordColumn]));
+        if (empty($user) || !password_verify($password, (string) ($user[$passwordColumn] ?? ''))) {
+            return false;
+        }
+
+        // Upgrade the stored hash if the configured algorithm/options changed.
+        $this->maybeRefreshPasswordHash($userId, (string) $password, (string) ($user[$passwordColumn] ?? ''), $user);
+
+        $currentSessionId = $this->currentSessionIdentifier();
+        if ($currentSessionId === '') {
+            return false;
+        }
+
+        $result = $this->mutateSessionRegistry($userId, static function (array $registry) use ($currentSessionId): array {
+            if (!isset($registry[$currentSessionId]) || !is_array($registry[$currentSessionId])) {
+                return $registry;
+            }
+
+            return [$currentSessionId => $registry[$currentSessionId]];
+        }, $ok);
+
+        return $ok && $result;
     }
 
     // ─── Token Authentication ────────────────────────────────
@@ -598,74 +777,13 @@ class Auth
             return $this->tokenUserCache;
         }
 
-        $plainToken = $this->bearerToken();
-        if (empty($plainToken)) {
-            return null;
-        }
-
-        $tc = $this->config['token_columns'];
-        $uc = $this->config['user_columns'];
-        $tokenTable = $this->safeTable($this->config['token_table']);
-        $hashedToken = hash('sha256', $plainToken);
-
-        $tokenIdColumn = $this->safeColumn((string) ($tc['id'] ?? 'id'));
-        $tokenUserIdColumn = $this->safeColumn((string) ($tc['user_id'] ?? 'user_id'));
-        $tokenNameColumn = $this->safeColumn((string) ($tc['name'] ?? 'name'));
-        $tokenAbilitiesColumn = $this->safeColumn((string) ($tc['abilities'] ?? 'abilities'));
-        $tokenExpiresAtColumn = $this->safeColumn((string) ($tc['expires_at'] ?? 'expires_at'));
-        $tokenTokenColumn = $this->safeColumn((string) ($tc['token'] ?? 'token'));
-        $tokenLastUsedAtColumn = $this->safeColumn((string) ($tc['last_used_at'] ?? 'last_used_at'));
-        $tokenUpdatedAtColumn = $this->safeColumn((string) ($tc['updated_at'] ?? 'updated_at'));
-
-        $selectCols = implode(', ', [
-            $tokenIdColumn, $tokenUserIdColumn, $tokenNameColumn, $tokenAbilitiesColumn, $tokenExpiresAtColumn
-        ]);
-
-        $tokenRecord = \db()->table($tokenTable)
-            ->select($selectCols)
-            ->where($tokenTokenColumn, $hashedToken)
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($tokenRecord)) {
-            return null;
-        }
-
-        if (!$this->isFutureOrNull($tokenRecord[$tokenExpiresAtColumn] ?? null)) {
-            return null;
-        }
-
-        // Update last_used_at timestamp
-        \db()->table($tokenTable)
-            ->where($tokenIdColumn, $tokenRecord[$tokenIdColumn])
-            ->update([
-                $tokenLastUsedAtColumn => \timestamp(),
-                $tokenUpdatedAtColumn   => \timestamp(),
-            ]);
-
-        $userSelectCols = implode(', ', [
-            $uc['id'], $uc['name'], $uc['preferred_name'], $uc['email'], $uc['username'], $uc['status']
-        ]);
-
-        $user = \db()->table($this->safeTable($this->config['users_table']))
-            ->select($userSelectCols)
-            ->where($uc['id'], (int) $tokenRecord[$tokenUserIdColumn])
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($user) || !$this->isUserStatusAllowed($user)) {
-            return null;
-        }
-
-        $abilities = json_decode($tokenRecord[$tokenAbilitiesColumn] ?? '[]', true);
-
-        $this->tokenUserCache = array_merge($user, [
-            'auth_type'  => 'token',
-            'token_id'   => (int) $tokenRecord[$tokenIdColumn],
-            'token_name' => $tokenRecord[$tokenNameColumn],
-            'abilities'  => is_array($abilities) ? $abilities : [],
-            'expires_at' => $tokenRecord[$tokenExpiresAtColumn],
-        ]);
+        $this->tokenUserCache = $this->tokenService->tokenUser(
+            fn(): ?string => $this->bearerToken(),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(mixed $value): bool => $this->isFutureOrNull($value),
+            fn(array $user): bool => $this->isUserStatusAllowed($user)
+        );
 
         return $this->tokenUserCache;
     }
@@ -710,94 +828,20 @@ class Auth
             return $this->oauth2UserCache;
         }
 
-        $oauth2Config = (array) ($this->config['oauth2'] ?? []);
-        if (($oauth2Config['enabled'] ?? false) !== true) {
-            return null;
-        }
-
-        $plainToken = $this->bearerToken();
-        if ($plainToken === null) {
-            return null;
-        }
-
-        $columns = (array) ($oauth2Config['columns'] ?? []);
-        if (empty($columns)) {
-            return null;
-        }
-
-        $oauth2IdColumn = $this->safeColumn((string) ($columns['id'] ?? 'id'));
-        $oauth2UserIdColumn = $this->safeColumn((string) ($columns['user_id'] ?? 'user_id'));
-        $oauth2NameColumn = $this->safeColumn((string) ($columns['name'] ?? 'name'));
-        $oauth2TokenColumn = $this->safeColumn((string) ($columns['token'] ?? 'token'));
-        $oauth2ScopesColumn = $this->safeColumn((string) ($columns['scopes'] ?? 'scopes'));
-        $oauth2RevokedColumn = $this->safeColumn((string) ($columns['revoked'] ?? 'revoked'));
-        $oauth2ExpiresAtColumn = $this->safeColumn((string) ($columns['expires_at'] ?? 'expires_at'));
-        $oauth2LastUsedAtColumn = $this->safeColumn((string) ($columns['last_used_at'] ?? 'last_used_at'));
-        $oauth2UpdatedAtColumn = $this->safeColumn((string) ($columns['updated_at'] ?? 'updated_at'));
-
-        $table = $this->safeTable((string) ($this->config['oauth2_table'] ?? 'oauth2_access_tokens'));
-        $hashTokens = ($oauth2Config['hash_tokens'] ?? true) === true;
-        $tokenLookup = $hashTokens ? hash('sha256', $plainToken) : $plainToken;
-
-        $selectCols = implode(', ', [
-            $oauth2IdColumn,
-            $oauth2UserIdColumn,
-            $oauth2NameColumn,
-            $oauth2ScopesColumn,
-            $oauth2RevokedColumn,
-            $oauth2ExpiresAtColumn,
-        ]);
-
-        $tokenRecord = \db()->table($table)
-            ->select($selectCols)
-            ->where($oauth2TokenColumn, $tokenLookup)
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($tokenRecord)) {
-            return null;
-        }
-
-        if (!empty($tokenRecord[$oauth2RevokedColumn])) {
-            return null;
-        }
-
-        if (!$this->isFutureOrNull($tokenRecord[$oauth2ExpiresAtColumn] ?? null)) {
-            return null;
-        }
-
-        \db()->table($table)
-            ->where($oauth2IdColumn, $tokenRecord[$oauth2IdColumn])
-            ->update([
-                $oauth2LastUsedAtColumn => \timestamp(),
-                $oauth2UpdatedAtColumn => \timestamp(),
-            ]);
-
-        $uc = $this->config['user_columns'];
-        $userSelectCols = implode(', ', [
-            $uc['id'], $uc['name'], $uc['preferred_name'], $uc['email'], $uc['username'], $uc['status']
-        ]);
-
-        $user = \db()->table($this->safeTable($this->config['users_table']))
-            ->select($userSelectCols)
-            ->where($uc['id'], (int) $tokenRecord[$oauth2UserIdColumn])
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($user) || !$this->isUserStatusAllowed($user)) {
-            return null;
-        }
-
-        $scopes = $this->toScopeList($tokenRecord[$oauth2ScopesColumn] ?? []);
-
-        $this->oauth2UserCache = array_merge($user, [
-            'auth_type' => 'oauth2',
-            'oauth2_token_id' => $tokenRecord[$oauth2IdColumn] ?? null,
-            'oauth2_token_name' => $tokenRecord[$oauth2NameColumn] ?? null,
-            'oauth2_scopes' => $scopes,
-            'abilities' => $scopes,
-            'expires_at' => $tokenRecord[$oauth2ExpiresAtColumn] ?? null,
-        ]);
+        $this->oauth2UserCache = $this->accessCredentialService->oauth2User(
+            fn(): ?string => $this->bearerToken(),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(string $table, string $tokenColumn, string $tokenLookup, string $selectColumns): ?array => $this->findOAuth2TokenRecord($table, $tokenColumn, $tokenLookup, $selectColumns),
+            function (string $table, string $idColumn, mixed $tokenId, array $updates): void {
+                $this->touchOAuth2TokenRecord($table, $idColumn, $tokenId, $updates);
+            },
+            fn(int $userId, string $selectColumns): ?array => $this->findConfiguredUserRecord($userId, $selectColumns),
+            fn(mixed $value): bool => $this->isFutureOrNull($value),
+            fn(array $user): bool => $this->isUserStatusAllowed($user),
+            fn(mixed $rawScopes): array => $this->toScopeList($rawScopes),
+            fn(): string => $this->currentTimestamp()
+        );
 
         return $this->oauth2UserCache;
     }
@@ -813,46 +857,12 @@ class Auth
             return $this->jwtUserCache;
         }
 
-        $jwtConfig = (array) ($this->config['jwt'] ?? []);
-        if (($jwtConfig['enabled'] ?? false) !== true) {
-            return null;
-        }
-
-        $bearer = $this->bearerToken();
-        if ($bearer === null) {
-            return null;
-        }
-
-        $payload = $this->decodeJwt($bearer);
-        if ($payload === null) {
-            return null;
-        }
-
-        $claimName = (string) ($jwtConfig['user_id_claim'] ?? 'sub');
-        $userId = (int) ($payload[$claimName] ?? 0);
-        if ($userId < 1) {
-            return null;
-        }
-
-        $uc = $this->config['user_columns'];
-        $userSelectCols = implode(', ', [
-            $uc['id'], $uc['name'], $uc['preferred_name'], $uc['email'], $uc['username'], $uc['status']
-        ]);
-
-        $user = \db()->table($this->safeTable($this->config['users_table']))
-            ->select($userSelectCols)
-            ->where($uc['id'], $userId)
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($user) || !$this->isUserStatusAllowed($user)) {
-            return null;
-        }
-
-        $this->jwtUserCache = array_merge($user, [
-            'auth_type' => 'jwt',
-            'jwt_claims' => $payload,
-        ]);
+        $this->jwtUserCache = $this->accessCredentialService->jwtUser(
+            fn(): ?string => $this->bearerToken(),
+            fn(string $jwt): ?array => $this->decodeJwt($jwt),
+            fn(int $userId, string $selectColumns): ?array => $this->findConfiguredUserRecord($userId, $selectColumns),
+            fn(array $user): bool => $this->isUserStatusAllowed($user)
+        );
 
         return $this->jwtUserCache;
     }
@@ -868,88 +878,19 @@ class Auth
             return $this->apiKeyUserCache;
         }
 
-        $apiKeyConfig = (array) ($this->config['api_key'] ?? []);
-        if (($apiKeyConfig['enabled'] ?? false) !== true) {
-            return null;
-        }
-
-        $apiKey = $this->extractApiKey();
-        if ($apiKey === null) {
-            return null;
-        }
-
-        $columns = (array) ($apiKeyConfig['columns'] ?? []);
-        if (empty($columns)) {
-            return null;
-        }
-
-        $apiKeyIdColumn = $this->safeColumn((string) ($columns['id'] ?? 'id'));
-        $apiKeyUserIdColumn = $this->safeColumn((string) ($columns['user_id'] ?? 'user_id'));
-        $apiKeyNameColumn = $this->safeColumn((string) ($columns['name'] ?? 'name'));
-        $apiKeyValueColumn = $this->safeColumn((string) ($columns['api_key'] ?? 'api_key'));
-        $apiKeyAbilitiesColumn = $this->safeColumn((string) ($columns['abilities'] ?? 'abilities'));
-        $apiKeyIsActiveColumn = $this->safeColumn((string) ($columns['is_active'] ?? 'is_active'));
-        $apiKeyExpiresAtColumn = $this->safeColumn((string) ($columns['expires_at'] ?? 'expires_at'));
-        $apiKeyLastUsedAtColumn = $this->safeColumn((string) ($columns['last_used_at'] ?? 'last_used_at'));
-        $apiKeyUpdatedAtColumn = $this->safeColumn((string) ($columns['updated_at'] ?? 'updated_at'));
-
-        $table = $this->safeTable((string) ($this->config['api_key_table'] ?? 'users_api_keys'));
-        $hashedApiKey = hash('sha256', $apiKey);
-
-        $selectCols = implode(', ', [
-            $apiKeyIdColumn,
-            $apiKeyUserIdColumn,
-            $apiKeyNameColumn,
-            $apiKeyAbilitiesColumn,
-            $apiKeyExpiresAtColumn,
-        ]);
-
-        $keyRecord = \db()->table($table)
-            ->select($selectCols)
-            ->where($apiKeyValueColumn, $hashedApiKey)
-            ->where($apiKeyIsActiveColumn, 1)
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($keyRecord)) {
-            return null;
-        }
-
-        if (!$this->isFutureOrNull($keyRecord[$apiKeyExpiresAtColumn] ?? null)) {
-            return null;
-        }
-
-        \db()->table($table)
-            ->where($apiKeyIdColumn, $keyRecord[$apiKeyIdColumn])
-            ->update([
-                $apiKeyLastUsedAtColumn => \timestamp(),
-                $apiKeyUpdatedAtColumn => \timestamp(),
-            ]);
-
-        $uc = $this->config['user_columns'];
-        $userSelectCols = implode(', ', [
-            $uc['id'], $uc['name'], $uc['preferred_name'], $uc['email'], $uc['username'], $uc['status']
-        ]);
-
-        $user = \db()->table($this->safeTable($this->config['users_table']))
-            ->select($userSelectCols)
-            ->where($uc['id'], (int) $keyRecord[$apiKeyUserIdColumn])
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($user) || !$this->isUserStatusAllowed($user)) {
-            return null;
-        }
-
-        $abilities = json_decode($keyRecord[$apiKeyAbilitiesColumn] ?? '[]', true);
-
-        $this->apiKeyUserCache = array_merge($user, [
-            'auth_type' => 'api_key',
-            'api_key_id' => (int) $keyRecord[$apiKeyIdColumn],
-            'api_key_name' => $keyRecord[$apiKeyNameColumn] ?? null,
-            'abilities' => is_array($abilities) ? $abilities : [],
-            'expires_at' => $keyRecord[$apiKeyExpiresAtColumn] ?? null,
-        ]);
+        $this->apiKeyUserCache = $this->accessCredentialService->apiKeyUser(
+            fn(): ?string => $this->extractApiKey(),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(string $table, string $apiKeyColumn, string $hashedApiKey, string $isActiveColumn, string $selectColumns): ?array => $this->findApiKeyRecord($table, $apiKeyColumn, $hashedApiKey, $isActiveColumn, $selectColumns),
+            function (string $table, string $idColumn, mixed $apiKeyId, array $updates): void {
+                $this->touchApiKeyRecord($table, $idColumn, $apiKeyId, $updates);
+            },
+            fn(int $userId, string $selectColumns): ?array => $this->findConfiguredUserRecord($userId, $selectColumns),
+            fn(mixed $value): bool => $this->isFutureOrNull($value),
+            fn(array $user): bool => $this->isUserStatusAllowed($user),
+            fn(): string => $this->currentTimestamp()
+        );
 
         return $this->apiKeyUserCache;
     }
@@ -965,63 +906,21 @@ class Auth
             return $this->basicUserCache;
         }
 
-        $basicConfig = (array) ($this->config['basic'] ?? []);
-        if (($basicConfig['enabled'] ?? false) !== true) {
-            return null;
-        }
-
-        [$identifier, $password] = $this->extractBasicCredentials();
-        if ($identifier === null || $password === null) {
-            return null;
-        }
-
-        $uc = $this->config['user_columns'];
-        $identifierColumns = (array) ($basicConfig['identifier_columns'] ?? ['username', 'email']);
-        $passwordCol = (string) ($uc['password'] ?? 'password');
-        $userIdColumn = (string) ($uc['id'] ?? 'id');
-        $policyCredentials = $this->policyCredentialsForIdentifier($identifier, $identifierColumns);
-
-        if (!$this->canAttemptWithLoginPolicy($policyCredentials)) {
-            return null;
-        }
-
-        $matchedUserId = 0;
-
-        foreach ($identifierColumns as $columnAlias) {
-            $columnAlias = (string) $columnAlias;
-            $column = $uc[$columnAlias] ?? $columnAlias;
-            $safeColumn = preg_replace('/[^a-zA-Z0-9_]/', '', $column);
-            if ($safeColumn === '') {
-                continue;
-            }
-
-            $user = \db()->table($this->safeTable($this->config['users_table']))
+        $this->basicUserCache = $this->accessCredentialService->basicUser(
+            fn(): array => $this->extractBasicCredentials(),
+            fn(array $credentials): bool => $this->canAttemptWithLoginPolicy($credentials),
+            fn(string $identifier, array $candidateFields = ['username', 'email']): array => $this->policyCredentialsForIdentifier($identifier, $candidateFields),
+            fn(string $safeColumn, string $identifier): ?array => \db()->table($this->safeTable($this->config['users_table']))
                 ->where($safeColumn, $identifier)
-                ->safeOutput()
-                ->fetch();
-
-            if (empty($user)) {
-                continue;
+                ->fetch(),
+            fn(array $user): bool => $this->isUserStatusAllowed($user),
+            function (array $credentials, ?int $userId = null): void {
+                $this->registerLoginFailure($credentials, $userId);
+            },
+            function (array $credentials, ?int $userId = null): void {
+                $this->clearLoginFailures($credentials, $userId);
             }
-
-            $matchedUserId = max($matchedUserId, (int) ($user[$userIdColumn] ?? 0));
-
-            if (!password_verify($password, (string) ($user[$passwordCol] ?? ''))) {
-                continue;
-            }
-
-            if (!$this->isUserStatusAllowed($user)) {
-                $this->registerLoginFailure($policyCredentials, $matchedUserId);
-                return null;
-            }
-
-            $this->clearLoginFailures($policyCredentials, $matchedUserId);
-            unset($user[$passwordCol]);
-            $this->basicUserCache = array_merge($user, ['auth_type' => 'basic']);
-            return $this->basicUserCache;
-        }
-
-        $this->registerLoginFailure($policyCredentials, $matchedUserId > 0 ? $matchedUserId : null);
+        );
 
         return null;
     }
@@ -1037,91 +936,27 @@ class Auth
             return $this->digestUserCache;
         }
 
-        $digestConfig = (array) ($this->config['digest'] ?? []);
-        if (($digestConfig['enabled'] ?? false) !== true) {
-            return null;
-        }
+        $this->digestUserCache = $this->accessCredentialService->digestUser(
+            fn(): array => $this->extractDigestCredentials(),
+            fn(array $credentials): bool => $this->canAttemptWithLoginPolicy($credentials),
+            fn(string $identifier, array $candidateFields = ['username', 'email']): array => $this->policyCredentialsForIdentifier($identifier, $candidateFields),
+            fn(string $nonce): bool => $this->isDigestNonceValid($nonce),
+            fn(string $uri): bool => $this->isDigestRequestUriValid($uri),
+            fn(string $username, string $nonce, string $nc): bool => $this->isDigestNonceCounterValid($username, $nonce, $nc),
+            fn(string $safeColumn, string $username): ?array => \db()->table($this->safeTable($this->config['users_table']))
+                ->where($safeColumn, $username)
+                ->safeOutput()
+                ->fetch(),
+            fn(array $user): bool => $this->isUserStatusAllowed($user),
+            function (array $credentials, ?int $userId = null): void {
+                $this->registerLoginFailure($credentials, $userId);
+            },
+            function (array $credentials, ?int $userId = null): void {
+                $this->clearLoginFailures($credentials, $userId);
+            },
+            fn(): string => (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')
+        );
 
-        $digest = $this->extractDigestCredentials();
-        if (empty($digest) || empty($digest['username'])) {
-            return null;
-        }
-
-        $policyCredentials = $this->policyCredentialsForIdentifier((string) $digest['username'], ['username']);
-        if (!$this->canAttemptWithLoginPolicy($policyCredentials)) {
-            return null;
-        }
-
-        $expectedQop = (string) (($digestConfig['qop'] ?? 'auth') ?: 'auth');
-        if (!isset($digest['qop']) || strtolower((string) $digest['qop']) !== strtolower($expectedQop)) {
-            return null;
-        }
-
-        $expectedRealm = (string) (($digestConfig['realm'] ?? 'MythPHP API') ?: 'MythPHP API');
-        if (!isset($digest['realm']) || (string) $digest['realm'] !== $expectedRealm) {
-            return null;
-        }
-
-        $expectedOpaque = md5($expectedRealm);
-        if (!isset($digest['opaque']) || !hash_equals($expectedOpaque, (string) $digest['opaque'])) {
-            return null;
-        }
-
-        if (!$this->isDigestNonceValid((string) ($digest['nonce'] ?? ''))) {
-            return null;
-        }
-
-        if (!$this->isDigestRequestUriValid((string) ($digest['uri'] ?? ''))) {
-            return null;
-        }
-
-        if (!$this->isDigestNonceCounterValid((string) $digest['username'], (string) $digest['nonce'], (string) ($digest['nc'] ?? ''))) {
-            return null;
-        }
-
-        $uc = $this->config['user_columns'];
-        $usernameColumn = (string) ($digestConfig['username_column'] ?? ($uc['username'] ?? 'username'));
-        $ha1Column = (string) ($digestConfig['ha1_column'] ?? ($uc['digest_ha1'] ?? 'digest_ha1'));
-
-        $safeUsernameColumn = preg_replace('/[^a-zA-Z0-9_]/', '', $usernameColumn);
-        $safeHa1Column = preg_replace('/[^a-zA-Z0-9_]/', '', $ha1Column);
-
-        $user = \db()->table($this->safeTable($this->config['users_table']))
-            ->where($safeUsernameColumn, (string) $digest['username'])
-            ->safeOutput()
-            ->fetch();
-
-        if (empty($user)) {
-            $this->registerLoginFailure($policyCredentials);
-            return null;
-        }
-
-        $userIdColumn = (string) ($uc['id'] ?? 'id');
-        $userId = (int) ($user[$userIdColumn] ?? 0);
-
-        $ha1 = (string) ($user[$safeHa1Column] ?? '');
-        if ($ha1 === '') {
-            $this->registerLoginFailure($policyCredentials, $userId);
-            return null;
-        }
-
-        $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-        $ha2 = md5($method . ':' . (string) $digest['uri']);
-        $validResponse = md5($ha1 . ':' . $digest['nonce'] . ':' . $digest['nc'] . ':' . $digest['cnonce'] . ':' . $digest['qop'] . ':' . $ha2);
-
-        if (!hash_equals($validResponse, (string) ($digest['response'] ?? ''))) {
-            $this->registerLoginFailure($policyCredentials, $userId);
-            return null;
-        }
-
-        if (!$this->isUserStatusAllowed($user)) {
-            $this->registerLoginFailure($policyCredentials, $userId);
-            return null;
-        }
-
-        $this->clearLoginFailures($policyCredentials, $userId);
-        unset($user[$safeHa1Column]);
-        $this->digestUserCache = array_merge($user, ['auth_type' => 'digest']);
         return $this->digestUserCache;
     }
 
@@ -1132,244 +967,142 @@ class Auth
 
     public function hasAbility(string $ability): bool
     {
-        $ability = trim($ability);
-        if ($ability === '') {
-            return false;
-        }
-
-        $abilities = $this->collectRequestAbilities();
-        if (in_array('*', $abilities, true)) {
-            return true;
-        }
-
-        return in_array($ability, $abilities, true);
+        return $this->authorizationService->hasAbility($ability, fn(): array => $this->collectRequestAbilities());
     }
 
     public function roles(?int $userId = null): array
     {
-        $resolvedUserId = $this->resolveAclUserId($userId);
-        if ($resolvedUserId < 1) {
-            return [];
-        }
-
-        $rbac = (array) ($this->config['rbac'] ?? []);
-        if (($rbac['enabled'] ?? true) !== true) {
-            return [];
-        }
-
-        $tables = (array) ($rbac['tables'] ?? []);
-        $roleCols = (array) ($rbac['role_columns'] ?? []);
-
-        $roleIdColumn = $this->safeColumn((string) ($roleCols['id'] ?? 'id'));
-        $roleNameColumn = $this->safeColumn((string) ($roleCols['name'] ?? 'role_name'), 'role_name');
-        $roleRankColumn = $this->safeColumn((string) ($roleCols['rank'] ?? 'role_rank'), 'role_rank');
-        $roleStatusColumn = $this->safeColumn((string) ($roleCols['status'] ?? 'role_status'), 'role_status');
-        $rolesTable = $this->safeTable((string) ($tables['roles'] ?? 'master_roles'));
-
-        $roleIds = $this->userRoleIds($resolvedUserId);
-        if (empty($roleIds)) {
-            return $this->sessionRoleFallback($resolvedUserId);
-        }
-
-        $query = \db()->table($rolesTable)
-            ->select(implode(', ', [$roleIdColumn, $roleNameColumn, $roleRankColumn]))
-            ->whereIn($roleIdColumn, $roleIds);
-
-        if (($rbac['only_active_roles'] ?? true) === true) {
-            $query->where($roleStatusColumn, 1);
-        }
-
-        $rows = $query->safeOutput()->get();
-        if (!is_array($rows) || empty($rows)) {
-            return $this->sessionRoleFallback($resolvedUserId);
-        }
-
-        $roles = [];
-        foreach ($rows as $row) {
-            $roles[] = [
-                'id' => isset($row[$roleIdColumn]) ? (int) $row[$roleIdColumn] : null,
-                'name' => (string) ($row[$roleNameColumn] ?? ''),
-                'rank' => isset($row[$roleRankColumn]) ? (int) $row[$roleRankColumn] : null,
-            ];
-        }
-
-        return $roles;
+        return $this->authorizationService->roles(
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(int $resolvedUserId): array => $this->sessionRoleFallback($resolvedUserId),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
     }
 
     public function hasRole(string|int $role, ?int $userId = null): bool
     {
-        $roleValue = is_string($role) ? trim($role) : $role;
-        if ($roleValue === '' || $roleValue === 0) {
-            return false;
-        }
-
-        foreach ($this->roles($userId) as $assignedRole) {
-            if (is_int($roleValue) && (int) ($assignedRole['id'] ?? 0) === $roleValue) {
-                return true;
-            }
-
-            if (is_string($roleValue) && strcasecmp((string) ($assignedRole['name'] ?? ''), $roleValue) === 0) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->authorizationService->hasRole(
+            $role,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(int $resolvedUserId): array => $this->sessionRoleFallback($resolvedUserId),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
     }
 
     public function hasAnyRole(array|string $roles, ?int $userId = null): bool
     {
-        $roleList = is_array($roles) ? $roles : array_map('trim', explode(',', $roles));
-        foreach ($roleList as $role) {
-            if ($this->hasRole($role, $userId)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->authorizationService->hasAnyRole(
+            $roles,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(int $resolvedUserId): array => $this->sessionRoleFallback($resolvedUserId),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
     }
 
     public function hasAllRoles(array $roles, ?int $userId = null): bool
     {
-        if (empty($roles)) {
-            return false;
-        }
-
-        foreach ($roles as $role) {
-            if (!$this->hasRole($role, $userId)) {
-                return false;
-            }
-        }
-
-        return true;
+        return $this->authorizationService->hasAllRoles(
+            $roles,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(int $resolvedUserId): array => $this->sessionRoleFallback($resolvedUserId),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
     }
 
     public function permissions(?int $userId = null, bool $includeRequestAbilities = true): array
     {
-        $resolvedUserId = $this->resolveAclUserId($userId);
-        if ($resolvedUserId < 1) {
-            return [];
-        }
-
-        $permissions = [];
-        $isCurrentUser = $userId === null;
-        $rbac = (array) ($this->config['rbac'] ?? []);
-
-        if ($isCurrentUser && ($rbac['cache_session_permissions'] ?? true) === true) {
-            $sessionKey = (string) ($this->config['session_keys']['permissions'] ?? 'permissions');
-            $sessionPerms = \getSession($sessionKey);
-            if (is_array($sessionPerms)) {
-                $permissions = array_merge($permissions, $sessionPerms);
-            }
-        }
-
-        if (($rbac['enabled'] ?? true) === true) {
-            $tables = (array) ($rbac['tables'] ?? []);
-            $permissionCols = (array) ($rbac['permission_columns'] ?? []);
-            $abilityCols = (array) ($rbac['ability_columns'] ?? []);
-
-            $permissionsTable = $this->safeTable((string) ($tables['permissions'] ?? 'system_permission'));
-            $abilitiesTable = $this->safeTable((string) ($tables['abilities'] ?? 'system_abilities'));
-
-            $permissionRoleColumn = $this->safeColumn((string) ($permissionCols['role_id'] ?? 'role_id'));
-            $permissionAbilityColumn = $this->safeColumn((string) ($permissionCols['ability_id'] ?? 'abilities_id'));
-            $abilityIdColumn = $this->safeColumn((string) ($abilityCols['id'] ?? 'id'));
-            $abilitySlugColumn = $this->safeColumn((string) ($abilityCols['slug'] ?? 'abilities_slug'), 'abilities_slug');
-
-            $roleIds = $this->userRoleIds($resolvedUserId);
-            if (!empty($roleIds)) {
-                $permissionRows = \db()->table($permissionsTable)
-                    ->select($permissionAbilityColumn)
-                    ->whereIn($permissionRoleColumn, $roleIds)
-                    ->safeOutput()
-                    ->get();
-
-                $abilityIds = [];
-                if (is_array($permissionRows)) {
-                    foreach ($permissionRows as $row) {
-                        $abilityId = (int) ($row[$permissionAbilityColumn] ?? 0);
-                        if ($abilityId > 0) {
-                            $abilityIds[] = $abilityId;
-                        }
-                    }
-                }
-
-                $abilityIds = array_values(array_unique($abilityIds));
-                if (!empty($abilityIds)) {
-                    $abilityRows = \db()->table($abilitiesTable)
-                        ->select(implode(', ', [$abilityIdColumn, $abilitySlugColumn]))
-                        ->whereIn($abilityIdColumn, $abilityIds)
-                        ->safeOutput()
-                        ->get();
-
-                    if (is_array($abilityRows)) {
-                        foreach ($abilityRows as $row) {
-                            $slug = trim((string) ($row[$abilitySlugColumn] ?? ''));
-                            if ($slug !== '') {
-                                $permissions[] = $slug;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if ($includeRequestAbilities && $isCurrentUser) {
-            $permissions = array_merge($permissions, $this->collectRequestAbilities());
-        }
-
-        return $this->normalizeStringList($permissions);
+        return $this->authorizationService->permissions(
+            $userId,
+            $includeRequestAbilities,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(array $items): array => $this->normalizeStringList($items),
+            fn(): array => $this->collectRequestAbilities()
+        );
     }
 
     public function hasPermission(string $permission, ?int $userId = null): bool
     {
-        $permission = trim($permission);
-        if ($permission === '') {
-            return false;
-        }
-
-        $permissions = $this->permissions($userId, $userId === null);
-        if (in_array('*', $permissions, true)) {
-            return true;
-        }
-
-        return in_array($permission, $permissions, true);
+        return $this->authorizationService->hasPermission(
+            $permission,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(array $items): array => $this->normalizeStringList($items),
+            fn(): array => $this->collectRequestAbilities()
+        );
     }
 
     public function hasAnyPermission(array|string $permissions, ?int $userId = null): bool
     {
-        $permissionList = is_array($permissions) ? $permissions : array_map('trim', explode(',', $permissions));
-        foreach ($permissionList as $permission) {
-            if ($this->hasPermission((string) $permission, $userId)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->authorizationService->hasAnyPermission(
+            $permissions,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(array $items): array => $this->normalizeStringList($items),
+            fn(): array => $this->collectRequestAbilities()
+        );
     }
 
     public function hasAllPermissions(array $permissions, ?int $userId = null): bool
     {
-        if (empty($permissions)) {
-            return false;
-        }
-
-        foreach ($permissions as $permission) {
-            if (!$this->hasPermission((string) $permission, $userId)) {
-                return false;
-            }
-        }
-
-        return true;
+        return $this->authorizationService->hasAllPermissions(
+            $permissions,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(array $items): array => $this->normalizeStringList($items),
+            fn(): array => $this->collectRequestAbilities()
+        );
     }
 
     public function can(string $permission, ?int $userId = null): bool
     {
-        return $this->hasPermission($permission, $userId);
+        return $this->authorizationService->can(
+            $permission,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(array $items): array => $this->normalizeStringList($items),
+            fn(): array => $this->collectRequestAbilities()
+        );
     }
 
     public function cannot(string $permission, ?int $userId = null): bool
     {
-        return !$this->can($permission, $userId);
+        return $this->authorizationService->cannot(
+            $permission,
+            $userId,
+            fn(?int $resolvedUserId = null): int => $this->resolveAclUserId($resolvedUserId),
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table),
+            fn(array $items): array => $this->normalizeStringList($items),
+            fn(): array => $this->collectRequestAbilities()
+        );
     }
 
     public function assignRole(int $userId, int|string $role, bool $isMain = false): bool
@@ -1422,6 +1155,7 @@ class Auth
                     'updated_at' => \timestamp(),
                 ]);
 
+            $this->invalidateAclCache($userId);
             return true;
         }
 
@@ -1434,6 +1168,7 @@ class Auth
             'updated_at' => \timestamp(),
         ]);
 
+        $this->invalidateAclCache($userId);
         return true;
     }
 
@@ -1481,6 +1216,7 @@ class Auth
             ]);
         }
 
+        $this->invalidateAclCache($userId);
         return true;
     }
 
@@ -1508,6 +1244,7 @@ class Auth
             ->where($roleIdColumn, $roleId)
             ->delete();
 
+        $this->invalidateAclCache($userId);
         return true;
     }
 
@@ -1550,6 +1287,7 @@ class Auth
             ]);
         }
 
+        $this->invalidateAclCache();
         return true;
     }
 
@@ -1578,6 +1316,7 @@ class Auth
             ->whereIn($permissionAbilityColumn, $abilityIds)
             ->delete();
 
+        $this->invalidateAclCache();
         return true;
     }
 
@@ -1585,61 +1324,25 @@ class Auth
 
     public function createToken(int $userId, string $name = 'Default Token', ?int $expiresAt = null, array $abilities = ['*']): ?string
     {
-        if ($userId < 1) {
-            return null;
-        }
-
-        $this->ensureTokenTable();
-
-        $tc = $this->config['token_columns'];
-        $tokenUserIdColumn = $this->safeColumn((string) ($tc['user_id'] ?? 'user_id'));
-        $tokenNameColumn = $this->safeColumn((string) ($tc['name'] ?? 'name'));
-        $tokenValueColumn = $this->safeColumn((string) ($tc['token'] ?? 'token'));
-        $tokenAbilitiesColumn = $this->safeColumn((string) ($tc['abilities'] ?? 'abilities'));
-        $tokenExpiresAtColumn = $this->safeColumn((string) ($tc['expires_at'] ?? 'expires_at'));
-        $tokenCreatedAtColumn = $this->safeColumn((string) ($tc['created_at'] ?? 'created_at'));
-        $tokenUpdatedAtColumn = $this->safeColumn((string) ($tc['updated_at'] ?? 'updated_at'));
-
-        $plainToken = bin2hex(random_bytes(40));
-        $hashedToken = hash('sha256', $plainToken);
-        $expiresAtDate = $expiresAt ? date('Y-m-d H:i:s', $expiresAt) : null;
-        $tokenTable = $this->safeTable($this->config['token_table']);
-
-        $insert = \db()->table($tokenTable)->insert([
-            $tokenUserIdColumn => $userId,
-            $tokenNameColumn => $name,
-            $tokenValueColumn => $hashedToken,
-            $tokenAbilitiesColumn => json_encode($abilities),
-            $tokenExpiresAtColumn => $expiresAtDate,
-            $tokenCreatedAtColumn => \timestamp(),
-            $tokenUpdatedAtColumn => \timestamp(),
-        ]);
-
-        if (!\is_array($insert) || !\isSuccess((int) ($insert['code'] ?? 500))) {
-            return null;
-        }
-
-        return $plainToken;
+        return $this->tokenService->createToken(
+            $userId,
+            $name,
+            $expiresAt,
+            $abilities,
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
     }
 
     public function revokeToken(string $plainToken): bool
     {
-        if (empty($plainToken)) {
-            return false;
-        }
-
-        $tc = $this->config['token_columns'];
-        $tokenValueColumn = $this->safeColumn((string) ($tc['token'] ?? 'token'));
-        $tokenTable = $this->safeTable($this->config['token_table']);
-        $hashedToken = hash('sha256', $plainToken);
-
-        \db()->table($tokenTable)
-            ->where($tokenValueColumn, $hashedToken)
-            ->delete();
-
         $this->tokenUserCache = null;
 
-        return true;
+        return $this->tokenService->revokeToken(
+            $plainToken,
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
     }
 
     public function revokeCurrentToken(): bool
@@ -1657,21 +1360,59 @@ class Auth
      */
     public function revokeAllTokens(int $userId): bool
     {
-        if ($userId < 1) {
-            return false;
-        }
-
-        $tc = $this->config['token_columns'];
-        $tokenUserIdColumn = $this->safeColumn((string) ($tc['user_id'] ?? 'user_id'));
-        $tokenTable = $this->safeTable($this->config['token_table']);
-
-        \db()->table($tokenTable)
-            ->where($tokenUserIdColumn, $userId)
-            ->delete();
-
         $this->tokenUserCache = null;
 
-        return true;
+        return $this->tokenService->revokeAllTokens(
+            $userId,
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
+    }
+
+    public function tokens(?int $userId = null): array
+    {
+        $resolvedUserId = $userId;
+        if ($resolvedUserId === null) {
+            $resolvedUserId = $this->id();
+        }
+
+        if ($resolvedUserId === null || $resolvedUserId < 1) {
+            return [];
+        }
+
+        return $this->tokenService->tokensForUser(
+            $resolvedUserId,
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
+    }
+
+    public function currentToken(): ?array
+    {
+        $plainToken = $this->bearerToken();
+        if (empty($plainToken)) {
+            return null;
+        }
+
+        return $this->tokenService->currentToken(
+            $plainToken,
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
+    }
+
+    public function rotateToken(string $plainToken, string $name = '', ?int $expiresAt = null, array $abilities = []): ?string
+    {
+        $this->tokenUserCache = null;
+
+        return $this->tokenService->rotateToken(
+            $plainToken,
+            $name,
+            $expiresAt,
+            $abilities,
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
     }
 
     public function createApiKey(int $userId, string $name = 'Default API Key', ?int $expiresAt = null, array $abilities = ['*']): ?string
@@ -1743,7 +1484,7 @@ class Auth
         $table = $this->safeTable((string) ($this->config['api_key_table'] ?? 'users_api_keys'));
         $hashedApiKey = hash('sha256', $plainApiKey);
 
-        \db()->table($table)
+        $result = \db()->table($table)
             ->where($apiKeyValueColumn, $hashedApiKey)
             ->update([
                 $apiKeyIsActiveColumn => 0,
@@ -1751,7 +1492,9 @@ class Auth
             ]);
 
         $this->apiKeyUserCache = null;
-        return true;
+        return \is_array($result)
+            && \isSuccess((int) ($result['code'] ?? 500))
+            && (int) ($result['affected_rows'] ?? 0) > 0;
     }
 
     public function revokeCurrentApiKey(): bool
@@ -1839,7 +1582,7 @@ class Auth
             ? hash('sha256', $plainToken)
             : $plainToken;
 
-        \db()->table($table)
+        $result = \db()->table($table)
             ->where($oauth2TokenColumn, $tokenValue)
             ->update([
                 $oauth2RevokedColumn => 1,
@@ -1848,7 +1591,9 @@ class Auth
 
         $this->oauth2UserCache = null;
 
-        return true;
+        return \is_array($result)
+            && \isSuccess((int) ($result['code'] ?? 500))
+            && (int) ($result['affected_rows'] ?? 0) > 0;
     }
 
     public function revokeCurrentOAuth2Token(): bool
@@ -1869,6 +1614,14 @@ class Auth
         if ($userId < 1) {
             return;
         }
+
+        $this->writeAuthAuditLog('[AuthAudit] auth.login.success', [
+            'event' => 'auth.login.success',
+            'user_id' => $userId,
+            'login_type' => $loginType,
+            'auth_method' => $this->loginTypeLabel($loginType),
+            'ip_address' => $this->clientIpAddress(),
+        ]);
 
         $policy = (array) ($this->config['systems_login_policy'] ?? []);
         if (($policy['enabled'] ?? true) !== true || ($policy['record_history'] ?? true) !== true) {
@@ -2050,14 +1803,7 @@ class Auth
             session_destroy();
         }
 
-        $this->sessionUserCache = null;
-        $this->tokenUserCache = null;
-        $this->jwtUserCache = null;
-        $this->apiKeyUserCache = null;
-        $this->basicUserCache = null;
-        $this->digestUserCache = null;
-        $this->oauthUserCache = null;
-        $this->oauth2UserCache = null;
+        $this->resetResolvedAuthCaches();
     }
 
     // ─── Social Authentication (OAuth) ──────────────────────
@@ -2281,6 +2027,81 @@ class Auth
         return !empty($resolved) ? array_values(array_unique($resolved)) : ['token'];
     }
 
+    public function apiCredentialMethods(array|string|null $methods = null): array
+    {
+        $allowed = ['token'];
+
+        if (((array) ($this->config['oauth2'] ?? []))['enabled'] ?? false) {
+            $allowed[] = 'oauth2';
+        }
+
+        return array_values(array_intersect($this->apiMethods($methods), $allowed));
+    }
+
+    public function preferredApiMethod(array|string|null $methods = null, array $allowed = ['token', 'oauth2']): string
+    {
+        $resolvedMethods = $this->apiMethods($methods);
+        $allowedMethods = array_values(array_unique(array_filter(array_map(
+            static fn($method) => strtolower(trim((string) $method)),
+            $allowed
+        ))));
+
+        foreach ($resolvedMethods as $method) {
+            if (in_array($method, $allowedMethods, true)) {
+                return $method;
+            }
+        }
+
+        return in_array('token', $allowedMethods, true)
+            ? 'token'
+            : ($allowedMethods[0] ?? 'token');
+    }
+
+    public function issueApiCredential(int $userId, string $method = 'token', string $name = 'Default Token', ?int $expiresAt = null, array $abilities = ['*']): ?array
+    {
+        if ($userId < 1) {
+            return null;
+        }
+
+        $availableMethods = $this->apiCredentialMethods([$method]);
+        if (empty($availableMethods)) {
+            return null;
+        }
+
+        $resolvedMethod = $this->preferredApiMethod($availableMethods, $availableMethods);
+        $scopes = array_values(array_unique(array_filter(array_map('strval', $abilities), static fn($value) => $value !== '')));
+        if (empty($scopes)) {
+            $scopes = ['*'];
+        }
+
+        $plainCredential = $resolvedMethod === 'oauth2'
+            ? $this->createOAuth2Token($userId, $name, $expiresAt, $scopes)
+            : $this->createToken($userId, $name, $expiresAt, $scopes);
+
+        if ($plainCredential === null) {
+            return null;
+        }
+
+        return [
+            'method' => $resolvedMethod,
+            'credential' => $plainCredential,
+            'token_type' => 'Bearer',
+            'abilities' => $scopes,
+            'expires_at' => $expiresAt,
+        ];
+    }
+
+    public function revokeCurrentApiCredential(array|string|null $methods = null): bool
+    {
+        $via = $this->via($methods ?? $this->apiMethods());
+
+        return match ($via) {
+            'oauth2' => $this->revokeCurrentOAuth2Token(),
+            'token' => $this->revokeCurrentToken(),
+            default => false,
+        };
+    }
+
     /**
      * Runtime diagnostics for auth failures (safe for logs, no token values).
      */
@@ -2340,7 +2161,7 @@ class Auth
         return trim($authHeader);
     }
 
-    private function extractApiKey(): ?string
+    protected function extractApiKey(): ?string
     {
         $apiKeyConfig = (array) ($this->config['api_key'] ?? []);
         $headerName = (string) ($apiKeyConfig['header'] ?? 'X-API-KEY');
@@ -2368,6 +2189,58 @@ class Auth
         }
 
         return null;
+    }
+
+    protected function findOAuth2TokenRecord(string $table, string $tokenColumn, string $tokenLookup, string $selectColumns): ?array
+    {
+        $record = \db()->table($table)
+            ->select($selectColumns)
+            ->where($tokenColumn, $tokenLookup)
+            ->fetch();
+
+        return is_array($record) ? $record : null;
+    }
+
+    protected function touchOAuth2TokenRecord(string $table, string $idColumn, mixed $tokenId, array $updates): void
+    {
+        \db()->table($table)
+            ->where($idColumn, $tokenId)
+            ->update($updates);
+    }
+
+    protected function findApiKeyRecord(string $table, string $apiKeyColumn, string $hashedApiKey, string $isActiveColumn, string $selectColumns): ?array
+    {
+        $record = \db()->table($table)
+            ->select($selectColumns)
+            ->where($apiKeyColumn, $hashedApiKey)
+            ->where($isActiveColumn, 1)
+            ->fetch();
+
+        return is_array($record) ? $record : null;
+    }
+
+    protected function touchApiKeyRecord(string $table, string $idColumn, mixed $apiKeyId, array $updates): void
+    {
+        \db()->table($table)
+            ->where($idColumn, $apiKeyId)
+            ->update($updates);
+    }
+
+    protected function findConfiguredUserRecord(int $userId, string $selectColumns): ?array
+    {
+        $uc = $this->config['user_columns'];
+
+        $user = \db()->table($this->safeTable($this->config['users_table']))
+            ->select($selectColumns)
+            ->where($uc['id'], $userId)
+            ->fetch();
+
+        return is_array($user) ? $user : null;
+    }
+
+    protected function currentTimestamp(): string
+    {
+        return function_exists('timestamp') ? \timestamp() : date('Y-m-d H:i:s');
     }
 
     private function extractBasicCredentials(): array
@@ -2588,6 +2461,11 @@ class Auth
             return false;
         }
 
+        // Bound the per-instance digest nc memory to avoid unbounded growth in
+        // long-running workers where Auth is retained across requests.
+        if (count($this->digestNcMemory) >= 256) {
+            array_shift($this->digestNcMemory);
+        }
         $this->digestNcMemory[$cacheKey] = $counter;
 
         if (function_exists('cache')) {
@@ -2609,57 +2487,9 @@ class Auth
      * - web => session
      * - api => token
      */
-    private function normalizeMethods(array|string|null $methods = null): array
+    protected function normalizeMethods(array|string|null $methods = null): array
     {
-        $rawMethods = $methods;
-        $defaultMethods = ['session'];
-
-        if ($rawMethods === null) {
-            $rawMethods = $this->config['methods'] ?? $defaultMethods;
-        }
-
-        if (is_string($rawMethods)) {
-            $rawMethods = str_contains($rawMethods, ',')
-                ? array_map('trim', explode(',', $rawMethods))
-                : [trim($rawMethods)];
-        }
-
-        if (!is_array($rawMethods) || empty($rawMethods)) {
-            $rawMethods = $defaultMethods;
-        }
-
-        $aliases = [
-            'web' => 'session',
-            'api' => 'token',
-            'session' => 'session',
-            'token' => 'token',
-            'jwt' => 'jwt',
-            'api_key' => 'api_key',
-            'apikey' => 'api_key',
-            'oauth' => 'oauth',
-            'oauth2' => 'oauth2',
-            'basic' => 'basic',
-            'digest' => 'digest',
-        ];
-
-        $normalized = [];
-        foreach ($rawMethods as $method) {
-            $name = strtolower(trim((string) $method));
-            if ($name === '') {
-                continue;
-            }
-
-            $resolved = $aliases[$name] ?? null;
-            if ($resolved !== null) {
-                $normalized[] = $resolved;
-            }
-        }
-
-        if (empty($normalized)) {
-            return $defaultMethods;
-        }
-
-        return array_values(array_unique($normalized));
+        return $this->methodResolver->normalize($methods, (array) ($this->config['methods'] ?? ['session']));
     }
 
     private function checkMethod(string $method): bool
@@ -2690,26 +2520,6 @@ class Auth
             'digest' => $this->digestUser(),
             default => null,
         };
-    }
-
-    private function ensureTokenTable(): void
-    {
-        $tc = array_map(fn($col) => preg_replace('/[^a-zA-Z0-9_]/', '', $col), $this->config['token_columns']);
-        $tokenTable = $this->safeTable($this->config['token_table']);
-
-        \db()->query(
-            "CREATE TABLE IF NOT EXISTS {$tokenTable} (
-                {$tc['id']} BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                {$tc['user_id']} BIGINT UNSIGNED NOT NULL,
-                {$tc['name']} VARCHAR(255) NOT NULL,
-                {$tc['token']} VARCHAR(255) NOT NULL UNIQUE,
-                {$tc['abilities']} TEXT,
-                {$tc['expires_at']} DATETIME NULL,
-                {$tc['last_used_at']} DATETIME NULL,
-                {$tc['created_at']} DATETIME DEFAULT CURRENT_TIMESTAMP,
-                {$tc['updated_at']} DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            )"
-        );
     }
 
     private function ensureApiKeyTable(): void
@@ -2781,45 +2591,35 @@ class Auth
 
     private function userRoleIds(int $userId): array
     {
-        if ($userId < 1) {
-            return [];
-        }
+        return $this->authorizationService->userRoleIds(
+            $userId,
+            fn(int $resolvedUserId, bool $includeRequestAbilities = false): string => $this->aclCacheKey($resolvedUserId, $includeRequestAbilities),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table): string => $this->safeTable($table)
+        );
+    }
 
-        $rbac = (array) ($this->config['rbac'] ?? []);
-        if (($rbac['enabled'] ?? true) !== true) {
-            return [];
-        }
+    private function aclCacheKey(int $userId, bool $includeRequestAbilities = false): string
+    {
+        return $userId . ':' . ($includeRequestAbilities ? '1' : '0');
+    }
 
-        $tables = (array) ($rbac['tables'] ?? []);
-        $profileCols = (array) ($rbac['user_profile_columns'] ?? []);
+    private function invalidateAclCache(?int $userId = null): void
+    {
+        $this->authorizationService->invalidate($userId);
+    }
 
-        $profileTable = $this->safeTable((string) ($tables['user_profile'] ?? 'user_profile'));
-        $userIdColumn = $this->safeColumn((string) ($profileCols['user_id'] ?? 'user_id'));
-        $roleIdColumn = $this->safeColumn((string) ($profileCols['role_id'] ?? 'role_id'));
-        $statusColumn = $this->safeColumn((string) ($profileCols['status'] ?? 'profile_status'));
-
-        $query = \db()->table($profileTable)
-            ->select($roleIdColumn)
-            ->where($userIdColumn, $userId);
-
-        if (($rbac['only_active_profiles'] ?? true) === true) {
-            $query->where($statusColumn, 1);
-        }
-
-        $rows = $query->safeOutput()->get();
-        if (!is_array($rows)) {
-            return [];
-        }
-
-        $roleIds = [];
-        foreach ($rows as $row) {
-            $roleId = (int) ($row[$roleIdColumn] ?? 0);
-            if ($roleId > 0) {
-                $roleIds[] = $roleId;
-            }
-        }
-
-        return array_values(array_unique($roleIds));
+    private function resetResolvedAuthCaches(): void
+    {
+        $this->sessionUserCache = null;
+        $this->tokenUserCache = null;
+        $this->jwtUserCache = null;
+        $this->apiKeyUserCache = null;
+        $this->basicUserCache = null;
+        $this->digestUserCache = null;
+        $this->oauthUserCache = null;
+        $this->oauth2UserCache = null;
+        $this->invalidateAclCache();
     }
 
     private function sessionRoleFallback(int $resolvedUserId): array
@@ -2879,7 +2679,7 @@ class Auth
         return in_array((int) ($user[$statusColumn] ?? 0), $allowed, true);
     }
 
-    private function canAttemptWithLoginPolicy(array $credentials): bool
+    protected function canAttemptWithLoginPolicy(array $credentials): bool
     {
         $policy = (array) ($this->config['systems_login_policy'] ?? []);
         if (($policy['enabled'] ?? true) !== true) {
@@ -2888,12 +2688,9 @@ class Auth
 
         $lockState = $this->resolveLoginLockState($credentials);
         if (($lockState['locked'] ?? false) === true) {
-            $lockUntil = (int) ($lockState['locked_until_ts'] ?? 0);
-            $this->setLastAttemptStatus('login_locked', 'Too many login attempts. Please try again later.', 423, [
-                'locked_until' => $lockUntil > 0 ? date('Y-m-d H:i:s', $lockUntil) : null,
-                'retry_after' => max(1, (int) ($lockState['retry_after'] ?? 1)),
-            ]);
-            return false;
+            $allowed = $this->loginPolicy->denyLockedAttempt($lockState);
+            $this->auditLastAttemptStatus('auth.login.locked', $credentials);
+            return $allowed;
         }
 
         return true;
@@ -2974,7 +2771,7 @@ class Auth
         ];
     }
 
-    private function clearLoginFailures(array $credentials, ?int $userId = null): void
+    protected function clearLoginFailures(array $credentials, ?int $userId = null): void
     {
         $policy = (array) ($this->config['systems_login_policy'] ?? []);
         if (($policy['enabled'] ?? true) !== true) {
@@ -2997,7 +2794,7 @@ class Auth
             $requiredColumns[] = $attemptColumns['identifier'];
         }
 
-        if ($trackByIp && !$trackByIdentifier) {
+        if ($trackByIp) {
             $requiredColumns[] = $attemptColumns['ip_address'];
         }
 
@@ -3006,48 +2803,37 @@ class Auth
         }
 
         try {
-            if ($userId !== null && $userId > 0) {
-                \db()->table($table)
-                    ->where($attemptColumns['user_id'], $userId)
-                    ->delete();
-            }
-
-            if ($trackByIdentifier) {
-                \db()->table($table)
-                    ->where($attemptColumns['identifier'], $identifier)
-                    ->delete();
-            } elseif ($trackByIp) {
-                \db()->table($table)
-                    ->where($attemptColumns['ip_address'], $this->clientIpAddress())
-                    ->delete();
-            }
+            $this->deleteLoginFailureRecords($table, $attemptColumns, $userId, $trackByIdentifier ? $identifier : null, $trackByIp ? $this->clientIpAddress() : null);
         } catch (\Throwable $e) {
             // Ignore login-attempt cleanup errors.
+        }
+    }
+
+    protected function deleteLoginFailureRecords(string $table, array $attemptColumns, ?int $userId, ?string $identifier, ?string $ipAddress): void
+    {
+        if ($userId !== null && $userId > 0) {
+            \db()->table($table)
+                ->where($attemptColumns['user_id'], $userId)
+                ->delete();
+        }
+
+        if ($identifier !== null && trim($identifier) !== '') {
+            \db()->table($table)
+                ->where($attemptColumns['identifier'], $identifier)
+                ->delete();
+        }
+
+        if ($ipAddress !== null && trim($ipAddress) !== '') {
+            \db()->table($table)
+                ->where($attemptColumns['ip_address'], $ipAddress)
+                ->delete();
         }
     }
 
     private function loginPolicyIdentifier(array $credentials): string
     {
         $policy = (array) ($this->config['systems_login_policy'] ?? []);
-        $fields = (array) ($policy['identifier_fields'] ?? ['email', 'username']);
-
-        foreach ($fields as $field) {
-            $name = strtolower(trim((string) $field));
-            if ($name === '') {
-                continue;
-            }
-
-            if (!array_key_exists($name, $credentials)) {
-                continue;
-            }
-
-            $value = strtolower(trim((string) $credentials[$name]));
-            if ($value !== '') {
-                return $name . ':' . $value;
-            }
-        }
-
-        return '';
+        return $this->loginPolicy->identifier($credentials);
     }
 
     private function policyCredentialsForIdentifier(string $identifier, array $candidateFields = ['username', 'email']): array
@@ -3071,93 +2857,198 @@ class Auth
         return [$preferredField => $identifier];
     }
 
-    private function clientIpAddress(): string
+    protected function clientIpAddress(): string
     {
+        if (function_exists('request')) {
+            try {
+                $ip = trim((string) request()->ip());
+                if ($ip !== '') {
+                    return $ip;
+                }
+            } catch (\Throwable $e) {
+                // Fall through to raw server inspection.
+            }
+        }
+
         $ip = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
         return $ip !== '' ? $ip : 'unknown';
     }
 
     private function resetLastAttemptStatus(): void
     {
-        $this->lastAttemptStatus = [];
+        $this->loginPolicy->resetAttemptStatus();
     }
 
     private function setLastAttemptStatus(string $reason, string $message, int $httpCode = 401, array $context = []): void
     {
-        $this->lastAttemptStatus = [
-            'reason' => $reason,
-            'message' => $message,
-            'http_code' => $httpCode,
-            'context' => $context,
-        ];
+        $this->loginPolicy->setAttemptStatus($reason, $message, $httpCode, $context);
+    }
+
+    private function markAttemptStatus(
+        string $reason,
+        string $message,
+        int $httpCode = 401,
+        array $context = [],
+        array $credentials = [],
+        ?int $userId = null,
+        ?string $event = null
+    ): void {
+        $this->setLastAttemptStatus($reason, $message, $httpCode, $context);
+        $this->auditLastAttemptStatus($event, $credentials, $userId);
     }
 
     private function passesPasswordRotationPolicy(array $user): bool
     {
+        $allowed = $this->loginPolicy->passesPasswordRotationPolicy(
+            $user,
+            fn(string $table): string => $this->safeTable($table),
+            fn(string $column, string $fallback = 'id'): string => $this->safeColumn($column, $fallback),
+            fn(string $table, array $columns): bool => $this->tableAndColumnsExist($table, $columns)
+        );
+
+        if ($allowed !== true) {
+            $uc = (array) ($this->config['user_columns'] ?? []);
+            $userId = (int) ($user[$uc['id'] ?? 'id'] ?? 0);
+            $this->auditLastAttemptStatus('auth.login.denied', [], $userId > 0 ? $userId : null);
+        }
+
+        return $allowed;
+    }
+
+    private function auditLastAttemptStatus(?string $event = null, array $credentials = [], ?int $userId = null): void
+    {
+        $status = $this->lastAttemptStatus();
+        if ($status === []) {
+            return;
+        }
+
+        $reason = (string) ($status['reason'] ?? 'unknown');
+        $context = (array) ($status['context'] ?? []);
+        $identifier = $this->loginPolicyIdentifier($credentials);
+
+        if ($identifier !== '') {
+            $context['identifier'] = $identifier;
+        }
+
+        if ($userId !== null && $userId > 0) {
+            $context['user_id'] = $userId;
+        }
+
+        $context['event'] = $event ?? $this->defaultAuthAuditEvent($reason);
+        $context['reason'] = $reason;
+        $context['http_code'] = (int) ($status['http_code'] ?? 401);
+        $context['ip_address'] = $this->clientIpAddress();
+
+        $this->writeAuthAuditLog(
+            '[AuthAudit] ' . $context['event'],
+            $context,
+            $this->defaultAuthAuditLevel($reason)
+        );
+    }
+
+    private function defaultAuthAuditEvent(string $reason): string
+    {
+        return match ($reason) {
+            'login_locked' => 'auth.login.locked',
+            'account_status_restricted', 'password_change_required', 'password_expired' => 'auth.login.denied',
+            default => 'auth.login.failed',
+        };
+    }
+
+    private function defaultAuthAuditLevel(string $reason): string
+    {
+        return match ($reason) {
+            'invalid_credentials', 'login_locked', 'account_status_restricted', 'password_change_required', 'password_expired' => Logger::LOG_LEVEL_WARNING,
+            default => Logger::LOG_LEVEL_INFO,
+        };
+    }
+
+    protected function writeAuthAuditLog(string $message, array $context = [], string $fallbackLevel = Logger::LOG_LEVEL_INFO): void
+    {
         $policy = (array) ($this->config['systems_login_policy'] ?? []);
-        $rotation = (array) ($policy['password_rotation'] ?? []);
-        if (($rotation['enabled'] ?? false) !== true) {
-            return true;
+        $auditLogging = (array) ($policy['audit_logging'] ?? []);
+        if (($auditLogging['enabled'] ?? true) !== true || !function_exists('logger')) {
+            return;
         }
 
-        $usersTable = $this->safeTable((string) ($this->config['users_table'] ?? 'users'));
-        $uc = (array) ($this->config['user_columns'] ?? []);
-        $forceResetColumn = $this->safeColumn(
-            (string) ($rotation['force_reset_column'] ?? ($uc['force_password_change'] ?? 'force_password_change')),
-            'force_password_change'
-        );
+        $includeUserAgent = ($auditLogging['include_user_agent'] ?? true) === true;
+        $level = $this->normalizeAuthAuditLevel((string) ($auditLogging['level'] ?? ''), $fallbackLevel);
+        $sanitizedContext = $this->sanitizeAuthAuditContext($context, $includeUserAgent);
 
-        if ($this->tableAndColumnsExist($usersTable, [$forceResetColumn]) && !empty($user[$forceResetColumn])) {
-            $this->setLastAttemptStatus('password_change_required', 'Your password must be changed before you can continue.', 403, [
-                'force_password_change' => true,
-            ]);
-            return false;
+        try {
+            $this->dispatchAuthAuditLog($message, $sanitizedContext, $level);
+        } catch (\Throwable $e) {
+            // Ignore audit-log failures to preserve auth availability.
+        }
+    }
+
+    protected function dispatchAuthAuditLog(string $message, array $context, string $level): void
+    {
+        logger()->logWithContext($message, $context, $level);
+    }
+
+    private function normalizeAuthAuditLevel(string $configuredLevel, string $fallbackLevel): string
+    {
+        $level = strtoupper(trim($configuredLevel));
+
+        return match ($level) {
+            Logger::LOG_LEVEL_DEBUG => Logger::LOG_LEVEL_DEBUG,
+            Logger::LOG_LEVEL_WARNING => Logger::LOG_LEVEL_WARNING,
+            Logger::LOG_LEVEL_ERROR => Logger::LOG_LEVEL_ERROR,
+            Logger::LOG_LEVEL_INFO => Logger::LOG_LEVEL_INFO,
+            default => $fallbackLevel,
+        };
+    }
+
+    private function sanitizeAuthAuditContext(array $context, bool $includeUserAgent): array
+    {
+        $sanitized = $this->redactSensitiveAuditValues($context);
+
+        if ($includeUserAgent) {
+            $sanitized['user_agent'] = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 200);
+        } else {
+            unset($sanitized['user_agent']);
         }
 
-        $maxAgeDays = max(0, (int) ($rotation['max_age_days'] ?? 90));
-        if ($maxAgeDays < 1) {
-            return true;
+        foreach ($sanitized as $key => $value) {
+            if ($value === null || $value === '') {
+                unset($sanitized[$key]);
+            }
         }
 
-        $changedAtColumn = $this->safeColumn(
-            (string) ($rotation['password_changed_at_column'] ?? ($uc['password_changed_at'] ?? 'password_changed_at')),
-            'password_changed_at'
-        );
-        $hasChangedAtColumn = $this->tableAndColumnsExist($usersTable, [$changedAtColumn]);
-        $requireChangedAt = ($rotation['require_password_changed_at'] ?? false) === true;
+        return $sanitized;
+    }
 
-        if (!$hasChangedAtColumn) {
-            return !$requireChangedAt;
-        }
+    private function redactSensitiveAuditValues(array $context): array
+    {
+        $redacted = [];
+        $sensitiveKeys = ['password', 'token', 'credential', 'authorization', 'cookie', 'csrf_token'];
 
-        $changedAt = trim((string) ($user[$changedAtColumn] ?? ''));
-        if ($changedAt === '') {
-            if ($requireChangedAt) {
-                $this->setLastAttemptStatus('password_change_required', 'Your password must be updated before you can continue.', 403, [
-                    'password_changed_at_missing' => true,
-                ]);
-                return false;
+        foreach ($context as $key => $value) {
+            $normalizedKey = strtolower(trim((string) $key));
+
+            if (in_array($normalizedKey, $sensitiveKeys, true)) {
+                $redacted[$key] = '[redacted]';
+                continue;
             }
 
-            return true;
+            if (is_array($value)) {
+                $redacted[$key] = $this->redactSensitiveAuditValues($value);
+                continue;
+            }
+
+            $redacted[$key] = $value;
         }
 
-        $changedAtTimestamp = strtotime($changedAt);
-        if ($changedAtTimestamp === false) {
-            return !$requireChangedAt;
-        }
+        return $redacted;
+    }
 
-        $maxAgeSeconds = $maxAgeDays * 86400;
-        if (($changedAtTimestamp + $maxAgeSeconds) < time()) {
-            $this->setLastAttemptStatus('password_expired', 'Your password has expired and must be changed.', 403, [
-                'password_expired' => true,
-                'max_age_days' => $maxAgeDays,
-                'password_changed_at' => $changedAt,
-            ]);
-            return false;
-        }
-
-        return true;
+    private function loginTypeLabel(int $loginType): string
+    {
+        return match ($loginType) {
+            2 => 'oauth',
+            default => 'session',
+        };
     }
 
     private function applyAutomaticBan(?int $userId, int $observedAttempts): void
@@ -3193,7 +3084,7 @@ class Auth
         }
     }
 
-    private function resolveLoginLockState(array $credentials): array
+    protected function resolveLoginLockState(array $credentials): array
     {
         $policy = (array) ($this->config['systems_login_policy'] ?? []);
         $maxAttempts = max(1, (int) ($policy['max_attempts'] ?? 5));
@@ -3201,7 +3092,132 @@ class Auth
         $lockoutSeconds = max(60, (int) ($policy['lockout_seconds'] ?? 900));
         $windowSeconds = $decaySeconds + $lockoutSeconds;
 
-        $timestamps = $this->recentLoginAttemptTimestamps($credentials, $windowSeconds);
+        $lockedScopes = [];
+        foreach ($this->recentLoginAttemptBuckets($credentials, $windowSeconds) as $scope => $timestamps) {
+            $scopeLock = $this->resolveLockStateForTimestamps($timestamps, $maxAttempts, $decaySeconds, $lockoutSeconds);
+            if (($scopeLock['locked'] ?? false) !== true) {
+                continue;
+            }
+
+            $scopeLock['scope'] = (string) $scope;
+            $lockedScopes[] = $scopeLock;
+        }
+
+        if ($lockedScopes === []) {
+            return ['locked' => false];
+        }
+
+        usort($lockedScopes, static function (array $left, array $right): int {
+            return (int) ($right['locked_until_ts'] ?? 0) <=> (int) ($left['locked_until_ts'] ?? 0);
+        });
+
+        $primaryLock = $lockedScopes[0];
+
+        return [
+            'locked' => true,
+            'locked_until_ts' => (int) ($primaryLock['locked_until_ts'] ?? 0),
+            'retry_after' => max(1, (int) ($primaryLock['retry_after'] ?? 1)),
+            'scope' => (string) ($primaryLock['scope'] ?? 'unknown'),
+            'scopes' => array_values(array_unique(array_map(static function (array $scopeLock): string {
+                return (string) ($scopeLock['scope'] ?? 'unknown');
+            }, $lockedScopes))),
+        ];
+    }
+
+    protected function recentLoginAttemptBuckets(array $credentials, int $windowSeconds): array
+    {
+        $policy = (array) ($this->config['systems_login_policy'] ?? []);
+        $attemptColumns = $this->attemptPolicyColumns();
+        $table = $this->safeTable((string) ($policy['attempts_table'] ?? 'system_login_attempt'));
+        $identifier = $this->loginPolicyIdentifier($credentials);
+        $trackByIdentifier = ($policy['track_by_identifier'] ?? true) === true && $identifier !== '';
+        $trackByIp = ($policy['track_by_ip'] ?? true) === true;
+
+        $requiredColumns = [$attemptColumns['time']];
+
+        if ($trackByIdentifier) {
+            $requiredColumns[] = $attemptColumns['identifier'];
+        }
+
+        if ($trackByIp) {
+            $requiredColumns[] = $attemptColumns['ip_address'];
+        }
+
+        if (!$this->tableAndColumnsExist($table, $requiredColumns)) {
+            return [];
+        }
+
+        if (!$trackByIdentifier && !$trackByIp) {
+            return [];
+        }
+
+        $buckets = [];
+
+        if ($trackByIdentifier) {
+            $buckets['identifier'] = $this->recentLoginAttemptTimestampsForScope(
+                $table,
+                $attemptColumns['time'],
+                $attemptColumns['identifier'],
+                $identifier,
+                $windowSeconds
+            );
+        }
+
+        if ($trackByIp) {
+            $buckets['ip'] = $this->recentLoginAttemptTimestampsForScope(
+                $table,
+                $attemptColumns['time'],
+                $attemptColumns['ip_address'],
+                $this->clientIpAddress(),
+                $windowSeconds
+            );
+        }
+
+        return $buckets;
+    }
+
+    private function recentLoginAttemptTimestampsForScope(
+        string $table,
+        string $timeColumn,
+        string $scopeColumn,
+        string $scopeValue,
+        int $windowSeconds
+    ): array {
+        if (trim($scopeValue) === '') {
+            return [];
+        }
+
+        try {
+            $query = \db()->table($table)
+                ->select($timeColumn)
+                ->where($timeColumn, 'IS NOT NULL');
+
+            $cutoff = date('Y-m-d H:i:s', time() - max(60, $windowSeconds));
+            $query->where($timeColumn, '>=', $cutoff);
+            $query->where($scopeColumn, $scopeValue);
+
+            $rows = $query->orderBy($timeColumn, 'ASC')->get();
+            if (!is_array($rows)) {
+                return [];
+            }
+
+            $timestamps = [];
+            foreach ($rows as $row) {
+                $timestamp = strtotime((string) ($row[$timeColumn] ?? ''));
+                if ($timestamp !== false) {
+                    $timestamps[] = $timestamp;
+                }
+            }
+
+            sort($timestamps);
+            return $timestamps;
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    private function resolveLockStateForTimestamps(array $timestamps, int $maxAttempts, int $decaySeconds, int $lockoutSeconds): array
+    {
         if (count($timestamps) < $maxAttempts) {
             return ['locked' => false];
         }
@@ -3235,69 +3251,6 @@ class Auth
         ];
     }
 
-    private function recentLoginAttemptTimestamps(array $credentials, int $windowSeconds): array
-    {
-        $policy = (array) ($this->config['systems_login_policy'] ?? []);
-        $attemptColumns = $this->attemptPolicyColumns();
-        $table = $this->safeTable((string) ($policy['attempts_table'] ?? 'system_login_attempt'));
-
-        $requiredColumns = [$attemptColumns['time']];
-        $identifier = $this->loginPolicyIdentifier($credentials);
-        $trackByIdentifier = ($policy['track_by_identifier'] ?? true) === true && $identifier !== '';
-        $trackByIp = ($policy['track_by_ip'] ?? true) === true;
-
-        if ($trackByIdentifier) {
-            $requiredColumns[] = $attemptColumns['identifier'];
-        }
-
-        if ($trackByIp) {
-            $requiredColumns[] = $attemptColumns['ip_address'];
-        }
-
-        if (!$this->tableAndColumnsExist($table, $requiredColumns)) {
-            return [];
-        }
-
-        if (!$trackByIdentifier && !$trackByIp) {
-            return [];
-        }
-
-        try {
-            $query = \db()->table($table)
-                ->select($attemptColumns['time'])
-                ->where($attemptColumns['time'], 'IS NOT NULL');
-
-            $cutoff = date('Y-m-d H:i:s', time() - max(60, $windowSeconds));
-            $query->where($attemptColumns['time'], '>=', $cutoff);
-
-            if ($trackByIdentifier) {
-                $query->where($attemptColumns['identifier'], $identifier);
-            }
-
-            if ($trackByIp) {
-                $query->where($attemptColumns['ip_address'], $this->clientIpAddress());
-            }
-
-            $rows = $query->orderBy($attemptColumns['time'], 'ASC')->safeOutput()->get();
-            if (!is_array($rows)) {
-                return [];
-            }
-
-            $timestamps = [];
-            foreach ($rows as $row) {
-                $timestamp = strtotime((string) ($row[$attemptColumns['time']] ?? ''));
-                if ($timestamp !== false) {
-                    $timestamps[] = $timestamp;
-                }
-            }
-
-            sort($timestamps);
-            return $timestamps;
-        } catch (\Throwable $e) {
-            return [];
-        }
-    }
-
     private function countRecentLoginAttemptsForUser(int $userId): int
     {
         if ($userId < 1) {
@@ -3320,7 +3273,6 @@ class Auth
                 ->where($attemptColumns['user_id'], $userId)
                 ->where($attemptColumns['time'], 'IS NOT NULL')
                 ->where($attemptColumns['time'], '>=', $cutoff)
-                ->safeOutput()
                 ->get();
 
             return is_array($rows) ? count($rows) : 0;
@@ -3365,7 +3317,7 @@ class Auth
         };
     }
 
-    private function tableAndColumnsExist(string $table, array $columns = []): bool
+    protected function tableAndColumnsExist(string $table, array $columns = []): bool
     {
         $safeTable = $this->safeTable($table);
         $cacheKey = $safeTable . '|' . implode(',', $columns);
@@ -3436,7 +3388,6 @@ class Auth
             $user = \db()->table($usersTable)
                 ->select(implode(', ', [$idColumn, $statusColumn]))
                 ->where($idColumn, $userId)
-                ->safeOutput()
                 ->fetch();
         } catch (\Throwable $e) {
             return true;
@@ -3489,7 +3440,7 @@ class Auth
         }
 
         if (($security['bind_ip'] ?? false) === true) {
-            $parts[] = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+            $parts[] = $this->clientIpAddress();
         }
 
         return hash('sha256', implode('|', $parts));
@@ -3575,7 +3526,10 @@ class Auth
         }
 
         $registry[$sid]['last_seen_at'] = time();
-        $this->setSessionRegistry($userId, $registry);
+        $this->synchronizeSessionRegistry($userId, static function (array $latestRegistry) use ($sid, $registry): array {
+            $latestRegistry[$sid] = array_merge($latestRegistry[$sid] ?? [], $registry[$sid]);
+            return $latestRegistry;
+        });
 
         return true;
     }
@@ -3592,52 +3546,54 @@ class Auth
             return false;
         }
 
-        $registry = $this->getSessionRegistry($userId, $ok);
-        if (!$ok) {
-            return ($concurrency['fail_open_if_cache_unavailable'] ?? true) === true;
-        }
+        $result = $this->synchronizeSessionRegistry($userId, function (array $registry) use ($sid, $concurrency): array {
+            $maxDevices = max(0, (int) ($concurrency['max_devices'] ?? 0));
+            $now = time();
 
-        $maxDevices = max(0, (int) ($concurrency['max_devices'] ?? 0));
-        $now = time();
+            if (!isset($registry[$sid]) || !is_array($registry[$sid])) {
+                if ($maxDevices > 0 && count($registry) >= $maxDevices) {
+                    $denyNewLogin = ($concurrency['deny_new_login_when_limit_reached'] ?? false) === true;
+                    if ($denyNewLogin) {
+                        throw new \RuntimeException('session_device_limit_reached');
+                    }
 
-        if (!isset($registry[$sid]) || !is_array($registry[$sid])) {
-            if ($maxDevices > 0 && count($registry) >= $maxDevices) {
-                $denyNewLogin = ($concurrency['deny_new_login_when_limit_reached'] ?? false) === true;
+                    $invalidateOldest = ($concurrency['invalidate_oldest'] ?? true) === true;
+                    if ($invalidateOldest) {
+                        uasort($registry, static function ($a, $b) {
+                            $aSeen = (int) ($a['last_seen_at'] ?? 0);
+                            $bSeen = (int) ($b['last_seen_at'] ?? 0);
+                            return $aSeen <=> $bSeen;
+                        });
 
-                if ($denyNewLogin) {
-                    return false;
-                }
+                        while ($maxDevices > 0 && count($registry) >= $maxDevices) {
+                            $oldestSid = array_key_first($registry);
+                            if ($oldestSid === null) {
+                                break;
+                            }
 
-                $invalidateOldest = ($concurrency['invalidate_oldest'] ?? true) === true;
-                if ($invalidateOldest) {
-                    uasort($registry, static function ($a, $b) {
-                        $aSeen = (int) ($a['last_seen_at'] ?? 0);
-                        $bSeen = (int) ($b['last_seen_at'] ?? 0);
-                        return $aSeen <=> $bSeen;
-                    });
-
-                    while ($maxDevices > 0 && count($registry) >= $maxDevices) {
-                        $oldestSid = array_key_first($registry);
-                        if ($oldestSid === null) {
-                            break;
+                            unset($registry[$oldestSid]);
                         }
-
-                        unset($registry[$oldestSid]);
                     }
                 }
             }
+
+            $registry[$sid] = [
+                'sid' => $sid,
+                'fp' => ($concurrency['store_fingerprint'] ?? true) === true ? $this->clientFingerprint() : '',
+                'ip' => $this->clientIpAddress(),
+                'ua' => substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512),
+                'issued_at' => isset($registry[$sid]['issued_at']) ? (int) ($registry[$sid]['issued_at'] ?? $now) : $now,
+                'last_seen_at' => $now,
+            ];
+
+            return $registry;
+        }, $ok);
+
+        if ($ok === false) {
+            return ($concurrency['fail_open_if_cache_unavailable'] ?? true) === true;
         }
 
-        $registry[$sid] = [
-            'sid' => $sid,
-            'fp' => ($concurrency['store_fingerprint'] ?? true) === true ? $this->clientFingerprint() : '',
-            'ip' => (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
-            'ua' => substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512),
-            'issued_at' => isset($registry[$sid]['issued_at']) ? (int) $registry[$sid]['issued_at'] : $now,
-            'last_seen_at' => $now,
-        ];
-
-        return $this->setSessionRegistry($userId, $registry);
+        return $result;
     }
 
     private function unregisterSessionForUser(int $userId, string $sid): void
@@ -3651,13 +3607,10 @@ class Auth
             return;
         }
 
-        $registry = $this->getSessionRegistry($userId, $ok);
-        if (!$ok || empty($registry)) {
-            return;
-        }
-
-        unset($registry[$sid]);
-        $this->setSessionRegistry($userId, $registry);
+        $this->synchronizeSessionRegistry($userId, static function (array $registry) use ($sid): array {
+            unset($registry[$sid]);
+            return $registry;
+        });
     }
 
     private function getSessionRegistry(int $userId, ?bool &$ok = null): array
@@ -3736,6 +3689,90 @@ class Auth
     {
         $sid = session_id();
         return is_string($sid) ? trim($sid) : '';
+    }
+
+    protected function readSessionRegistry(int $userId, ?bool &$ok = null): array
+    {
+        return $this->getSessionRegistry($userId, $ok);
+    }
+
+    protected function mutateSessionRegistry(int $userId, callable $callback, ?bool &$ok = null): bool
+    {
+        return $this->synchronizeSessionRegistry($userId, $callback, $ok);
+    }
+
+    protected function currentSessionIdentifier(): string
+    {
+        return $this->currentSessionId();
+    }
+
+    private function synchronizeSessionRegistry(int $userId, callable $callback, ?bool &$ok = null): bool
+    {
+        $ok = false;
+
+        $lockHandle = $this->acquireSessionRegistryLock($userId);
+        if ($lockHandle === null) {
+            return false;
+        }
+
+        try {
+            $registry = $this->getSessionRegistry($userId, $cacheOk);
+            if (!$cacheOk) {
+                return false;
+            }
+
+            $updatedRegistry = $callback($registry);
+            if (!is_array($updatedRegistry)) {
+                return false;
+            }
+
+            $ok = true;
+            return $this->setSessionRegistry($userId, $updatedRegistry);
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'session_device_limit_reached') {
+                $ok = true;
+                return false;
+            }
+
+            return false;
+        } finally {
+            $this->releaseSessionRegistryLock($lockHandle);
+        }
+    }
+
+    private function acquireSessionRegistryLock(int $userId)
+    {
+        if ($userId < 1) {
+            return null;
+        }
+
+        $lockDir = rtrim(ROOT_DIR, '/\\') . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'locks';
+        if (!is_dir($lockDir) && !@mkdir($lockDir, 0775, true) && !is_dir($lockDir)) {
+            return null;
+        }
+
+        $lockPath = $lockDir . DIRECTORY_SEPARATOR . 'auth-session-registry-' . $userId . '.lock';
+        $handle = @fopen($lockPath, 'c+');
+        if ($handle === false) {
+            return null;
+        }
+
+        if (!@flock($handle, LOCK_EX)) {
+            @fclose($handle);
+            return null;
+        }
+
+        return $handle;
+    }
+
+    private function releaseSessionRegistryLock($handle): void
+    {
+        if (!is_resource($handle)) {
+            return;
+        }
+
+        @flock($handle, LOCK_UN);
+        @fclose($handle);
     }
 
     private function normalizeStringList(array $items): array
@@ -3847,7 +3884,6 @@ class Auth
         $row = \db()->table($rolesTable)
             ->select($roleIdColumn)
             ->where($roleNameColumn, $roleName)
-            ->safeOutput()
             ->fetch();
 
         return (int) ($row[$roleIdColumn] ?? 0);
@@ -3886,7 +3922,6 @@ class Auth
             $rows = \db()->table($abilitiesTable)
                 ->select($abilityIdColumn)
                 ->whereIn($abilitySlugColumn, $names)
-                ->safeOutput()
                 ->get();
 
             if (is_array($rows)) {

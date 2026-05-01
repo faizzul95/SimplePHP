@@ -21,6 +21,7 @@
 - `all()` returns raw request input.
 - `toDTO()`, `toArray()`, and `validated()` can all return the clean processed payload.
 - Missing fields are always skipped by validation. A rule such as `required` is only evaluated when the key exists in the incoming payload.
+- For browser requests, router-handled `422` validation failures redirect back to the previous page, flash validation errors, and flash old input while excluding password-style fields. JSON and AJAX requests still receive the structured `422` response body.
 
 ### FormRequest Public Methods
 
@@ -141,6 +142,20 @@ protected function prepareForValidation(): void
 3. Use `all()` for untouched request data.
 4. Use `validated()`, `toArray()`, or `toDTO()` for the processed payload.
 5. Choose `toDTO()` only when you want the method name itself to make the DTO role obvious.
+
+### Redirect-Back Validation UX
+
+For classic browser form posts, validation failures now behave closer to Laravel:
+
+```blade
+<input type="email" name="email" value="{{ old('email') }}">
+
+@error('email')
+	<div class="text-danger">{{ $message }}</div>
+@enderror
+```
+
+This redirect-back flow is for normal browser submissions. It does not automatically repopulate forms that are posted and re-rendered entirely through JavaScript/XHR; those still need frontend-side handling of the returned JSON error payload.
 
 ```php
 public function store(StoreUserRequest $request): array
@@ -373,7 +388,7 @@ public function save(SaveRoleRequest $request): array
 ```php
 public function authorize(): bool
 {
-	return permission('user-create');
+	return auth()->can('user-create');
 }
 ```
 
@@ -383,18 +398,18 @@ You can also branch authorization by request mode:
 public function authorize(): bool
 {
 	if ($this->isCreate()) {
-		return permission('user-create');
+		return auth()->can('user-create');
 	}
 
 	if ($this->isUpdate()) {
-		return permission('user-update');
+		return auth()->can('user-update');
 	}
 
 	return false;
 }
 ```
 
-This is useful when create and update share one endpoint and the permission requirement changes based on whether a primary key is present.
+This is useful when create and update share one endpoint and the permission requirement changes based on whether a primary key is present. Keep the permission slugs aligned with the route middleware that protects the same endpoint.
 
 ### 3a) Custom primary key and composite key detection
 

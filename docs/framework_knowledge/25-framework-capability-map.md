@@ -14,7 +14,7 @@
 - Session auth (attempt, login, logout) + Bearer token auth (create, revoke, abilities)
 - Unified `RequireAuth` middleware with guard modes: `session`, `token`, `web`, `api`
 - Social login (OAuth) via `socialite()` with auto-create callback
-- RBAC permission middleware and controller-level `can()`/`cannot()`/`setPageState()`
+- RBAC permission middleware plus controller-level `can()` / `cannot()` helpers for conditional UI and explicit controller checks
 
 ### Middleware & Security
 - Security headers (CSP, Permissions-Policy) via config
@@ -42,7 +42,7 @@
 
 ### Controller Base
 - Abstract base with CRUD helpers: `findOrFail`, `restoreByEncodedId`, `destroyByEncodedId`
-- Permission enforcement via `setPageState()`
+- Page-state helper via `setPageState()` for menu and breadcrumb context
 - Auth shortcuts: `authId()`, `authUser()`, `can()`, `cannot()`
 - View rendering, JSON response, redirect helpers
 
@@ -69,7 +69,7 @@
 - Output capture: sendOutputTo, appendOutputTo
 
 ### Console CLI (`php myth`)
-- 33 built-in commands: cache, routes, generators, security/performance, backup, app runtime, queue, scheduler
+- 35 built-in commands: cache, routes, generators, security/performance, backup, app runtime, queue, scheduler (full list in [19-console-built-in-commands.md](19-console-built-in-commands.md))
 - Custom command registration via `make:command` + `console.php`
 
 ### File Upload
@@ -88,7 +88,7 @@
 - API wrappers: login, submit, delete, call, upload with token management
 - PHP-style helpers: isset, empty, in_array, array_merge, implode, explode
 - Date/time formatting, currency formatting
-- DataTable generators (server-side + client-side)
+- DataTable generators plus `BootstrapDataTable` as the standard CRUD table abstraction with local row sync/remove helpers
 - File preview (PDF, image, video, audio, Office docs)
 - UI utilities: modals, loading states, skeletons, notifications
 

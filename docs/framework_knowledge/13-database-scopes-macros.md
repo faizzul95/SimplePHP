@@ -4,6 +4,8 @@
 
 Scopes and macros extend the query builder without modifying core files. They are loaded at bootstrap via `loadScopeMacroDBFunctions(...)` from `systems/hooks.php`.
 
+This bootstrap macro system is separate from feature-specific query code. Keep `ScopeControllers` for global builder macros/scopes that should be available everywhere.
+
 - Config source: `framework.scope_macro` in `app/config/framework.php`.
 - Default base path: `app/http/controllers/`.
 - Default folder: `ScopeControllers`.

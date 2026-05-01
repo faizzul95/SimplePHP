@@ -22,42 +22,18 @@ class PermissionController extends Controller
             ->orderBy('abilities_name', 'ASC')
             ->withCount('count', 'system_permission', 'abilities_id', 'id')
             ->setPaginateFilterColumn(['abilities_name', 'abilities_slug'])
+            ->setAllowedSortColumns(['system_abilities.abilities_name', 'system_abilities.abilities_slug', 'system_abilities.abilities_desc'])
             ->safeOutput()
-            ->paginate_ajax(request()->all());
+            ->paginate_ajax($request->all());
 
-        $result['data'] = array_map(function ($row) {
-            $id = encodeID($row['id']);
-            $canUpdate = permission('rbac-abilities-update');
-            $canDelete = permission('rbac-abilities-delete') && (int) $row['count'] < 1;
-            $delAction = $canDelete ? "onclick='deletePermRecord(\"{$id}\")'" : null;
-            $delText = empty($delAction) ? '(disabled)' : '';
-            $editAction = $canUpdate ? "onclick='editPermRecord(\"{$id}\")'" : '';
-            $editStyle = $canUpdate ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
-            $deleteStyle = $canDelete ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
-            $action = "
-                <span style='display: inline-block; vertical-align: middle;'>
-                    <i class='bx bx-edit-alt' style='{$editStyle}' {$editAction} title='Edit'></i>
-                </span>
-                <span style='display: inline-block; vertical-align: middle;'>
-                    <i class='bx bx-trash' style='{$deleteStyle}' {$delAction} title='Delete {$delText}'></i>
-                </span>
-            ";
-
-            return [
-                'name' => $row['abilities_name'],
-                'slug' => $row['abilities_slug'],
-                'count' => number_format($row['count']),
-                'desc' => $row['abilities_desc'],
-                'action' => $action,
-            ];
-        }, $result['data']);
+        $result['data'] = array_map([$this, 'mapPermissionDatatableRow'], $result['data']);
 
         jsonResponse($result);
     }
 
     public function listPermissionAssignDatatable(Request $request): void
     {
-        $roleID = decodeID(request()->input('id'));
+        $roleID = $this->decodeIdOrFail($request->input('id'), 'Role ID is required');
 
         $db = db();
         $result = $db->table('system_abilities')->select('id, abilities_name, abilities_slug, abilities_desc')
@@ -124,11 +100,7 @@ class PermissionController extends Controller
 
     public function show(string $id): void
     {
-        $id = decodeID($id);
-
-        if (empty($id)) {
-            jsonResponse(['code' => 400, 'message' => 'ID is required']);
-        }
+        $id = $this->decodeIdOrFail($id);
 
         $abilities = db()->table('system_abilities')->where('id', $id)->safeOutput()->fetch();
 
@@ -164,7 +136,20 @@ class PermissionController extends Controller
             jsonResponse(['code' => 422, 'message' => 'Failed to save abilities']);
         }
 
-        jsonResponse(['code' => 200, 'message' => 'Abilities saved']);
+        $savedAbilityId = $abilityId ?: ($result['id'] ?? null);
+        $savedRow = $savedAbilityId ? db()->table('system_abilities')
+            ->select('id, abilities_name, abilities_slug, abilities_desc')
+            ->where('id', $savedAbilityId)
+            ->whereNull('deleted_at')
+            ->withCount('count', 'system_permission', 'abilities_id', 'id')
+            ->safeOutput()
+            ->fetch() : null;
+
+        jsonResponse([
+            'code' => 200,
+            'message' => 'Abilities saved',
+            'data' => $savedRow ? $this->mapPermissionDatatableRow($savedRow) : null,
+        ]);
     }
 
     public function saveAssignment(SaveAssignmentRequest $request): void
@@ -223,11 +208,7 @@ class PermissionController extends Controller
 
     public function destroy(string $id): void
     {
-        $id = decodeID($id);
-
-        if (empty($id)) {
-            jsonResponse(['code' => 400, 'message' => 'ID is required']);
-        }
+        $id = $this->decodeIdOrFail($id);
 
         $result = db()->table('system_abilities')->where('id', $id)->softDelete();
 
@@ -236,5 +217,36 @@ class PermissionController extends Controller
         }
 
         jsonResponse(['code' => 200, 'message' => 'Abilities deleted']);
+    }
+
+    private function mapPermissionDatatableRow(array $row): array
+    {
+        $key = encodeID($row['id']);
+        $rowKey = 'permission-row-' . $row['id'];
+        $canUpdate = permission('rbac-abilities-update');
+        $canDelete = permission('rbac-abilities-delete') && (int) $row['count'] < 1;
+        $deleteAction = $canDelete ? "onclick='deletePermRecord(\"{$key}\", \"{$rowKey}\")'" : null;
+        $deleteText = empty($deleteAction) ? '(disabled)' : '';
+        $editAction = $canUpdate ? "onclick='editPermRecord(\"{$key}\")'" : '';
+        $editStyle = $canUpdate ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
+        $deleteStyle = $canDelete ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
+        $action = "
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-edit-alt' style='{$editStyle}' {$editAction} title='Edit'></i>
+                </span>
+                <span style='display: inline-block; vertical-align: middle;'>
+                    <i class='bx bx-trash' style='{$deleteStyle}' {$deleteAction} title='Delete {$deleteText}'></i>
+                </span>
+            ";
+
+        return [
+            'row_key' => $rowKey,
+            'key' => $key,
+            'name' => $row['abilities_name'],
+            'slug' => $row['abilities_slug'],
+            'count' => number_format($row['count']),
+            'desc' => $row['abilities_desc'],
+            'action' => $action,
+        ];
     }
 }

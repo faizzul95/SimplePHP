@@ -486,7 +486,10 @@ abstract class FormRequest
 
     /**
      * Apply a single sanitizer to a string value.
-     * Returns the original value unchanged for unknown sanitizer names.
+     *
+     * Unknown sanitizer names are a programming error — throwing here prevents
+     * typos (e.g. 'striptags' vs 'strip_tags') from silently leaving values
+     * un-sanitized.
      */
     private function performSanitize(string $value, string $sanitizer): string
     {
@@ -507,7 +510,7 @@ abstract class FormRequest
             'alpha_num'         => preg_replace('/[^\pL\pN]+/u', '', $value) ?? $value,
             'filename_safe'     => trim((preg_replace('/[^A-Za-z0-9._-]+/', '-', $value) ?? $value), '.-_'),
             'slug'              => $this->slugifyString($value),
-            default             => $value, // unknown sanitizer — pass through silently
+            default             => throw new \RuntimeException("Unknown sanitizer: '{$sanitizer}'"),
         };
     }
 

@@ -142,6 +142,11 @@ loadDotEnv($rootForEnv . '.env');
 if (!function_exists('getProjectBaseUrl')) {
     function getProjectBaseUrl()
     {
+        $configuredBaseUrl = trim((string) env('APP_URL', ''));
+        if ($configuredBaseUrl !== '') {
+            return rtrim($configuredBaseUrl, '/') . '/';
+        }
+
         $isHttps = (
             (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off') ||
             (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') ||
@@ -152,7 +157,12 @@ if (!function_exists('getProjectBaseUrl')) {
         $protocol = $isHttps ? 'https' : 'http';
 
         // Check if we're on localhost
-        $host = $_SERVER['HTTP_HOST'] ?? '';
+        $host = trim((string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? ''));
+        if ($host === '') {
+            $projectRoot = defined('ROOT_DIR') ? rtrim(ROOT_DIR, DIRECTORY_SEPARATOR) : dirname(__DIR__);
+            return $protocol . '://localhost/' . basename($projectRoot) . '/';
+        }
+
         $isLocalhost = (
             strpos($host, 'localhost') !== false ||
             strpos($host, '127.0.0.1') !== false ||
@@ -202,6 +212,184 @@ if (!function_exists('config')) {
         }
 
         return $value;
+    }
+}
+
+if (!function_exists('framework_service_store')) {
+    function &framework_service_store(): array
+    {
+        if (!isset($GLOBALS['__framework_service_store']) || !is_array($GLOBALS['__framework_service_store'])) {
+            $GLOBALS['__framework_service_store'] = [
+                'instances' => [],
+                'resolvers' => [],
+            ];
+        }
+
+        return $GLOBALS['__framework_service_store'];
+    }
+}
+
+if (!function_exists('framework_event_dispatcher')) {
+    function framework_event_dispatcher(): \App\Support\EventDispatcher
+    {
+        if (!isset($GLOBALS['__framework_event_dispatcher']) || !$GLOBALS['__framework_event_dispatcher'] instanceof \App\Support\EventDispatcher) {
+            $GLOBALS['__framework_event_dispatcher'] = new \App\Support\EventDispatcher();
+        }
+
+        return $GLOBALS['__framework_event_dispatcher'];
+    }
+}
+
+if (!function_exists('event_dispatcher')) {
+    function event_dispatcher(): \App\Support\EventDispatcher
+    {
+        return framework_event_dispatcher();
+    }
+}
+
+if (!function_exists('on_event')) {
+    function on_event(string $event, callable $listener): void
+    {
+        framework_event_dispatcher()->listen($event, $listener);
+    }
+}
+
+if (!function_exists('dispatch_event')) {
+    function dispatch_event(string $event, array $payload = []): array
+    {
+        return framework_event_dispatcher()->dispatch($event, $payload);
+    }
+}
+
+if (!function_exists('reset_event_dispatcher')) {
+    function reset_event_dispatcher(): void
+    {
+        framework_event_dispatcher()->reset();
+    }
+}
+
+if (!function_exists('register_framework_service')) {
+    function register_framework_service(string $name, callable $resolver): void
+    {
+        $name = strtolower(trim($name));
+        if ($name === '') {
+            throw new InvalidArgumentException('Service name cannot be empty.');
+        }
+
+        $store = &framework_service_store();
+        $store['resolvers'][$name] = $resolver;
+        unset($store['instances'][$name]);
+    }
+}
+
+if (!function_exists('framework_service')) {
+    function framework_service(string $name, ?callable $resolver = null, bool $reset = false)
+    {
+        $store = &framework_service_store();
+
+        $name = strtolower(trim($name));
+        if ($name === '') {
+            throw new InvalidArgumentException('Service name cannot be empty.');
+        }
+
+        if ($reset) {
+            unset($store['instances'][$name]);
+            return null;
+        }
+
+        if ($resolver !== null && !isset($store['resolvers'][$name])) {
+            $store['resolvers'][$name] = $resolver;
+        }
+
+        if (array_key_exists($name, $store['instances'])) {
+            return $store['instances'][$name];
+        }
+
+        if (!isset($store['resolvers'][$name])) {
+            throw new RuntimeException('Service not registered: ' . $name);
+        }
+
+        $store['instances'][$name] = $store['resolvers'][$name]();
+
+        return $store['instances'][$name];
+    }
+}
+
+if (!function_exists('reset_framework_service')) {
+    function reset_framework_service(?string $name = null): void
+    {
+        $store = &framework_service_store();
+
+        if ($name === null) {
+            $serviceNames = array_values(array_unique(array_merge(
+                ['logger', 'security', 'files', 'response', 'blade_engine', 'maintenance', 'feature', 'auth', 'events', 'route.provider', 'database.runtime'],
+                array_keys((array) ($store['instances'] ?? [])),
+                array_keys((array) ($store['resolvers'] ?? []))
+            )));
+
+            foreach ($serviceNames as $serviceName) {
+                framework_service($serviceName, null, true);
+            }
+
+            $store['resolvers'] = [];
+
+            return;
+        }
+
+        framework_service($name, null, true);
+        unset($store['resolvers'][strtolower(trim($name))]);
+    }
+}
+
+if (!function_exists('bootstrapRegisterServiceProviders')) {
+    function bootstrapRegisterServiceProviders(array $config, array $runtimeState = []): void
+    {
+        $providers = (array) ($config['framework']['providers'] ?? []);
+        if (empty($providers)) {
+            return;
+        }
+
+        dispatch_event('providers.registering', [
+            'providers' => $providers,
+            'config' => $config,
+            'runtime' => $runtimeState,
+        ]);
+
+        $instances = [];
+
+        foreach ($providers as $providerClass) {
+            if (!is_string($providerClass) || trim($providerClass) === '') {
+                continue;
+            }
+
+            if (!class_exists($providerClass)) {
+                if (function_exists('bootstrapFail')) {
+                    bootstrapFail('Configured service provider not found: ' . $providerClass, 500);
+                }
+
+                throw new RuntimeException('Configured service provider not found: ' . $providerClass);
+            }
+
+            $provider = new $providerClass($config, $runtimeState);
+            $instances[] = $provider;
+
+            if (method_exists($provider, 'register')) {
+                $provider->register();
+            }
+        }
+
+        foreach ($instances as $provider) {
+            if (method_exists($provider, 'boot')) {
+                $provider->boot();
+            }
+        }
+
+        dispatch_event('providers.booted', [
+            'providers' => $providers,
+            'instances' => $instances,
+            'config' => $config,
+            'runtime' => $runtimeState,
+        ]);
     }
 }
 
@@ -579,13 +767,7 @@ if (!function_exists('debug')) {
 if (!function_exists('logger')) {
     function logger()
     {
-        static $instance = null;
-        if ($instance === null) {
-            global $config;
-            $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR;
-            $instance = new \Components\Logger($rootDir . $config['error_log_path']);
-        }
-        return $instance;
+        return framework_service('logger');
     }
 }
 
@@ -598,12 +780,7 @@ if (!function_exists('logger')) {
 if (!function_exists('security')) {
     function security()
     {
-        static $instance = null;
-        if ($instance === null) {
-            $instance = new \Components\Security();
-        }
-
-        return $instance;
+        return framework_service('security');
     }
 }
 
@@ -616,12 +793,20 @@ if (!function_exists('security')) {
 if (!function_exists('files')) {
     function files()
     {
-        static $instance = null;
-        if ($instance === null) {
-            $instance = new \Components\Files();
+        return framework_service('files');
+    }
+}
+
+if (!function_exists('storage')) {
+    function storage(?string $disk = null)
+    {
+        $manager = framework_service('storage');
+
+        if ($disk === null) {
+            return $manager;
         }
 
-        return $instance;
+        return $manager->disk($disk);
     }
 }
 
@@ -634,11 +819,15 @@ if (!function_exists('files')) {
 if (!function_exists('request')) {
     function request()
     {
-        static $instance = null;
-        if ($instance === null) {
-            $instance = new \Components\Request();
+        $current = \Core\Http\Request::current();
+        if ($current instanceof \Core\Http\Request) {
+            return $current;
         }
-        return $instance;
+
+        $request = \Core\Http\Request::capture();
+        \Core\Http\Request::setCurrent($request);
+
+        return $request;
     }
 }
 
@@ -651,24 +840,55 @@ if (!function_exists('request')) {
 if (!function_exists('blade_engine')) {
     function blade_engine()
     {
-        static $blade = null;
+        return framework_service('blade_engine');
+    }
+}
 
-        if ($blade === null) {
-            $viewPath = ROOT_DIR . (config('framework.view_path') ?? 'app/views');
-            $cachePath = ROOT_DIR . (config('framework.view_cache_path') ?? 'storage/cache/views');
-            $blade = new \Core\View\BladeEngine($viewPath, $cachePath);
+if (!function_exists('response')) {
+    function response()
+    {
+        return framework_service('response');
+    }
+}
+
+if (!function_exists('menu_manager')) {
+    function menu_manager()
+    {
+        return new \Components\MenuManager(config('menu', []));
+    }
+}
+
+if (!function_exists('maintenance')) {
+    function maintenance()
+    {
+        return framework_service('maintenance');
+    }
+}
+
+if (!function_exists('feature')) {
+    function feature(?string $key = null, bool $default = false, array $context = [])
+    {
+        $manager = framework_service('feature');
+
+        if ($key === null) {
+            return $manager;
         }
 
-        return $blade;
+        return $manager->enabled($key, $default, $context);
+    }
+}
+
+if (!function_exists('feature_value')) {
+    function feature_value(string $key, mixed $default = null, array $context = [])
+    {
+        return framework_service('feature')->value($key, $default, $context);
     }
 }
 
 if (!function_exists('view')) {
     function view($view, array $data = [])
     {
-        $content = blade_engine()->render((string) $view, $data);
-        echo $content;
-        exit;
+        response()->view((string) $view, $data)->send();
     }
 }
 
@@ -708,13 +928,7 @@ if (!function_exists('response_cache')) {
 if (!function_exists('auth')) {
     function auth()
     {
-        static $auth = null;
-
-        if ($auth === null) {
-            $auth = new \Components\Auth(\config('auth') ?? []);
-        }
-
-        return $auth;
+        return framework_service('auth');
     }
 }
 

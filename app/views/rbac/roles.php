@@ -1,10 +1,10 @@
-<?php includeTemplate('header'); ?>
+@extends('_templates.layouts.app')
 
-<?php if (requirePagePermission()) : ?>
+@section('content')
     <div class="container-fluid flex-grow-1 container-p-y">
 
         <h4 class="fw-bold py-3 mb-4">
-            <?= showPageTitle() ?>
+            {!! showPageTitle() !!}
         </h4>
 
         <div class="col-lg-12 order-2 mb-4">
@@ -16,16 +16,16 @@
                             <button type="button" class="btn btn-warning btn-sm float-end" onclick="getDataList()" title="Refresh">
                                 <i class='bx bx-refresh'></i>
                             </button>
-                            <?php if (permission('rbac-roles-create')) : ?>
+                            @can('rbac-roles-create')
                             <button type="button" class="btn btn-info btn-sm float-end me-2" onclick="addRoles()" title="Add New Role">
                                 <i class='bx bx-plus'></i> Add New Role
                             </button>
-                            <?php endif; ?>
-                            <?php if (permission('rbac-abilities-view')) : ?>
+                            @endcan
+                            @can('rbac-abilities-view')
                             <button type="button" class="btn btn-primary btn-sm float-end me-2" onclick="showPermission()" title="List Permissions">
                                 <i class='bx bx-shield-quarter'></i> Abilities
                             </button>
-                            <?php endif; ?>
+                            @endcan
                             <select id="filter_role_status" class="form-control form-control-sm me-2 float-end" style="width: 100px;" onchange="getDataList()">
                                 <option value=""> All </option>
                                 <option value="1"> Active </option>
@@ -37,7 +37,7 @@
                     <!-- DATATABLE -->
                     <div id="bodyDiv" class="row">
                         <div class="col-xl-12 mb-4">
-                            <div id="nodataDiv" style="display: none;"> <?= nodata() ?> </div>
+                            <div id="nodataDiv" style="display: none;"> {!! nodata() !!} </div>
                             <div id="dataListDiv" class="table-responsive" style="display: block;">
                                 <table id="dataList" class="table table-responsive table-hover table-striped table-bordered collapsed nowrap" width="100%">
                                     <thead class="table-dark">
@@ -60,101 +60,131 @@
         </div>
 
     </div>
+@endsection
 
+@push('scripts')
     <script type="text/javascript">
+        let rolesTableManager = null;
+
         $(document).ready(async function() {
             await getDataList();
         });
 
-        // GET DATATABLE (SERVER-SIDE)
-        async function getDataList() {
-            generateDatatableServer('dataList', '<?= route('roles.list') ?>', 'nodataDiv', {
-                    'role_status': $("#filter_role_status").val()
+        async function getDataList(resetPaging = false) {
+            const tableConfig = {
+                tableId: 'dataList',
+                mode: 'server',
+                rowId: 'row_key',
+                ajax: {
+                    url: '{{ route("roles.list") }}',
+                    method: 'POST',
+                    data: function() {
+                        return {
+                            role_status: $("#filter_role_status").val()
+                        };
+                    }
                 },
-                [{
-                        "data": "name",
-                        // "width": "60%",
-                        "targets": 0
-                    },
+                columns: [
+                    { data: 'name', targets: 0 },
+                    { data: 'rank', width: '10%', targets: 1 },
+                    { data: 'count', width: '10%', targets: 2 },
+                    { data: 'status', width: '5%', targets: 3 },
                     {
-                        "data": "rank",
-                        "width": "10%",
-                        "targets": 1
-                    },
-                    {
-                        "data": "count",
-                        "width": "10%",
-                        "targets": 2
-                    },
-                    {
-                        "data": "status",
-                        "width": "5%",
-                        "targets": 3
-                    },
-                    {
-                        // Action
-                        "data": "action",
-                        "render": function(data, type, row) {
+                        data: 'action',
+                        render: function(data) {
                             return data;
                         },
-                        "targets": -1,
-                        "width": "3%",
-                        "searchable": false,
-                        "orderable": false
+                        targets: -1,
+                        width: '3%',
+                        searchable: false,
+                        orderable: false
                     }
-                ], 'bodyDiv');
+                ],
+                ui: {
+                    emptyStateContainerId: 'nodataDiv',
+                    loadingContainerId: 'bodyDiv',
+                    useLoadingIndicator: true,
+                    renderEmptyState: function() {
+                        return nodata();
+                    }
+                },
+                mutation: {
+                    rowPath: null,
+                    shouldKeepRow: function(rowData) {
+                        const filterValue = $("#filter_role_status").val();
+
+                        if (filterValue === '') {
+                            return true;
+                        }
+
+                        return String(rowData.role_status_value) === String(filterValue);
+                    }
+                }
+            };
+
+            if (!rolesTableManager || !rolesTableManager.instance) {
+                rolesTableManager = datatableManager('dataList', tableConfig);
+                return rolesTableManager.create(tableConfig);
+            }
+
+            rolesTableManager = datatableManager('dataList', tableConfig);
+            rolesTableManager.reload(resetPaging);
+            return rolesTableManager.instance;
         }
 
         function addRoles() {
-            loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', '<?= route('roles.save') ?>', 'Add Roles', {}, 'offcanvas');
+            modalManager().showFormContent({
+                fileName: 'views/rbac/_roleForm.php',
+                overlayType: 'offcanvas',
+                size: '500px',
+                formAction: '{{ route("roles.save") }}',
+                title: 'Add Roles',
+                dataArray: {}
+            });
         }
 
-        async function editRecord(id) {
-            const res = await callApi('get', "<?= route('roles.show') ?>".replace('{id}', id));
+        async function editRecord(key) {
+            const res = await callApi('get', "{{ route('roles.show') }}".replace('{id}', key));
 
             if (isSuccess(res)) {
-                loadFormContent('views/rbac/_roleForm.php', 'rolesForm', '500px', '<?= route('roles.save') ?>', 'Update Roles', res.data.data, 'offcanvas');
+                modalManager().showFormContent({
+                    fileName: 'views/rbac/_roleForm.php',
+                    overlayType: 'offcanvas',
+                    size: '500px',
+                    formAction: '{{ route("roles.save") }}',
+                    title: 'Update Roles',
+                    dataArray: res.data.data
+                });
             }
         }
 
-        async function deleteRecord(id) {
-            Swal.fire({
-                title: 'Are you sure?',
-                html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Yes, Remove it!',
-                reverseButtons: true,
-                customClass: {
-                    container: 'swal2-customCss'
-                },
-            }).then(async (result) => {
-                if (result.isConfirmed) {
-                    const res = await callApi('delete', "<?= route('roles.delete') ?>".replace('{id}', id));
-
-                    if (isSuccess(res)) {
-                        const response = res.data;
-                        noti(response.code, response.message);
-
-                        getDataList(); // reload
-                    }
+        async function deleteRecord(id, rowKey = null) {
+            await confirmDeleteAction({
+                url: "{{ route('roles.delete') }}".replace('{id}', id),
+                onSuccess: function() {
+                    removeDatatableRow('dataList', rowKey);
                 }
-            })
+            });
         }
 
-        async function permissionRecord(id, roleName) {
-            loadFileContent('views/rbac/_permissionAssignForm.php', 'generalContent', '1000px', `Permission Assignment : ${roleName}`, {
-                'id': id,
-                'name': roleName,
-            }, 'offcanvas');
+        async function permissionRecord(key, roleName) {
+            modalManager().showFileContent({
+                fileName: 'views/rbac/_permissionAssignForm.php',
+                overlayType: 'offcanvas',
+                size: '1000px',
+                title: `Permission Assignment : ${roleName}`,
+                dataArray: { 'id': key, 'name': roleName }
+            });
         }
 
         async function showPermission() {
-            loadFileContent('views/rbac/_permissionListView.php', 'generalContent', '1200px', 'List Abilities', [], 'offcanvas');
+            modalManager().showFileContent({
+                fileName: 'views/rbac/_permissionListView.php',
+                overlayType: 'offcanvas',
+                size: '1200px',
+                title: 'List Abilities',
+                dataArray: []
+            });
         }
     </script>
-<?php endif; ?>
-
-<?php includeTemplate('footer'); ?>
+@endpush

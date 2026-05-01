@@ -70,7 +70,7 @@
                     <i class="fa fa-edit label-icon"></i> Register / Update Form
                 </div>
 
-                <form id="formTemplate" action="<?= route('email-templates.save') ?>" method="POST">
+                <form id="formTemplate" action="{{ route('email-templates.save') }}" method="POST">
                     <div class="row">
                         <div class="col-12 col-sm-12">
                             <label class="form-label"> Subject <span class="text-danger">*</span></label>
@@ -280,33 +280,19 @@
             const form = $(this);
             const url = form.attr('action');
 
-            Swal.fire({
-                title: 'Are you sure?',
-                html: "Form will be submitted!",
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Yes, Confirm!',
-                reverseButtons: true,
-                customClass: {
-                    container: 'swal2-customCss'
-                },
-            }).then(
-                async (result) => {
-                    if (result.isConfirmed) {
-                        const res = await submitApi(url, form.serializeArray(), 'formTemplate', null, false);
-                        if (isSuccess(res)) {
-                            if (isSuccess(res.data.code)) {
-                                noti(res.status, res.data.message);
-                                getDataList();
-                                closeModal('#generalModal-fullscreen');
-                            } else {
-                                noti(400, res.data.message)
-                            }
+            confirmSubmitAction({
+                onConfirm: async function() {
+                    const res = await submitApi(url, form.serializeArray(), 'formTemplate');
+                    if (isSuccess(res)) {
+                        if (isSuccess(res.data.code)) {
+                            noti(res.status, res.data.message);
+                            syncDatatableRow('dataList', res.data.data ?? null);
+                        } else {
+                            noti(400, res.data.message)
                         }
                     }
-                })
+                }
+            });
         } else {
             validationJsError('toastr', 'single'); // single or multi
         }
@@ -322,7 +308,7 @@
             'email_cc': 'min_length:5|max_length:255',
             'email_bcc': 'min_length:5|max_length:255',
             'email_status': 'required|integer|in:0,1',
-            'id': 'required|integer',
+            'id': 'integer',
         };
         
         const message = {

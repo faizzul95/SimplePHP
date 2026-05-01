@@ -19,14 +19,216 @@ class AuthController extends Controller
 
     public function authorize(Request $request): array
     {
-        global $redirectAuth;
+        return $this->authorizeByMode($request, 'session', true, ['session']);
+    }
 
-        $username = trim((string) $request->input('username'));
+    public function loginApi(Request $request): array
+    {
+        $credentialMethods = auth()->apiCredentialMethods();
+        if (empty($credentialMethods)) {
+            return [
+                'code' => 400,
+                'message' => 'API credential login is not enabled for token or OAuth2 in auth config',
+            ];
+        }
+
+        return $this->authorizeByMode($request, auth()->preferredApiMethod($credentialMethods), false, $credentialMethods);
+    }
+
+    public function me(Request $request): array
+    {
+        $methods = auth()->apiMethods();
+        $user = auth()->user($methods);
+
+        if (empty($user)) {
+            return [
+                'code' => 401,
+                'message' => 'Unauthorized',
+            ];
+        }
+
+        return [
+            'code' => 200,
+            'auth_via' => auth()->via($methods),
+            'data' => $user,
+        ];
+    }
+
+    public function devices(Request $request): array
+    {
+        $sessionVia = auth()->via(['oauth', 'session']);
+        if ($sessionVia === null) {
+            return [
+                'code' => 400,
+                'message' => 'Active auth method does not support browser session devices',
+            ];
+        }
+
+        $userId = auth()->id('session');
+        if ($userId === null || $userId < 1) {
+            return [
+                'code' => 401,
+                'message' => 'Unauthorized',
+            ];
+        }
+
+        return [
+            'code' => 200,
+            'auth_via' => $sessionVia,
+            'data' => auth()->sessions($userId),
+        ];
+    }
+
+    public function revokeDevice(string $sessionId): array
+    {
+        $sessionVia = auth()->via(['oauth', 'session']);
+        if ($sessionVia === null) {
+            return [
+                'code' => 400,
+                'message' => 'Active auth method does not support browser session devices',
+            ];
+        }
+
+        if (!auth()->revokeSession($sessionId)) {
+            return [
+                'code' => 404,
+                'message' => 'Session not found',
+            ];
+        }
+
+        return [
+            'code' => 200,
+            'message' => 'Session revoked',
+            'auth_via' => $sessionVia,
+        ];
+    }
+
+    public function logoutOtherDevices(Request $request): array
+    {
+        $sessionVia = auth()->via(['oauth', 'session']);
+        if ($sessionVia === null) {
+            return [
+                'code' => 400,
+                'message' => 'Active auth method does not support browser session devices',
+            ];
+        }
+
+        $password = (string) $request->input('password', '');
+        if ($password === '') {
+            return [
+                'code' => 400,
+                'message' => 'Password is required',
+            ];
+        }
+
+        if (!auth()->logoutOtherDevices($password)) {
+            return [
+                'code' => 400,
+                'message' => 'Unable to log out other devices',
+            ];
+        }
+
+        return [
+            'code' => 200,
+            'message' => 'Other devices logged out',
+            'auth_via' => $sessionVia,
+        ];
+    }
+
+    public function tokens(Request $request): array
+    {
+        $userId = auth()->id();
+        if ($userId === null || $userId < 1) {
+            return [
+                'code' => 401,
+                'message' => 'Unauthorized',
+            ];
+        }
+
+        return [
+            'code' => 200,
+            'auth_via' => auth()->via(),
+            'data' => auth()->tokens($userId),
+        ];
+    }
+
+    public function currentToken(Request $request): array
+    {
+        if (auth()->via(['token']) !== 'token') {
+            return [
+                'code' => 400,
+                'message' => 'No active personal access token',
+            ];
+        }
+
+        $token = auth()->currentToken();
+        if ($token === null) {
+            return [
+                'code' => 404,
+                'message' => 'Token not found',
+            ];
+        }
+
+        return [
+            'code' => 200,
+            'auth_via' => 'token',
+            'data' => $token,
+        ];
+    }
+
+    public function rotateCurrentToken(Request $request): array
+    {
+        if (auth()->via(['token']) !== 'token') {
+            return [
+                'code' => 400,
+                'message' => 'No active personal access token',
+            ];
+        }
+
+        $plainToken = auth()->bearerToken();
+        if (!is_string($plainToken) || trim($plainToken) === '') {
+            return [
+                'code' => 400,
+                'message' => 'No active personal access token',
+            ];
+        }
+
+        $tokenName = trim((string) $request->input('token_name', ''));
+        $expiresAt = $this->resolveRotatedTokenExpiry($request);
+        $abilities = $this->resolveRotatedTokenAbilities($request);
+        $replacement = auth()->rotateToken($plainToken, $tokenName, $expiresAt, $abilities);
+        if ($replacement === null) {
+            return [
+                'code' => 500,
+                'message' => 'Failed to rotate access token',
+            ];
+        }
+
+        $response = [
+            'code' => 200,
+            'message' => 'Token rotated',
+            'auth_via' => 'token',
+            'token' => $replacement,
+            'token_type' => 'Bearer',
+        ];
+
+        if ($expiresAt !== null) {
+            $response['expires_in'] = max(0, $expiresAt - time());
+        }
+
+        return $response;
+    }
+
+    private function authorizeByMode(Request $request, string $defaultAuthMode = 'session', bool $appendRedirectUrl = true, array $allowedModes = ['session']): array
+    {
+        $username = trim((string) $request->input('username', $request->input('email', '')));
         $password = (string) $request->input('password');
-        $authMode = strtolower((string) $request->input('auth_mode', 'session'));
+        $authMode = strtolower((string) $request->input('auth_mode', $defaultAuthMode));
+        $preferredApiMethod = auth()->preferredApiMethod();
+        $allowedModes = array_values(array_unique(array_filter(array_map(static fn($mode) => strtolower(trim((string) $mode)), $allowedModes))));
 
-        if (!in_array($authMode, ['session', 'token', 'both'], true)) {
-            $authMode = 'session';
+        if (!in_array($authMode, $allowedModes, true)) {
+            $authMode = $defaultAuthMode;
         }
 
         if ($username === '' || $password === '') {
@@ -58,42 +260,49 @@ class AuthController extends Controller
                 }
             }
         } else {
-            $sessionResponse = $this->loginSessionStart($request, $userData);
-            $response = $sessionResponse;
+            $issuesApiCredential = in_array($authMode, ['token', 'oauth2'], true);
+            $startsSession = $authMode === 'session';
 
-            if (isSuccess($sessionResponse['code']) && in_array($authMode, ['token', 'both'], true)) {
-                $tokenName = $request->input('token_name', 'Web Login Token');
-                $maxTTL = 30 * 24 * 60 * 60; // 30 days maximum
-                $tokenTTL = min(max((int) $request->input('token_ttl', $maxTTL), 60), $maxTTL);
+            if ($startsSession) {
+                $response = $this->loginSessionStart($request, $userData);
+            } else {
+                auth()->recordLoginHistory((int) $userData['id']);
+                $response = ['code' => 200, 'message' => 'Login'];
+            }
 
-                // Derive token abilities from user's actual permissions — never trust client input
-                $tokenAbilities = !empty($_SESSION['permissions']) ? $_SESSION['permissions'] : ['*'];
-                $token = auth()->createToken((int) $userData['id'], (string) $tokenName, time() + $tokenTTL, $tokenAbilities);
+            if (isSuccess($response['code']) && $issuesApiCredential) {
+                $credentialMethod = $authMode === 'session' ? $preferredApiMethod : $authMode;
+                $credentialName = $credentialMethod === 'oauth2'
+                    ? (string) $request->input('token_name', 'OAuth2 Access Token')
+                    : (string) $request->input('token_name', 'Access Token');
+                $maxTTL = 30 * 24 * 60 * 60;
+                $credentialTTL = min(max((int) $request->input('token_ttl', $maxTTL), 60), $maxTTL);
+                $abilities = auth()->permissions((int) $userData['id'], false);
+                $credential = auth()->issueApiCredential(
+                    (int) $userData['id'],
+                    $credentialMethod,
+                    $credentialName,
+                    time() + $credentialTTL,
+                    !empty($abilities) ? $abilities : ['*']
+                );
 
-                if (empty($token)) {
-                    $response = ['code' => 500, 'message' => 'Failed to generate access token'];
-                } else {
-                    if ($authMode === 'token') {
+                if ($credential === null) {
+                    if ($startsSession) {
                         auth()->logout(false);
-
-                        $response = [
-                            'code' => 200,
-                            'message' => 'Login',
-                            'token' => $token,
-                            'token_type' => 'Bearer',
-                            'expires_in' => $tokenTTL,
-                        ];
-                    } else {
-                        $response['token'] = $token;
-                        $response['token_type'] = 'Bearer';
-                        $response['expires_in'] = $tokenTTL;
                     }
+
+                    $response = ['code' => 500, 'message' => 'Failed to generate access credential'];
+                } else {
+                    $response['token'] = $credential['credential'];
+                    $response['token_type'] = (string) ($credential['token_type'] ?? 'Bearer');
+                    $response['expires_in'] = $credentialTTL;
+                    $response['auth_via'] = (string) ($credential['method'] ?? $credentialMethod);
                 }
             }
         }
 
-        if (isSuccess($response['code']) && empty($response['redirectUrl'])) {
-            $response['redirectUrl'] = $redirectAuth;
+        if ($appendRedirectUrl && isSuccess($response['code']) && empty($response['redirectUrl'])) {
+            $response['redirectUrl'] = menu_manager()->resolveAuthenticatedLandingUrl() ?? url('dashboard');
         }
 
         return $response;
@@ -101,20 +310,39 @@ class AuthController extends Controller
 
     public function logout(Request $request): array
     {
+        $apiMethods = auth()->apiMethods();
+        $apiVia = auth()->via($apiMethods);
+        $sessionVia = auth()->via(['oauth', 'session']);
+
+        if (in_array($apiVia, ['token', 'oauth2'], true)) {
+            if (!auth()->revokeCurrentApiCredential($apiMethods)) {
+                return ['code' => 400, 'message' => $apiVia === 'oauth2' ? 'No active OAuth2 token' : 'No active token'];
+            }
+
+            return ['code' => 200, 'message' => $apiVia === 'oauth2' ? 'OAuth2 token revoked' : 'Token revoked', 'auth_via' => $apiVia];
+        }
+
+        if ($request->expectsJson() && $apiVia !== null) {
+            return [
+                'code' => 400,
+                'message' => 'Logout is not supported for the active API auth method',
+                'auth_via' => $apiVia,
+            ];
+        }
+
         auth()->logout(true);
+
         return [
             'code' => 200,
             'message' => 'Logout',
             'redirectUrl' => url(REDIRECT_LOGIN),
+            'auth_via' => $sessionVia ?: 'session',
         ];
     }
 
     public function resetPassword(Request $request): array
     {
-        $id = decodeID($request->input('id'));
-        if (empty($id)) {
-            return ['code' => 400, 'message' => 'ID is required'];
-        }
+        $id = $this->decodeIdOrFail($request->input('id'));
 
         $result = db()->table('users')->where('id', $id)->whereNotNull('email')->safeOutput()->fetch();
         if (empty($result)) {
@@ -240,7 +468,37 @@ class AuthController extends Controller
         return [
             'code' => 200,
             'message' => 'Login',
-            'redirectUrl' => function_exists('resolveAuthenticatedLandingUrl') ? (resolveAuthenticatedLandingUrl() ?? url('dashboard')) : url('dashboard'),
+            'redirectUrl' => menu_manager()->resolveAuthenticatedLandingUrl() ?? url('dashboard'),
         ];
+    }
+
+    private function resolveRotatedTokenExpiry(Request $request): ?int
+    {
+        if (!$request->has('token_ttl')) {
+            return null;
+        }
+
+        $maxTTL = 30 * 24 * 60 * 60;
+        $ttl = min(max((int) $request->input('token_ttl', $maxTTL), 60), $maxTTL);
+
+        return time() + $ttl;
+    }
+
+    private function resolveRotatedTokenAbilities(Request $request): array
+    {
+        if (!$request->has('abilities')) {
+            return [];
+        }
+
+        $abilities = $request->input('abilities', []);
+        if (is_string($abilities)) {
+            $abilities = array_map('trim', explode(',', $abilities));
+        }
+
+        if (!is_array($abilities)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(static fn($ability) => trim((string) $ability), $abilities), static fn(string $ability): bool => $ability !== ''));
     }
 }

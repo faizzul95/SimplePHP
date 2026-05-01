@@ -26,31 +26,44 @@ This means route behavior is both code-driven (Router) and config-driven (`app/c
 
 ```php
 $router->get('/dashboard', [DashboardController::class, 'index'])
-	->middleware('auth.web')
+	->webAuth()
+	->can('management-view')
 	->name('dashboard');
 ```
+
+RouteDefinition convenience helpers now include:
+- `auth(...)`
+- `webAuth()`
+- `apiAuth()`
+- `guestOnly()`
+- `permission(...)`
+- `permissionAny(...)`
+- `can(...)` as an alias of `permission(...)`
+- `canAny(...)` as an alias of `permissionAny(...)`
+- `role(...)`
+- `ability(...)`
 
 ### 2) Grouped routes with shared middleware and prefix
 
 ```php
 $router->group(['prefix' => '/api/v1', 'middleware' => ['auth.api', 'xss']], function ($router) {
-	$router->get('/auth/me', [AuthApiController::class, 'me'])->name('api.auth.me');
-	$router->post('/auth/logout', [AuthApiController::class, 'logout'])->name('api.auth.logout');
+	$router->get('/auth/me', [AuthController::class, 'me'])->name('api.auth.me');
+	$router->post('/auth/logout', [AuthController::class, 'logout'])->name('api.auth.logout');
 });
 ```
 
-### 3) Resource route
+### 3) Explicit API action route
 
 ```php
-$router->resource('/users', UserApiController::class);
+$router->get('/auth/me', [AuthController::class, 'me']);
+$router->post('/auth/logout', [AuthController::class, 'logout']);
 ```
 
-This expands to:
-- `GET /users` -> `index`
-- `POST /users` -> `store`
-- `GET /users/{id}` -> `show`
-- `PUT|PATCH /users/{id}` -> `update`
-- `DELETE /users/{id}` -> `destroy`
+This shared-controller pattern maps to:
+- `GET /auth/me` -> `me`
+- `POST /auth/logout` -> `logout`
+
+The framework can still use resource routes, but this project now keeps web page actions and API actions inside the same controller class instead of splitting them under a dedicated `Controllers\Api` namespace.
 
 ### 4) Parameter constraints (`where`) on route params
 
@@ -68,6 +81,10 @@ $router->get('/posts/{slug}', [PostController::class, 'show'])
 $router->post('/login', [AuthController::class, 'authorize'])
 	->middleware('throttle:auth')
 	->middleware('xss:password,remember_me');
+
+$router->post('/users/save', [UserController::class, 'save'])
+	->middleware('xss')
+	->canAny(['user-create', 'user-update']);
 ```
 
 ## Route Matching Behavior
@@ -79,11 +96,15 @@ $router->post('/login', [AuthController::class, 'authorize'])
 
 ## Named Routes
 
-- Route names are indexed at dispatch.
+- Route names are registered immediately when `RouteDefinition::name(...)` is called.
 - URL resolution uses named route map (`urlFor` / helper layer).
 - Required placeholders must be provided, otherwise URL resolution returns `null`.
 - Optional placeholders are included when provided and omitted when missing.
 - Unmatched extra params are appended as query string.
+
+Practical implication:
+
+- `route('dashboard')` can be used during view rendering, menu rendering, middleware redirects, or login-response construction without waiting for `Router::dispatch()` to finish.
 
 Practical usage:
 
@@ -97,6 +118,29 @@ $router->get('/login', [AuthController::class, 'showLogin'])->name('login');
 - `Router::redirect()` now normalizes targets before sending the response.
 - Relative redirect targets are resolved through the app URL helper, so subfolder deployments keep redirects inside the app base path.
 - Absolute redirect targets are only preserved when they point to the current host; malformed or external targets are reduced to a safe fallback.
+- Unsafe schemes and scheme-relative targets are rejected by the shared response redirect sanitizer.
+
+### `redirect()` helper — `Redirector` + `RedirectResponse`
+
+Controllers should use the `redirect()` helper (backed by `Core\Http\Redirector`) rather than echoing `Location:` headers manually. Each call returns a `RedirectResponse`.
+
+```php
+// Internal path (sanitized, subfolder-aware)
+return redirect()->to('/dashboard');
+
+// Named route
+return redirect()->route('users.show', ['id' => $id]);
+
+// External URL (explicitly allowed; still passes the redirect sanitizer)
+return redirect()->away('https://partner.example.com/callback');
+
+// Back to referrer, with a safe fallback
+return redirect()->back('/dashboard');
+```
+
+`to()` and `back()` normalize against the app base URL and reject cross-host or unsafe-scheme targets; `away()` is the only form that permits a different host, and it still runs through `Response::sanitizeRedirectTarget()`.
+
+For the full `RedirectResponse` surface (flash inputs, `with()`, `withErrors()`, status codes), see [14-request-response-details.md](14-request-response-details.md#redirector--redirectresponse). This page stays focused on routing behavior; do not duplicate response details here.
 
 ## Error & Not Found Flow
 

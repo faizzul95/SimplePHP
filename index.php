@@ -1,17 +1,25 @@
 <?php
 
-require_once 'bootstrap.php';
-
 try {
+    require_once __DIR__ . '/bootstrap.php';
+    maintenance()->handleRequest();
+
     $request = \Core\Http\Request::capture();
+    dispatch_event('request.captured', ['request' => $request]);
     $kernel = new \App\Http\Kernel();
     $kernel->handle($request);
-} catch (Exception|Throwable $e) {
-    if (class_exists('\Core\Exceptions\ExceptionHandler')) {
+} catch (\Throwable $e) {
+    if (class_exists(\Core\Exceptions\ExceptionHandler::class)) {
         \Core\Exceptions\ExceptionHandler::handle($e);
-    } else {
-        error_log("Router initialization error: " . $e->getMessage());
-        http_response_code(500);
-        echo "500 - Internal Server Error";
+        exit(1);
     }
+
+    error_log('Router initialization error: ' . $e->getMessage());
+
+    if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg' && !headers_sent()) {
+        http_response_code(500);
+    }
+
+    echo '500 - Internal Server Error';
+    exit(1);
 }

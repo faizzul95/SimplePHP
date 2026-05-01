@@ -83,6 +83,14 @@ class Security
     private const MAX_INSPECTION_DEPTH = 8;
 
     /**
+     * Cap any single string value fed into the XSS regex scanner. Pathologically
+     * large inputs (mebibyte-scale blobs, deeply nested HTML) can trigger
+     * catastrophic backtracking in the legacy XSS patterns. 256 KiB is well
+     * above any legitimate form field while still bounding the worst case.
+     */
+    private const MAX_INSPECTION_LENGTH = 262144;
+
+    /**
      * Fast-path indicators that justify running the heavier deep-content checks.
      *
      * @var array<int, string>
@@ -399,6 +407,55 @@ class Security
     }
 
     /**
+     * Validate an original upload filename before it is echoed back to clients or logged.
+     */
+    public function isSafeUploadFilename(?string $filename): bool
+    {
+        if (!is_string($filename)) {
+            return false;
+        }
+
+        $filename = trim($filename);
+        if ($filename === '' || strlen($filename) > 255) {
+            return false;
+        }
+
+        if (strpos($filename, "\0") !== false) {
+            return false;
+        }
+
+        if (preg_match('/(\.\.\/|\.\/|\\\\|\/)/', $filename) === 1) {
+            return false;
+        }
+
+        if (preg_match('/[<>:"|?*]/', $filename) === 1) {
+            return false;
+        }
+
+        if ($this->containsXss($filename)) {
+            return false;
+        }
+
+        $windowsReserved = [
+            'CON', 'PRN', 'AUX', 'NUL',
+            'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+            'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+        ];
+
+        $namePart = strtoupper(pathinfo($filename, PATHINFO_FILENAME));
+        if (in_array($namePart, $windowsReserved, true)) {
+            return false;
+        }
+
+        $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+        if ($extension !== '' && $this->isBlockedUploadExtension($extension)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Check whether input contains SQL injection indicators.
      *
       * @param mixed $input Scalar or nested array input to inspect.
@@ -484,6 +541,12 @@ class Security
             return false;
         }
 
+        // Fail closed on pathologically large inputs: treat them as suspicious
+        // rather than paying quadratic regex cost on every request.
+        if (strlen($input) > self::MAX_INSPECTION_LENGTH) {
+            return true;
+        }
+
         $decodedInput = html_entity_decode($input, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $loweredInput = strtolower($input);
         $contentScan = $this->containsMalicious($decodedInput, false);
@@ -517,6 +580,15 @@ class Security
     {
         if (empty($input) || !is_string($input)) {
             return ['malicious' => false, 'value' => (string) $input];
+        }
+
+        // Pathologically large strings are treated as suspicious without
+        // running the heavy regex, to avoid catastrophic backtracking.
+        if (strlen($input) > self::MAX_INSPECTION_LENGTH) {
+            return [
+                'malicious' => true,
+                'value' => $sanitizeValue ? self::BLOCKED_CONTENT_PLACEHOLDER : $input,
+            ];
         }
 
         $originalInput = $input;

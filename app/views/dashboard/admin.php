@@ -1,10 +1,10 @@
-<?php includeTemplate('header'); ?>
+@extends('_templates.layouts.app')
 
-<?php if (requirePagePermission()) : ?>
+@section('content')
     <div class="container-fluid flex-grow-1 container-p-y">
 
         <h4 class="fw-bold py-3 mb-4">
-            <?= showPageTitle() ?>
+            {!! showPageTitle() !!}
         </h4>
 
         <div class="col-lg-12 order-2 mb-4">
@@ -73,6 +73,9 @@
 
     </div>
 
+@endsection
+
+@push('scripts')
     <script type="text/javascript">
         $(document).ready(async function() {
             loading('.loadingCard', true);
@@ -83,7 +86,7 @@
 
         async function getDashboardData() {
 
-            const res = await callApi('post', "<?= route('dashboard.count-admin') ?>", {});
+            const res = await callApi('post', "{{ route('dashboard.count-admin') }}", {});
 
             if (isSuccess(res)) {
                 const data = res.data.data;
@@ -94,6 +97,4 @@
             }
         }
     </script>
-<?php endif; ?>
-
-<?php includeTemplate('footer'); ?>
+@endpush

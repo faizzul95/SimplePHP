@@ -2,12 +2,20 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\SaveUserRequest;
 use Core\Http\Controller;
 use Core\Http\Request;
-use App\Http\Requests\SaveUserRequest;
 
 class UserController extends Controller
 {
+    private const USER_STATUS_BADGES = [
+        0 => '<span class="badge bg-label-warning"> Inactive </span>',
+        1 => '<span class="badge bg-label-success"> Active </span>',
+        2 => '<span class="badge bg-label-warning"> Suspended </span>',
+        3 => '<span class="badge bg-label-danger"> Deleted </span>',
+        4 => '<span class="badge bg-label-dark"> Unverified </span>',
+    ];
+
     public function __construct()
     {
         parent::__construct();
@@ -15,31 +23,33 @@ class UserController extends Controller
 
     public function index(): void
     {
-        $this->setPageState('directory', null, 'user-view', 'Directory', 'Directory');
+        $this->setPageState('directory', null, 'Directory');
         $this->view('directory.users');
     }
 
     public function listUserDatatable(Request $request): void
     {
-        $statusF = request()->input('user_status_filter');
-        $genderF = request()->input('user_gender_filter');
-        $profileF = request()->input('user_profile_filter');
-        $onlyTrashed = request()->input('user_deleted_filter', false);
+        $statusFilter = $request->input('user_status_filter');
+        $genderFilter = $request->input('user_gender_filter');
+        $profileFilter = $request->input('user_profile_filter');
+        $onlyTrashed = in_array($request->input('user_deleted_filter', false), [true, 1, '1', 'true', 'on', 'yes'], true);
 
         $db = db();
         $db->table('users')
             ->select('id, name, email, user_gender, user_contact_no, user_dob, user_status, deleted_at')
-            ->when(strlen((string) $genderF) > 0, function ($query) use ($genderF) {
-                $query->where('user_gender', $genderF);
+            ->when(strlen((string) $genderFilter) > 0, function ($query) use ($genderFilter) {
+                $query->where('user_gender', $genderFilter);
             })
-            ->when(strlen((string) $statusF) > 0, function ($query) use ($statusF) {
-                $query->where('user_status', $statusF);
+            ->when(strlen((string) $statusFilter) > 0, function ($query) use ($statusFilter) {
+                $query->where('user_status', $statusFilter);
             })
-            ->when(strlen((string) $profileF) > 0, function ($query) use ($profileF) {
-                if ($profileF == 'N/A') {
-                    $query->whereRaw('NOT EXISTS (SELECT 1 FROM user_profile WHERE user_id = users.id)');
-                } else {
-                    $query->whereRaw('EXISTS (SELECT 1 FROM user_profile WHERE user_id = users.id AND role_id = ?)', [$profileF]);
+            ->when(strlen((string) $profileFilter) > 0, function ($query) use ($profileFilter) {
+                if ($profileFilter === 'N/A') {
+                    $query->whereDoesntHave('user_profile', 'user_id', 'id');
+                } elseif (ctype_digit($profileFilter)) {
+                    $query->whereHas('user_profile', 'user_id', 'id', function ($profileQuery) use ($profileFilter) {
+                        $profileQuery->where('role_id', (int) $profileFilter);
+                    });
                 }
             });
 
@@ -50,6 +60,7 @@ class UserController extends Controller
         }
 
         $result = $db->setPaginateFilterColumn(['name', 'email', 'user_contact_no'])
+            ->setAllowedSortColumns(['users.name', 'users.email', 'users.user_contact_no', 'users.user_gender', 'users.user_status', 'users.user_dob'])
             ->with('profile', 'user_profile', 'user_id', 'id', function ($db) {
                 $db->select('id, user_id, role_id')
                     ->withOne('roles', 'master_roles', 'id', 'role_id', function ($db) {
@@ -61,67 +72,11 @@ class UserController extends Controller
                     ->where('entity_file_type', 'USER_PROFILE');
             })
             ->safeOutput()
-            ->paginate_ajax(request()->all());
-
-        $status = [
-            '<span class="badge bg-label-warning"> Inactive </span>',
-            '<span class="badge bg-label-success"> Active </span>',
-            '<span class="badge bg-label-warning"> Suspended </span>',
-            '<span class="badge bg-label-danger"> Deleted </span>',
-            '<span class="badge bg-label-dark"> Unverified </span>'
-        ];
+            ->paginate_ajax($request->all());
 
         if (!empty($result['data'])) {
             $listSuperadmin = db()->table('user_profile')->where('role_id', 1)->pluck('user_id');
-
-            $result['data'] = array_map(function ($row) use ($status, $listSuperadmin) {
-                $id = encodeID($row['id']);
-                $avatar = isset($row['avatar']['files_path']) ? asset(getFilesCompression($row['avatar']), false) : asset('upload/default.jpg');
-                $avatarOriginal = isset($row['avatar']['files_path']) ? asset($row['avatar']['files_path'], false) : asset('upload/default.jpg');
-                $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
-
-                $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$id}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
-                $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">                             
-                                                                            <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>                            
-                                                                        </a>' : '';
-
-                $statusUser = !empty($row['deleted_at']) ? '<span class="badge bg-label-danger"> Deleted </span>' : $status[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>';
-
-                if (!empty($row['deleted_at'])) {
-                    $action = "<a href='javascript:void(0);' onclick='restoreRecord(\"{$id}\")' title='Restore users'> <i class='bx bx-refresh'></i> </a>";
-                } else {
-                    $updateAct = permission('user-update') ? "<span style='display: inline-block; vertical-align: middle;'><i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$id}\")' title='Edit'></i> </span>" : '';
-                    $deleteAct = permission('user-delete') ? "<a href='javascript:void(0);' onclick='deleteRecord(\"{$id}\")' class='dropdown-item'><i class='bx bx-trash me-1'></i> Delete </a>" : '';
-                    $resetAct = permission('user-update') ? "<a href='javascript:void(0);' onclick='resetPassword(\"{$id}\")' class='dropdown-item'>\n      
-                                                                                                <i class='bx bx-key me-1'></i> Reset Password                                   
-                                                                                            </a>" : '';
-                    $delResetAction = in_array($row['id'], $listSuperadmin) ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
-                                                                                        <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'> 
-                                                                                            <i class='bx bx-dots-vertical-rounded'></i>                                
-                                                                                        </button>                               
-                                                                                        <div class='dropdown-menu'>                                   
-                                                                                            {$deleteAct}                                    
-                                                                                            {$resetAct}
-                                                                                        </div>                           
-                                                                                    </div>";
-
-                    $action = "{$updateAct} {$delResetAction}";
-                }
-
-                return [
-                    'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">
-                                    <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '" onerror="this.onerror=null;this.src=\'' . asset('upload/default.jpg') . '\';">
-                                    ' . $uploadAction . '
-                                </div>',
-                    'name' => $row['name'] . (!empty($row['profile']) && is_array($row['profile']) ? ' <span class="text-muted"><i><small>(' . implode(', ', array_map(function ($p) {
-                                                return isset($p['roles']['role_name']) ? $p['roles']['role_name'] : '';
-                                             }, $row['profile'])) . ')</i></small></span>' : ''),
-                    'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
-                    'gender' => $row['user_gender'] == 1 ? 'Male' : 'Female',
-                    'status' => $statusUser,
-                    'action' => $action
-                ];
-            }, $result['data']);
+            $result['data'] = array_map(fn($row) => $this->mapUserDatatableRow($row, $listSuperadmin), $result['data']);
         }
 
         jsonResponse($result);
@@ -129,14 +84,9 @@ class UserController extends Controller
 
     public function show(string $id): void
     {
-        $id = decodeID($id);
+        $id = $this->decodeIdOrFail($id);
 
-        if (empty($id)) {
-            jsonResponse(['code' => 400, 'message' => 'ID is required']);
-        }
-
-        $db = db();
-        $users = $db->table('users')
+        $user = db()->table('users')
             ->where('id', $id)
             ->withOne('profile', 'user_profile', 'user_id', 'id', function ($db) {
                 $db->select('id, user_id, role_id')
@@ -150,11 +100,11 @@ class UserController extends Controller
             ->safeOutput()
             ->fetch();
 
-        if (!$users) {
+        if (!$user) {
             jsonResponse(['code' => 404, 'message' => 'User not found']);
         }
 
-        jsonResponse(['code' => 200, 'data' => $users]);
+        jsonResponse(['code' => 200, 'data' => $user]);
     }
 
     public function save(SaveUserRequest $request): void
@@ -166,26 +116,26 @@ class UserController extends Controller
 
         if (isset($data['id'])) {
             if (!empty($data['id'])) {
-                $uniqueColumm = [
+                $uniqueColumns = [
                     'email' => 'Email',
                     'username' => 'Username',
-                    'user_contact_no' => 'Contact number'
+                    'user_contact_no' => 'Contact number',
                 ];
 
-                $users = db()->table('users')
-                    ->select(array_keys($uniqueColumm))
+                $user = db()->table('users')
+                    ->select(array_keys($uniqueColumns))
                     ->where('id', $data['id'])
                     ->whereNull('deleted_at')
                     ->safeOutput()
                     ->fetch();
 
-                if (!$users) {
+                if (!$user) {
                     jsonResponse(['code' => 404, 'message' => 'User not found']);
                 }
 
                 $conditions = [];
-                foreach ($uniqueColumm as $column => $label) {
-                    if (isset($data[$column]) && isset($users[$column]) && ($data[$column] != $users[$column])) {
+                foreach ($uniqueColumns as $column => $label) {
+                    if (isset($data[$column]) && isset($user[$column]) && ($data[$column] != $user[$column])) {
                         $conditions[$column] = $data[$column];
                     }
                 }
@@ -214,7 +164,7 @@ class UserController extends Controller
                         foreach ($duplicates as $duplicate) {
                             foreach ($conditions as $column => $value) {
                                 if ($duplicate[$column] === $value) {
-                                    $duplicateFields[] = $uniqueColumm[$column];
+                                    $duplicateFields[] = $uniqueColumns[$column];
                                 }
                             }
                         }
@@ -222,7 +172,7 @@ class UserController extends Controller
                         if (!empty($duplicateFields)) {
                             jsonResponse([
                                 'code' => 422,
-                                'message' => implode(', ', $duplicateFields) . ' already exist'
+                                'message' => implode(', ', array_unique($duplicateFields)) . ' already exist',
                             ]);
                         }
                     }
@@ -243,7 +193,6 @@ class UserController extends Controller
             jsonResponse(['code' => 422, 'message' => 'Failed to save user']);
         }
 
-        // Capture the user ID (new insert returns auto-increment ID)
         $userId = $requestId ?: ($result['id'] ?? null);
 
         if ($userId && $roleId) {
@@ -261,21 +210,39 @@ class UserController extends Controller
             );
         }
 
-        jsonResponse(['code' => 200, 'message' => 'User saved']);
+        $row = db()->table('users')
+            ->where('id', $userId)
+            ->with('profile', 'user_profile', 'user_id', 'id', function ($db) {
+                $db->select('id, user_id, role_id')
+                    ->withOne('roles', 'master_roles', 'id', 'role_id', function ($db) {
+                        $db->select('id,role_name')->where('role_status', 1);
+                    });
+            })
+            ->withOne('avatar', 'entity_files', 'entity_id', 'id', function ($db) {
+                $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
+                    ->where('entity_file_type', 'USER_PROFILE');
+            })
+            ->whereNull('deleted_at')
+            ->safeOutput()
+            ->fetch();
+
+        $listSuperadmin = db()->table('user_profile')->where('role_id', 1)->pluck('user_id');
+
+        jsonResponse([
+            'code' => 200,
+            'message' => 'User saved',
+            'data' => !empty($row) ? $this->mapUserDatatableRow($row, $listSuperadmin) : null,
+        ]);
     }
 
     public function destroy(string $id): void
     {
-        $id = decodeID($id);
-
-        if (empty($id)) {
-            jsonResponse(['code' => 400, 'message' => 'ID is required']);
-        }
+        $id = $this->decodeIdOrFail($id);
 
         $result = db()->table('users')->where('id', $id)->softDelete(
             [
                 'user_status' => 3,
-                'deleted_at' => timestamp()
+                'deleted_at' => timestamp(),
             ]
         );
 
@@ -284,5 +251,76 @@ class UserController extends Controller
         }
 
         jsonResponse(['code' => 200, 'message' => 'User deleted']);
+    }
+
+    private function mapUserDatatableRow(array $row, array $listSuperadmin = []): array
+    {
+        $key = encodeID($row['id']);
+        $rowKey = 'user-row-' . $row['id'];
+        $avatar = isset($row['avatar']['files_path']) ? asset(getFilesCompression($row['avatar']), false) : asset('upload/default.jpg');
+        $avatarOriginal = isset($row['avatar']['files_path']) ? asset($row['avatar']['files_path'], false) : asset('upload/default.jpg');
+        $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
+        $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$key}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
+        $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">                             
+                                                                            <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>                            
+                                                                        </a>' : '';
+
+        $profileRoleIds = [];
+        $profileRoleNames = [];
+
+        if (!empty($row['profile']) && is_array($row['profile'])) {
+            foreach ($row['profile'] as $profile) {
+                if (isset($profile['role_id'])) {
+                    $profileRoleIds[] = (string) $profile['role_id'];
+                }
+
+                if (!empty($profile['roles']['role_name'])) {
+                    $profileRoleNames[] = $profile['roles']['role_name'];
+                }
+            }
+        }
+
+        $statusMarkup = !empty($row['deleted_at'])
+            ? self::USER_STATUS_BADGES[3]
+            : (self::USER_STATUS_BADGES[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>');
+
+        if (!empty($row['deleted_at'])) {
+            $action = "<a href='javascript:void(0);' onclick='restoreRecord(\"{$key}\")' title='Restore users'> <i class='bx bx-refresh'></i> </a>";
+        } else {
+            $updateAction = permission('user-update') ? "<span style='display: inline-block; vertical-align: middle;'><i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$key}\")' title='Edit'></i> </span>" : '';
+            $deleteAction = permission('user-delete') ? "<a href='javascript:void(0);' onclick='deleteRecord(\"{$key}\", \"{$rowKey}\")' class='dropdown-item'><i class='bx bx-trash me-1'></i> Delete </a>" : '';
+            $resetAction = permission('user-update') ? "<a href='javascript:void(0);' onclick='resetPassword(\"{$key}\")' class='dropdown-item'>
+                                                                                                <i class='bx bx-key me-1'></i> Reset Password
+                                                                                            </a>" : '';
+            $dropdownAction = in_array($row['id'], $listSuperadmin) ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
+                                                                                        <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
+                                                                                            <i class='bx bx-dots-vertical-rounded'></i>
+                                                                                        </button>
+                                                                                        <div class='dropdown-menu'>
+                                                                                            {$deleteAction}
+                                                                                            {$resetAction}
+                                                                                        </div>
+                                                                                    </div>";
+
+            $action = "{$updateAction} {$dropdownAction}";
+        }
+
+        return [
+            'row_key' => $rowKey,
+            'key' => $key,
+            'user_status_value' => isset($row['user_status']) ? (int) $row['user_status'] : null,
+            'user_gender_value' => isset($row['user_gender']) ? (int) $row['user_gender'] : null,
+            'profile_role_ids' => array_values(array_unique($profileRoleIds)),
+            'has_profile' => !empty($profileRoleIds),
+            'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">'
+                . '<img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '" onerror="this.onerror=null;this.src=\'' . asset('upload/default.jpg') . '\';">'
+                . $uploadAction
+                . '</div>',
+            'name' => $row['name'] . (!empty($profileRoleNames) ? ' <span class="text-muted"><i><small>(' . implode(', ', $profileRoleNames) . ')</i></small></span>' : ''),
+            'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
+            'gender' => (int) ($row['user_gender'] ?? 0) === 1 ? 'Male' : 'Female',
+            'status' => $statusMarkup,
+            'action' => $action,
+        ];
     }
 }

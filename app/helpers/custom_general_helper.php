@@ -385,19 +385,15 @@ if (!function_exists('asset')) {
  * @param bool $permanent Whether the redirect is permanent (301) or temporary (302).
  */
 if (!function_exists('redirect')) {
-	function redirect($path, $permanent = false)
+	function redirect($path = null, $permanent = false)
 	{
-		$target = str_replace(["\r", "\n", "\0"], '', (string) $path);
+		$redirector = new \Core\Http\Redirector();
 
-		// If already absolute URL, use it directly
-		if (preg_match('/^https?:\/\//i', $target) === 1) {
-			header('Location: ' . $target, true, $permanent ? 301 : 302);
-			exit();
+		if ($path === null) {
+			return $redirector;
 		}
 
-		// Perform the redirection and exit.
-		header('Location: ' . url($target), true, $permanent ? 301 : 302);
-		exit();
+		$redirector->to((string) $path, $permanent ? 301 : 302)->send();
 	}
 }
 

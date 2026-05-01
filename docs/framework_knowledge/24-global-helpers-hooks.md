@@ -2,7 +2,7 @@
 
 ## Overview
 
-`systems/hooks.php` defines 19 global helper functions available everywhere after bootstrap. These provide singleton access to framework services without manual class instantiation.
+`systems/hooks.php` defines global helper functions available everywhere after bootstrap. Most provide singleton-style access to framework services without manual class instantiation, while `menu_manager()` intentionally returns a fresh menu manager so route-aware menu URLs are always resolved from the current request state.
 
 Source: `systems/hooks.php` (~524 lines).
 
@@ -26,7 +26,9 @@ Source: `systems/hooks.php` (~524 lines).
 | `logger` | `logger()` | `\Components\Logger` | Get Logger component instance (singleton) |
 | `request` | `request()` | `\Components\Request` | Get Request component instance (singleton) |
 | `blade_engine` | `blade_engine()` | `\Core\View\BladeEngine` | Get Blade template engine instance (singleton) |
-| `auth` | `auth()` | `\Components\Auth` | Get Auth component instance (singleton) |
+| `auth` | `auth()` | `\Components\Auth` | Get Auth component instance (singleton). Use `auth()->issueApiCredential(...)` to mint API tokens through the enabled-methods gate — see [03-auth-tokens-api.md](03-auth-tokens-api.md). |
+| `redirect` | `redirect()` | `\Core\Http\Redirector` | Get Redirector; chain `->to()`, `->route()`, `->away()`, or `->back()` to build a `RedirectResponse`. |
+| `menu_manager` | `menu_manager()` | `\Components\MenuManager` | Create a route-aware MenuManager for menu filtering, rendering, and authenticated landing resolution. Returns a fresh instance by design. |
 
 ### View Rendering
 
@@ -63,6 +65,15 @@ Source: `systems/hooks.php` (~524 lines).
 
 App helper files are loaded from configured paths at bootstrap via `loadHelperFiles()`. Default location: `app/helpers/`. Each file in the directory is auto-included.
 
+Bootstrap/runtime constants available after `bootstrap.php`:
+
+- `BASE_URL` — resolved from `APP_URL` first, then current request context.
+- `APP_DIR` — application base path segment derived from `BASE_URL`.
+- `APP_ENV` — current framework environment.
+- `BOOTSTRAP_RUNTIME` — `web`, `api`, or `cli`.
+- `BOOTSTRAP_SESSION_ENABLED` — whether bootstrap started PHP session for the current runtime.
+- `BOOTSTRAP_STATEFUL_REQUEST` — whether the current request should be treated as stateful at bootstrap level.
+
 ## Examples
 
 ### 1) Config access with dot-notation
@@ -92,6 +103,11 @@ if (auth()->check()) {
 if (auth()->can('manage_users')) {
     // show admin panel
 }
+
+// Route definitions also support Laravel-like permission aliases
+$router->get('/admin/users', [UserController::class, 'index'])
+    ->webAuth()
+    ->can('user-view');
 
 // Logout
 auth()->logout();
@@ -246,7 +262,8 @@ $rendered = $engine->render('emails.welcome', ['name' => 'John']);
 4. Use `validator()` for standalone validation outside FormRequest.
 5. Use `cache()->remember()` for expensive queries.
 6. Use `dispatch()` to move heavy operations to background queue.
-7. Keep helper usage thin in controllers; move heavy domain logic into services.
+7. Use `menu_manager()` when a redirect or view depends on the current menu tree, permissions, states, or renderer profile.
+8. Keep helper usage thin in controllers; move heavy domain logic into services.
 
 ## What To Avoid
 

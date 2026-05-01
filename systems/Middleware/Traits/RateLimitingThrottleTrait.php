@@ -118,15 +118,27 @@ trait RateLimitingThrottleTrait
 	 */
 	private function getClientIp(): string
 	{
-		// If the X-Forwarded-For header is present, use it to get the client IP address
-		if ($this->spoofProtection && isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-			$ipChain = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-			// First IP in chain is the original client; last is the nearest proxy
-			return trim($ipChain[0]);
+		if (function_exists('request')) {
+			try {
+				return (string) request()->ip();
+			} catch (\Throwable $e) {
+				// Fall through to legacy server-based resolution.
+			}
 		}
 
-		// Otherwise, use the remote address
-		return $_SERVER['REMOTE_ADDR'];
+		$remoteAddr = (string) ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+
+		if ($this->shouldTrustForwardedHeaders($remoteAddr) && isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+			$ipChain = explode(',', (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
+			foreach ($ipChain as $candidate) {
+				$candidate = trim($candidate);
+				if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+					return $candidate;
+				}
+			}
+		}
+
+		return filter_var($remoteAddr, FILTER_VALIDATE_IP) !== false ? $remoteAddr : '127.0.0.1';
 	}
 
 	/**
@@ -214,20 +226,88 @@ trait RateLimitingThrottleTrait
 			return false;
 		}
 
-		// Get the IP address using same extraction logic as getClientIp()
-		if ($this->spoofProtection && isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-			$ipChain = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-			$serverIP = trim($ipChain[0]);
-		} else {
-			$serverIP = $_SERVER['REMOTE_ADDR'];
+		$remoteAddr = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+
+		if (!$this->spoofProtection) {
+			return false;
 		}
 
-		// If the IP addresses do not match, the request is being spoofed
-		if ($ip !== $serverIP) {
+		if (!isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+			return false;
+		}
+
+		if (!$this->shouldTrustForwardedHeaders($remoteAddr)) {
 			return true;
 		}
 
+		return filter_var($ip, FILTER_VALIDATE_IP) === false;
+	}
+
+	private function shouldTrustForwardedHeaders(string $remoteAddr): bool
+	{
+		if (!$this->spoofProtection) {
+			return false;
+		}
+
+		$trustedProxies = config('security.trusted_proxies', config('security.trusted.proxies', []));
+		if (!is_array($trustedProxies) || $trustedProxies === []) {
+			return false;
+		}
+
+		return $this->isTrustedProxy($remoteAddr, $trustedProxies);
+	}
+
+	private function isTrustedProxy(string $remoteAddr, array $trustedProxies): bool
+	{
+		if (filter_var($remoteAddr, FILTER_VALIDATE_IP) === false) {
+			return false;
+		}
+
+		foreach ($trustedProxies as $trustedProxy) {
+			$trustedProxy = trim((string) $trustedProxy);
+			if ($trustedProxy === '') {
+				continue;
+			}
+
+			if (str_contains($trustedProxy, '/')) {
+				if ($this->ipMatchesCidr($remoteAddr, $trustedProxy)) {
+					return true;
+				}
+				continue;
+			}
+
+			if (strcasecmp($remoteAddr, $trustedProxy) === 0) {
+				return true;
+			}
+		}
+
 		return false;
+	}
+
+	private function ipMatchesCidr(string $ip, string $cidr): bool
+	{
+		[$range, $prefixLength] = array_pad(explode('/', $cidr, 2), 2, null);
+		$range = trim((string) $range);
+		$prefixLength = is_numeric($prefixLength) ? (int) $prefixLength : -1;
+
+		if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false || filter_var($range, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+			return false;
+		}
+
+		if ($prefixLength < 0 || $prefixLength > 32) {
+			return false;
+		}
+
+		$ipLong = ip2long($ip);
+		$rangeLong = ip2long($range);
+
+		if ($ipLong === false || $rangeLong === false) {
+			return false;
+		}
+
+		$mask = $prefixLength === 0 ? 0 : (~((1 << (32 - $prefixLength)) - 1)) & 0xFFFFFFFF;
+
+		return (($ipLong & $mask) === ($rangeLong & $mask));
 	}
 
 	/**

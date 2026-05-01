@@ -4,7 +4,6 @@ namespace App\Http;
 
 use Core\Http\Request;
 use Core\Http\Response;
-use Core\Routing\RouteServiceProvider;
 use Core\Routing\Router;
 
 class Kernel
@@ -22,7 +21,7 @@ class Kernel
         $router->aliasMiddleware((array) ($this->frameworkConfig['middleware_aliases'] ?? []));
         $router->middlewareGroup((array) ($this->frameworkConfig['middleware_groups'] ?? []));
 
-        $routeProvider = new RouteServiceProvider($this->frameworkConfig);
+        $routeProvider = framework_service('route.provider');
         $routeProvider->map($request, $router);
 
         $result = $router->dispatch($request);

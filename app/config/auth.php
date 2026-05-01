@@ -120,6 +120,19 @@ $config['auth'] = [
             'force_reset_column' => (string) env('AUTH_PASSWORD_FORCE_RESET_COLUMN', 'force_password_change'),
             'require_password_changed_at' => (bool) env('AUTH_PASSWORD_REQUIRE_CHANGED_AT', false),
         ],
+        'password_hashing' => [
+            'enabled' => (bool) env('AUTH_PASSWORD_HASHING_ENABLED', true),
+            'algorithm' => (string) env('AUTH_PASSWORD_HASHING_ALGORITHM', 'default'),
+            'bcrypt_rounds' => (int) env('AUTH_PASSWORD_BCRYPT_ROUNDS', 12),
+            'argon_memory_cost' => (int) env('AUTH_PASSWORD_ARGON_MEMORY_COST', PASSWORD_ARGON2_DEFAULT_MEMORY_COST),
+            'argon_time_cost' => (int) env('AUTH_PASSWORD_ARGON_TIME_COST', PASSWORD_ARGON2_DEFAULT_TIME_COST),
+            'argon_threads' => (int) env('AUTH_PASSWORD_ARGON_THREADS', PASSWORD_ARGON2_DEFAULT_THREADS),
+        ],
+        'audit_logging' => [
+            'enabled' => (bool) env('AUTH_LOGIN_POLICY_AUDIT_ENABLED', true),
+            'level' => (string) env('AUTH_LOGIN_POLICY_AUDIT_LEVEL', 'INFO'),
+            'include_user_agent' => (bool) env('AUTH_LOGIN_POLICY_AUDIT_INCLUDE_USER_AGENT', true),
+        ],
     ],
 
     /*
@@ -253,7 +266,6 @@ $config['auth'] = [
     */
     'rbac' => [
         'enabled' => true,
-        'cache_session_permissions' => true,
         'only_active_profiles' => true,
         'only_active_roles' => true,
         'tables' => [

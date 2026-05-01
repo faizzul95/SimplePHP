@@ -55,7 +55,7 @@ class Input
     public static function textarea($name, $value = '', $attributes = array())
     {
         $attributes['name'] = $name;
-        return '<textarea ' . self::formatAttributes($attributes) . '>' . htmlspecialchars($value) . '</textarea>';
+        return '<textarea' . self::formatAttributes($attributes) . '>' . htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') . '</textarea>';
     }
 
     /**
@@ -69,10 +69,12 @@ class Input
      */
     public static function select($name, $options = array(), $selected = '', $attributes = array())
     {
-        $html = '<select name="' . $name . '"' . self::formatAttributes($attributes) . '>';
+        $attributes['name'] = $name;
+        $html = '<select' . self::formatAttributes($attributes) . '>';
+        $selectedString = (string) $selected;
         foreach ($options as $value => $label) {
-            $isSelected = ($value == $selected) ? 'selected="selected"' : '';
-            $html .= '<option value="' . htmlspecialchars($value) . '" ' . $isSelected . '>' . htmlspecialchars($label) . '</option>';
+            $isSelected = ((string) $value === $selectedString) ? ' selected="selected"' : '';
+            $html .= '<option value="' . htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') . '"' . $isSelected . '>' . htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8') . '</option>';
         }
         $html .= '</select>';
         return $html;
@@ -211,12 +213,15 @@ class Input
     {
         $attributes['type'] = $type;
         $attributes['name'] = $name;
-        $attributes['value'] = htmlspecialchars($value);
-        return '<input ' . self::formatAttributes($attributes) . '>';
+        $attributes['value'] = (string) $value;
+        return '<input' . self::formatAttributes($attributes) . '>';
     }
 
     /**
      * Format attributes for HTML element.
+     *
+     * Attribute names are restricted to ASCII letters, digits, underscore, and
+     * dash to prevent attribute-name injection; values are HTML-escaped.
      *
      * @param array $attributes Associative array of attributes.
      * @return string Formatted attributes for HTML element.
@@ -225,7 +230,10 @@ class Input
     {
         $html = '';
         foreach ($attributes as $key => $value) {
-            $html .= ' ' . $key . '="' . htmlspecialchars($value) . '"';
+            if (!is_string($key) || $key === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_\-:]*$/', $key)) {
+                continue;
+            }
+            $html .= ' ' . $key . '="' . htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') . '"';
         }
         return $html;
     }

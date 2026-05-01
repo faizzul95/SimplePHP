@@ -26,16 +26,16 @@
         name="viewport"
         content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
 
-    <title><?= APP_NAME ?> | Login </title>
+    <title>{{ APP_NAME }} | Login </title>
 
-    <base href="<?= BASE_URL ?>">
-    <meta name="base_url" content="<?= BASE_URL ?>" />
-    <meta name="secure_token" content="<?= htmlspecialchars(csrf()->getToken() ?: csrf()->init(), ENT_QUOTES, 'UTF-8'); ?>" />
-    <meta name="csrf-token" content="<?= htmlspecialchars(csrf()->getToken() ?: csrf()->init(), ENT_QUOTES, 'UTF-8'); ?>" />
+    <base href="{{ BASE_URL }}">
+    <meta name="base_url" content="{{ BASE_URL }}" />
+    <meta name="secure_token" content="{{ csrf()->getToken() ?: csrf()->init() }}" />
+    <meta name="csrf-token" content="{{ csrf()->getToken() ?: csrf()->init() }}" />
     <meta name="description" content="" />
 
     <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="<?= asset('sneat/img/favicon/favicon.ico'); ?>" />
+    <link rel="icon" type="image/x-icon" href="{{ asset('sneat/img/favicon/favicon.ico') }}" />
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -44,36 +44,36 @@
         rel="stylesheet" />
 
     <!-- Icons. Uncomment required icon fonts -->
-    <link rel="stylesheet" href="<?= asset('sneat/assets/fonts/boxicons.css'); ?>" />
+    <link rel="stylesheet" href="{{ asset('sneat/assets/fonts/boxicons.css') }}" />
 
     <!-- Core CSS -->
-    <link rel="stylesheet" href="<?= asset('sneat/assets/css/core.css'); ?>" class="template-customizer-core-css" />
-    <link rel="stylesheet" href="<?= asset('sneat/assets/css/theme-default.css'); ?>" class="template-customizer-theme-css" />
-    <link rel="stylesheet" href="<?= asset('sneat/css/demo.css'); ?>" />
+    <link rel="stylesheet" href="{{ asset('sneat/assets/css/core.css') }}" class="template-customizer-core-css" />
+    <link rel="stylesheet" href="{{ asset('sneat/assets/css/theme-default.css') }}" class="template-customizer-theme-css" />
+    <link rel="stylesheet" href="{{ asset('sneat/css/demo.css') }}" />
 
     <!-- Vendors CSS -->
-    <link rel="stylesheet" href="<?= asset('sneat/assets/libs/perfect-scrollbar/perfect-scrollbar.css'); ?>" />
+    <link rel="stylesheet" href="{{ asset('sneat/assets/libs/perfect-scrollbar/perfect-scrollbar.css') }}" />
 
     <!-- Page CSS -->
     <!-- Page -->
-    <link rel="stylesheet" href="<?= asset('sneat/assets/css/pages/page-auth.css'); ?>" />
+    <link rel="stylesheet" href="{{ asset('sneat/assets/css/pages/page-auth.css') }}" />
     <!-- Helpers -->
-    <script src="<?= asset('sneat/assets/js/helpers.js'); ?>"></script>
+    <script src="{{ asset('sneat/assets/js/helpers.js') }}"></script>
 
     <!--! Template customizer & Theme config files MUST be included after core stylesheets and helpers.js in the <head> section -->
     <!--? Config:  Mandatory theme config file contain global vars & default theme options, Set your preferred theme option in this file.  -->
-    <script src="<?= asset('sneat/js/config.js'); ?>"></script>
+    <script src="{{ asset('sneat/js/config.js') }}"></script>
 
-    <script src="<?= asset('sneat/assets/libs/jquery/jquery.js'); ?>"></script>
+    <script src="{{ asset('sneat/assets/libs/jquery/jquery.js') }}"></script>
 
-    <link rel="stylesheet" href="<?= asset('general/css/toastr.min.css'); ?>">
+    <link rel="stylesheet" href="{{ asset('general/css/toastr.min.css') }}">
 
-    <script src="<?= asset('general/js/axios.min.js'); ?>"></script>
-    <script src="<?= asset('general/js/jquery.min.js'); ?>"></script>
-    <script src="<?= asset('general/js/helper.js'); ?>"></script>
-    <script src="<?= asset('general/js/toastr.min.js'); ?>"></script>
-    <script src="<?= asset('general/js/block-ui.js'); ?>"></script>
-    <script src="<?= asset('general/js/validation.js'); ?>"></script>
+    <script src="{{ asset('general/js/axios.min.js') }}"></script>
+    <script src="{{ asset('general/js/jquery.min.js') }}"></script>
+    <script src="{{ asset('general/js/helper.js') }}"></script>
+    <script src="{{ asset('general/js/toastr.min.js') }}"></script>
+    <script src="{{ asset('general/js/block-ui.js') }}"></script>
+    <script src="{{ asset('general/js/validation.js') }}"></script>
 </head>
 
 <body>
@@ -88,14 +88,14 @@
                         <!-- Logo -->
                         <div class="app-brand">
                             <a href="javascript:void(0)" class="app-brand-link gap-2 d-block mx-auto" style="width: fit-content;">
-                                <img src="<?= asset('sneat/img/logo.jpg') ?>" width="60%" class="app-brand-logo demo img-fluid mx-auto d-block">
+                                <img src="{{ asset('sneat/img/logo.jpg') }}" width="60%" class="app-brand-logo demo img-fluid mx-auto d-block">
                             </a>
                         </div>
                         <!-- /Logo -->
                         <h4 class="mb-2">Welcome to MythPHP! 👋</h4>
                         <p class="mb-4">Please sign-in to your account</p>
                         <form id="formAuthentication" class="mb-3" method="POST">
-                            <?= csrf_field(); ?>
+                            @csrf
                             <div class="mb-3">
                                 <label for="email" class="form-label">Email or Username</label>
                                 <input
@@ -139,17 +139,17 @@
 
     <!-- Core JS -->
     <!-- build:js assets/vendor/js/core.js -->
-    <script src="<?= asset('sneat/assets/libs/popper/popper.js'); ?>"></script>
-    <script src="<?= asset('sneat/assets/js/bootstrap.js'); ?>"></script>
-    <script src="<?= asset('sneat/assets/libs/perfect-scrollbar/perfect-scrollbar.js'); ?>"></script>
+    <script src="{{ asset('sneat/assets/libs/popper/popper.js') }}"></script>
+    <script src="{{ asset('sneat/assets/js/bootstrap.js') }}"></script>
+    <script src="{{ asset('sneat/assets/libs/perfect-scrollbar/perfect-scrollbar.js') }}"></script>
 
-    <script src="<?= asset('sneat/assets/js/menu.js'); ?>"></script>
+    <script src="{{ asset('sneat/assets/js/menu.js') }}"></script>
     <!-- endbuild -->
 
     <!-- Vendors JS -->
 
     <!-- Main JS -->
-    <script src="<?= asset('sneat/js/main.js'); ?>"></script>
+    <script src="{{ asset('sneat/js/main.js') }}"></script>
 
     <!-- Page JS -->
     <script type="text/javascript">
@@ -166,7 +166,7 @@
             const rules = { 'username': 'required|min_length:3|max_length:20', 'password': 'required|min_length:5' };
            
             if (validationJs(this, rules)) {
-                const res = await loginApi('<?= route('auth.login') ?>', 'formAuthentication');
+                const res = await loginApi('{{ route("auth.login") }}', 'formAuthentication');
 
                 if (isSuccess(res)) {
                     const data = res.data;

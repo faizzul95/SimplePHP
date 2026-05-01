@@ -531,10 +531,7 @@ class Schema
      */
     protected function resolveGrammar(string $driver): SchemaGrammar
     {
-        return match (strtolower($driver)) {
-            'mysql', 'mariadb' => new MySQLGrammar(),
-            default => throw new \InvalidArgumentException("Schema grammar for driver [{$driver}] is not supported. Supported: mysql, mariadb"),
-        };
+        return \Core\Database\DriverRegistry::schemaGrammar($driver);
     }
 
     /**

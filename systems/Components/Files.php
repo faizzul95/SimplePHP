@@ -8,6 +8,8 @@ class Files
 
     private Security $security;
 
+    private ?string $storageDisk = null;
+
     private string $uploadDir = 'public/upload';
 
     private int $directoryPermission = 0775;
@@ -51,6 +53,21 @@ class Files
     {
         $this->uploadDir = $this->normalizeRelativePath($uploadDir);
         $this->directoryPermission = $permission ?? 0775;
+        $this->createFolder($this->directoryPermission);
+    }
+
+    /**
+     * Route final persistence through a managed storage disk instead of direct project paths.
+     */
+    public function setStorageDisk(?string $disk, ?string $prefix = null): void
+    {
+        $disk = $disk !== null ? trim($disk) : null;
+        $this->storageDisk = $disk !== '' ? $disk : null;
+
+        if ($prefix !== null) {
+            $this->uploadDir = $this->normalizeRelativePath($prefix);
+        }
+
         $this->createFolder($this->directoryPermission);
     }
 
@@ -450,6 +467,11 @@ class Files
      */
     private function storeAnalyzedFile(string $sourcePath, array $analysis, array $options, bool $isUploadedFile): array
     {
+        $storage = $this->configuredStorageAdapter();
+        if ($storage !== null) {
+            return $this->storeAnalyzedFileToStorage($sourcePath, $analysis, $options, $storage);
+        }
+
         $compressionMode = $this->normalizeCompressionMode((int) ($options['file_compression'] ?? 1));
         $shouldCompress = (bool) ($options['compress'] ?? false);
 
@@ -491,6 +513,47 @@ class Files
             'relative_path' => $relativePath,
             'folder' => $targetDir,
             'relative_folder' => $relativeFolder,
+            'disk' => $this->storageDisk,
+            'url' => null,
+            'mime' => $analysis['mime'],
+            'extension' => $analysis['extension'],
+            'compression' => $effectiveCompression,
+            'width' => $analysis['width'],
+            'height' => $analysis['height'],
+            'content_scan' => $analysis['content_scan'],
+        ];
+    }
+
+    private function storeAnalyzedFileToStorage(string $sourcePath, array $analysis, array $options, \Core\Filesystem\FilesystemAdapterInterface $storage): array
+    {
+        $compressionMode = $this->normalizeCompressionMode((int) ($options['file_compression'] ?? 1));
+        $shouldCompress = (bool) ($options['compress'] ?? false);
+        $relativeFolder = $this->uploadDir;
+        [$baseName, $fileName, $relativePath] = $this->reserveStoragePath($storage, $relativeFolder, (string) $analysis['extension']);
+
+        try {
+            if ($analysis['is_image']) {
+                $storedSize = $this->storeImageVariantsToStorage($sourcePath, $storage, $relativeFolder, $baseName, (string) $analysis['mime'], $shouldCompress, $compressionMode);
+            } else {
+                $storedSize = $this->writePathToStorage($storage, $relativePath, $sourcePath);
+            }
+        } catch (\Throwable $e) {
+            $this->deleteStorageArtifacts($storage, $relativeFolder, $baseName, (string) $analysis['extension']);
+            throw $e;
+        }
+
+        $effectiveCompression = $analysis['is_image'] && $shouldCompress ? $compressionMode : 1;
+
+        return [
+            'original_name' => htmlspecialchars($analysis['original_name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
+            'name' => htmlspecialchars($fileName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
+            'size' => $storedSize,
+            'path' => $storage->path($relativePath),
+            'relative_path' => $relativePath,
+            'folder' => $storage->path($relativeFolder),
+            'relative_folder' => $relativeFolder,
+            'disk' => $this->storageDisk,
+            'url' => $storage->url($relativePath),
             'mime' => $analysis['mime'],
             'extension' => $analysis['extension'],
             'compression' => $effectiveCompression,
@@ -516,6 +579,8 @@ class Files
                 'relative_path' => '',
                 'folder' => $this->absoluteUploadDir(),
                 'relative_folder' => $this->uploadDir,
+                'disk' => $this->storageDisk,
+                'url' => null,
                 'mime' => null,
                 'extension' => null,
                 'compression' => 1,
@@ -598,6 +663,11 @@ class Files
             throw new \RuntimeException('Uploaded file is not readable.');
         }
 
+        $normalizedOriginalName = basename($originalName);
+        if (!$this->security->isSafeUploadFilename($normalizedOriginalName)) {
+            throw new \RuntimeException('Uploaded file name is not allowed.');
+        }
+
         if (is_link($path)) {
             throw new \RuntimeException('Linked file inputs are not allowed.');
         }
@@ -641,8 +711,12 @@ class Files
             [$width, $height] = $this->assertValidImage($path, $mime);
         }
 
+        $validateContent = array_key_exists('validate_content', $options)
+            ? (bool) $options['validate_content']
+            : true;
+
         $contentScan = null;
-        if (!$isImage && ($options['validate_content'] ?? false) === true) {
+        if (!$isImage && $validateContent) {
             $contentScan = $this->inspectDocumentContent($path, $mime, $options['content_validation'] ?? []);
 
             if (($contentScan['issue_count'] ?? 0) > 0 && (($options['reject_unsafe_content'] ?? true) === true)) {
@@ -651,7 +725,7 @@ class Files
         }
 
         return [
-            'original_name' => basename($originalName),
+            'original_name' => $normalizedOriginalName,
             'mime' => $mime,
             'extension' => $extension,
             'size' => $size,
@@ -768,6 +842,20 @@ class Files
         } while (file_exists($targetFile));
 
         return [$baseName, $fileName, $relativePath, $targetFile];
+    }
+
+    /**
+     * @return array{0: string, 1: string, 2: string}
+     */
+    private function reserveStoragePath(\Core\Filesystem\FilesystemAdapterInterface $storage, string $relativeFolder, string $extension): array
+    {
+        do {
+            $baseName = bin2hex(random_bytes(16));
+            $fileName = $baseName . '.' . $extension;
+            $relativePath = ltrim(($relativeFolder !== '' ? $relativeFolder . '/' : '') . $fileName, '/');
+        } while ($storage->exists($relativePath));
+
+        return [$baseName, $fileName, $relativePath];
     }
 
     private function parseBase64Image(string $base64Image): array
@@ -956,6 +1044,94 @@ class Files
         $this->destroyImage($resource);
     }
 
+    private function storeImageVariantsToStorage(string $sourcePath, \Core\Filesystem\FilesystemAdapterInterface $storage, string $relativeFolder, string $baseName, string $mime, bool $compress, int $compressionMode): int
+    {
+        if (!extension_loaded('gd')) {
+            throw new \RuntimeException('GD extension is required for secure image processing.');
+        }
+
+        $resource = $this->createImageResource($sourcePath, $mime);
+        if ($resource === false) {
+            throw new \RuntimeException('Failed to process image payload.');
+        }
+
+        $extension = $this->mimeToExtension[$mime];
+        $variants = [
+            ['suffix' => '', 'quality' => 90, 'resource' => $resource],
+        ];
+
+        if ($compress && $compressionMode >= 2) {
+            $variants[] = ['suffix' => '_compress', 'quality' => 60, 'resource' => $resource];
+        }
+
+        $thumbnail = null;
+        if ($compress && $compressionMode >= 3) {
+            $thumbnail = $this->resizeImageResource($resource, 320, 320, $mime);
+            $variants[] = ['suffix' => '_thumbnail', 'quality' => 45, 'resource' => $thumbnail];
+        }
+
+        $size = 0;
+
+        try {
+            foreach ($variants as $variant) {
+                $tempPath = $this->createTemporaryFile();
+
+                try {
+                    $this->writeImageResource($variant['resource'], $tempPath, $mime, (int) $variant['quality']);
+                    $variantPath = ltrim(($relativeFolder !== '' ? $relativeFolder . '/' : '') . $baseName . (string) $variant['suffix'] . '.' . $extension, '/');
+                    $size += $this->writePathToStorage($storage, $variantPath, $tempPath);
+                } finally {
+                    if (is_file($tempPath)) {
+                        @unlink($tempPath);
+                    }
+                }
+            }
+        } finally {
+            if ($thumbnail !== null) {
+                $this->destroyImage($thumbnail);
+            }
+
+            $this->destroyImage($resource);
+        }
+
+        return $size;
+    }
+
+    private function writePathToStorage(\Core\Filesystem\FilesystemAdapterInterface $storage, string $relativePath, string $sourcePath): int
+    {
+        $stream = fopen($sourcePath, 'rb');
+        if ($stream === false) {
+            throw new \RuntimeException('Failed to open source file for storage upload.');
+        }
+
+        try {
+            if (!$storage->writeStream($relativePath, $stream)) {
+                throw new \RuntimeException('Failed to persist file to storage disk.');
+            }
+        } finally {
+            fclose($stream);
+        }
+
+        clearstatcache(true, $sourcePath);
+        $size = filesize($sourcePath);
+
+        return $size === false ? 0 : (int) $size;
+    }
+
+    private function deleteStorageArtifacts(\Core\Filesystem\FilesystemAdapterInterface $storage, string $relativeFolder, string $baseName, string $extension): void
+    {
+        $paths = [
+            ltrim(($relativeFolder !== '' ? $relativeFolder . '/' : '') . $baseName . '.' . $extension, '/'),
+            ltrim(($relativeFolder !== '' ? $relativeFolder . '/' : '') . $baseName . '_compress.' . $extension, '/'),
+            ltrim(($relativeFolder !== '' ? $relativeFolder . '/' : '') . $baseName . '_thumbnail.' . $extension, '/'),
+        ];
+
+        try {
+            $storage->delete($paths);
+        } catch (\Throwable $e) {
+        }
+    }
+
     private function createImageResource(string $path, string $mime)
     {
         return match ($mime) {
@@ -1130,6 +1306,12 @@ class Files
 
     private function createFolder(?int $permission = null): void
     {
+        $storage = $this->configuredStorageAdapter();
+        if ($storage !== null) {
+            $storage->makeDirectory($this->uploadDir);
+            return;
+        }
+
         $permission = $permission ?? $this->directoryPermission;
         $folderPath = $this->absoluteUploadDir();
 
@@ -1160,5 +1342,23 @@ class Files
             UPLOAD_ERR_EXTENSION => 'A PHP extension stopped the file upload.',
             default => 'Unknown upload error.',
         };
+    }
+
+    private function configuredStorageAdapter(): ?\Core\Filesystem\FilesystemAdapterInterface
+    {
+        if ($this->storageDisk === null) {
+            return null;
+        }
+
+        if (!function_exists('storage')) {
+            throw new \RuntimeException('Managed storage is not available. Ensure the storage service provider is bootstrapped before selecting a storage disk.');
+        }
+
+        $storage = storage($this->storageDisk);
+        if (!$storage instanceof \Core\Filesystem\FilesystemAdapterInterface) {
+            throw new \RuntimeException('Configured storage disk did not resolve to a filesystem adapter.');
+        }
+
+        return $storage;
     }
 }

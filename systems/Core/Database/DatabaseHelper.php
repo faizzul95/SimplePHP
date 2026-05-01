@@ -82,7 +82,7 @@ class DatabaseHelper
                 $result = [];
                 foreach ($value as $key => $val) {
                     // Sanitize the key itself if it's a string
-                    $safeKey = is_string($key) ? htmlspecialchars(trim($key), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : $key;
+                    $safeKey = is_string($key) ? htmlspecialchars(trim(str_replace("\0", '', $key)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : $key;
                     // If the key is in ignoreList, skip sanitization for this key
                     if (in_array($key, $ignoreList, true)) {
                         $result[$safeKey] = $val;

@@ -5,26 +5,38 @@
 | Alias | Class | Description |
 |-------|-------|-------------|
 | `headers` | `SetSecurityHeaders` | CSP, Permissions-Policy, security headers |
+| `trusted.hosts` | `ValidateTrustedHosts` | Host allow-list validation before controller logic |
+| `trusted.proxies` | `ValidateTrustedProxies` | Forwarded-header trust validation for approved proxy remotes |
+| `payload.limits` | `ValidatePayloadLimits` | Body-size, header-count, JSON-field, and multipart-part limits |
+| `origin.policy` | `EnforceOriginPolicy` | Origin/Referer validation for state-changing browser routes |
+| `upload.guard` | `ValidateUploadGuard` | Upload route policy checks with upload-compatible error payloads |
 | `guest` | `EnsureGuest` | Block authenticated users (for login/register) |
 | `auth` | `RequireAuth` | Unified auth (session/token/both) |
 | `auth.web` | `RequireSessionAuth` | Session-only auth |
 | `auth.api` | `RequireApiToken` | API auth using configured methods (`api.auth.methods` with `auth.api_methods` fallback) |
 | `permission` | `RequirePermission` | RBAC permission check |
+| `feature` | `RequireFeature` | Route-level feature flag gate for staged rollout / kill switch behavior |
 | `throttle` | `RateLimit` | Standard rate limiting (configurable) |
 | `aggressive-throttle` | `ThrottleRequests` | Aggressive IP-based blocking |
 | `xss` | `XssProtection` | XSS pattern detection |
 | `api.log` | `ApiRequestLogger` | API request/response logging |
 | `cache.headers` | `SetResponseCache` | Route-level Cache-Control/ETag policy |
-| `request.safety` | `ValidateRequestSafety` | Request hardening (method/URI/body/host/content-type checks) |
+| `request.safety` | `ValidateRequestSafety` | Request hardening (method/URI/user-agent checks) |
 
 ## Middleware Groups
 
-- `web` => `['headers', 'request.safety', 'csrf', 'throttle:web']`
-- `api` => `['headers', 'request.safety', 'throttle:api', 'xss', 'api.log']`
+- `web` => `['session.stateful', 'headers', 'trusted.hosts', 'trusted.proxies', 'payload.limits', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'csrf', 'throttle:web']`
+- `api` => `['headers', 'trusted.hosts', 'trusted.proxies', 'payload.limits', 'content.type', 'request.fingerprint', 'request.safety', 'throttle:api', 'xss', 'api.log']`
+- `api.public.submit` => `throttle:auth` on top of the base `api` group
+- `api.external.auth` => `auth.api` on top of the base `api` group
+- `api.app` => `auth` on top of the base `api` group
+- `api.upload.image` => `api.app + permission:settings-upload-image + content.type:multipart + upload.guard:image-cropper`
+- `api.upload.action` => `api.app + permission:settings-upload-image + upload.guard:delete`
 
 Important:
 - Middleware groups are only applied when you attach them to a route or route group. Defining the `web` group in `framework.php` does not make it automatic for `web.php` routes.
 - For browser `POST|PUT|PATCH|DELETE` routes such as login, logout, and modal/form loaders, attach `web` explicitly so CSRF runs.
+- Route-provider defaults already wrap `web.php` with `web` and `api.php` with `api`, so `web.php` should prefer fluent intent helpers like `webAuth()` and `guestOnly()`, while nested groups like `api.app` only declare extra route-class middleware beyond the base API stack.
 
 ## Middleware Details
 
@@ -142,6 +154,28 @@ Checks RBAC permission. Parameter is the permission code:
 
 Auth validation runs across all supported guards (`session`, `token`, `jwt`, `api_key`, `oauth2`, `basic`, `digest`, `oauth`) before permission checks.
 
+### `RequireFeature` (alias: `feature`)
+
+Checks a configured feature flag before allowing the request through.
+
+Behavior:
+- Returns `403` when the feature is disabled.
+- Uses the same feature manager backing `feature()` and `feature_value()` helpers.
+- Intended for operational kill switches and staged rollout on route groups.
+
+```php
+$router->group(['prefix' => 'roles', 'middleware' => ['permission:rbac-roles-view', 'feature:rbac.role']], function ($router) {
+	// ...
+});
+```
+
+Current routed usage:
+- `rbac.role`
+- `rbac.permission`
+- `email-template`
+
+The RBAC roles page and email-template page in `web.php` now carry the same feature middleware as their API/data routes so disabling a module blocks both the HTML entrypoint and the backing AJAX endpoints.
+
 ### `RequireAnyPermission` (alias: `permission.any`)
 
 Checks OR-style permission access (any listed permission passes):
@@ -176,7 +210,11 @@ Redirect behavior:
 - Recommended runtime default: `CSRF_REGENERATE=false`. This framework returns many responses by emitting output directly, so per-request token rotation can leave modal/AJAX-loaded forms holding stale tokens unless the frontend refreshes tokens after every write.
 - Framework default for `CSRF_SECURE_COOKIE` is secure-by-default. Override it only for plain HTTP local development.
 - CSRF Origin/Referer verification for state-changing browser requests.
-- Request hardening policy (`request_hardening`) to constrain URI/body/host/content-type.
+- Request hardening policy (`request_hardening`) to constrain URI, user-agent, body size, header count, payload size, and content-type.
+- Trusted host allow-list via `security.trusted.hosts`.
+- Trusted proxy allow-list via `security.trusted.proxies` with fail-closed rejection for spoofed forwarded headers and global wildcard trust.
+- Origin/Referer validation via `origin.policy`, using the existing `security.csrf` origin settings.
+- Upload route policy via `upload.guard`, which keeps upload security failures in the existing `code/message/files/isUpload` response shape.
 - CSP directives (configuration-driven).
 - Permissions-Policy (configuration-driven).
 - Trusted proxy IP list (controls forwarded-IP trust in `Request::ip()`).
@@ -199,6 +237,10 @@ php myth security:audit --ci
 - `--ci` (or `--strict`) makes warnings fail the command with non-zero exit code.
 - Typical checks include CSRF origin protection, request hardening middleware registration, CSP safety, CORS credentials/origin compatibility, and trusted proxy wildcard misuse.
 
+Runtime hardening notes:
+- `aggressive-throttle` now resolves forwarded IPs only when `REMOTE_ADDR` matches the trusted-proxy list, preventing `X-Forwarded-For` spoofing from weakening block decisions.
+- HTML and streamed responses sanitize header names and values before send, matching the download/redirect response behavior and closing response-splitting gaps on custom headers.
+
 ## Examples
 
 ### Route with layered middleware
@@ -214,7 +256,7 @@ $router->post('/api/v1/users/save', [UserController::class, 'save'])
 
 ```php
 $router->group(['middleware' => ['api']], function ($router) {
-	// All routes get: headers + throttle:api + xss + api.log
+	// All routes get: headers + payload.limits + throttle:api + xss + api.log
 	$router->get('/api/v1/dashboard', [DashboardController::class, 'stats']);
 });
 ```

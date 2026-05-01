@@ -31,8 +31,9 @@ trait SecurityHeadersTrait
 			$directives = [];
 			$cspDefaults = [
 				'default-src' => ["'self'"],
-				'script-src'  => ["'self'", "'unsafe-inline'"],
-				'style-src'   => ["'self'", "'unsafe-inline'"],
+				// 'unsafe-inline' removed from defaults; opt-in via security.csp config if truly needed.
+				'script-src'  => ["'self'"],
+				'style-src'   => ["'self'"],
 				'img-src'     => ["'self'", 'data:'],
 				'connect-src' => ["'self'"],
 				'font-src'    => ["'self'"],

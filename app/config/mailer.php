@@ -1,5 +1,7 @@
 <?php
 
+// Reserved for the planned Mailer component; runtime consumers are not implemented yet.
+
 /*
 |--------------------------------------------------------------------------
 | Mailer

@@ -1,5 +1,5 @@
 <div class="row">
-	<form id="changePictureUpload" method="POST" action="<?= route('uploads.image-cropper') ?>">
+	<form id="changePictureUpload" method="POST" action="{{ route('uploads.image-cropper') }}">
 		<div class="col-12">
 			<input id="change_image" type="file" name="change_image" class="form-control mb-4" accept="image/x-png,image/jpeg,image/jpg">
 
@@ -224,7 +224,7 @@
 			setBase64();
 		});
 
-		$('#generaloffcanvas-right').on('hidden.bs.modal', function(e) {
+		$('#generaloffcanvas-right').on('hidden.bs.offcanvas', function(e) {
 			$('#image').val(''); // this will clear the input val.
 			$('#undoBtn').hide();
 			$('#redoBtn').hide();
@@ -235,7 +235,7 @@
 			// To ensure that old croppie instance is destroyed on every model close
 			setTimeout(function() {
 				destroyCropper();
-			}, 80);
+			}, 60);
 		});
 
 		$("#changePictureUpload").submit(function(event) {
@@ -329,7 +329,7 @@
 			},
 		}).then(async (result) => {
 			if (result.isConfirmed) {
-				const res = await callApi('post', "<?= route('uploads.delete') ?>", {
+				const res = await callApi('post', "{{ route('uploads.delete') }}", {
 					'id': id
 				});
 

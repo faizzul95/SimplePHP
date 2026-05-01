@@ -96,10 +96,22 @@ abstract class Job
             throw new \RuntimeException("Invalid job class in payload.");
         }
 
+        if (!array_key_exists('data', $payload) || !is_string($payload['data']) || $payload['data'] === '') {
+            throw new \RuntimeException('Invalid job payload data.');
+        }
+
         $job = unserialize($payload['data'], ['allowed_classes' => [$payload['class']]]);
 
         if (!$job instanceof static) {
             throw new \RuntimeException("Failed to unserialize job: expected " . static::class);
+        }
+
+        // Defence in depth: make sure the serialized object's real class matches
+        // the class declared in the payload. Without this check, an attacker
+        // could pass payload['class'] = JobA while the serialized blob contains
+        // JobB (also on the allowlist), side-stepping expectations upstream.
+        if (get_class($job) !== $payload['class']) {
+            throw new \RuntimeException('Job class mismatch between payload and serialized data.');
         }
 
         return $job;

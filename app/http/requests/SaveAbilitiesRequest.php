@@ -9,14 +9,14 @@ class SaveAbilitiesRequest extends FormRequest
     public function authorize(): bool
     {
         if ($this->isCreate()) {
-            return isSuperadmin() || permission('rbac-abilities-create');
+            return auth()->can('rbac-abilities-create');
         }
 
         if ($this->isUpdate()) {
-            return isSuperadmin() || permission('rbac-abilities-edit');
+            return auth()->can('rbac-abilities-update');
         }
 
-        return isSuperadmin();
+        return false;
     }
 
     public function primaryKey(): string|array

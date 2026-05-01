@@ -188,6 +188,14 @@ class CacheManager
      */
     public function add(string $key, mixed $value, int $seconds = 0): bool
     {
+        $store = $this->store();
+
+        // Prefer the driver-native atomic add() when available so concurrent
+        // callers cannot both see the key as missing and both write.
+        if (method_exists($store, 'add')) {
+            return (bool) $store->add($this->prefix . $key, $value, $seconds);
+        }
+
         if ($this->has($key)) {
             return false;
         }

@@ -11,7 +11,7 @@
     }
 
     async function getListPermissionAssignment() {
-        const res = await callApi('post', "<?= route('permissions.list-assignment') ?>", {
+        const res = await callApi('post', "{{ route('permissions.list-assignment') }}", {
             'id': $('#tempPermRoleID').val()
         });
 
@@ -67,33 +67,24 @@
             'This will <b>revoke</b> access from <b>' + role + '</b> for the selected permission.';
         let confirmBtnText = isChecked ? 'Yes, Grant Access!' : 'Yes, Revoke Access!';
 
-        Swal.fire({
+        await confirmApiAction({
             title: isChecked ? 'Grant Permission?' : 'Revoke Permission?',
             html: actionDesc,
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: isChecked ? '#198754' : '#d33', // green for grant, red for revoke
+            confirmButtonColor: isChecked ? '#198754' : '#d33',
             cancelButtonColor: '#6c757d',
             confirmButtonText: confirmBtnText,
-            reverseButtons: true,
-            customClass: {
-                container: 'swal2-customCss'
+            method: 'post',
+            url: "{{ route('permissions.save-assignment') }}",
+            data: {
+                role_id: roleID,
+                abilities_id: abilitiesID,
+                all_access: isAllAccess,
+                permission: actionText,
             },
-        }).then(async (result) => {
-            if (result.isConfirmed) {
-                const res = await callApi('post', "<?= route('permissions.save-assignment') ?>", {
-                    'role_id': roleID,
-                    'abilities_id': abilitiesID,
-                    'all_access': isAllAccess,
-                    'permission': actionText,
-                });
-
-                if (isSuccess(res)) {
-                    const response = res.data;
-                    noti(response.code, response.message);
-                    getListPermissionAssignment();
-                }
-            } else {
+            onSuccess: async function() {
+                getListPermissionAssignment();
+            },
+            onCancel: async function() {
                 // Reset checkbox to its original state if cancelled
                 $('#ab' + abilitiesID).prop('checked', !isChecked);
                 // If disabled, enable it back
@@ -109,11 +100,8 @@
                         $('.list-grant-perm').prop('disabled', false);
                     }
                 }
-
-                // Check all inputs with class 'acquired'
-                $('.acquired').prop('checked', true);
             }
-        })
+        });
 
     }
 </script>

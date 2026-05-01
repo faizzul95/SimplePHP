@@ -81,11 +81,11 @@ class Request
     public function __construct()
     {
         $this->security = new Security();
-        self::$data = $this->sanitizeInput(array_merge(
+        self::$data = array_merge(
             $_GET,
             $_POST,
             $this->getInputStreamData()
-        ));
+        );
         self::$files = $this->processUploadedFiles($_FILES);
     }
 

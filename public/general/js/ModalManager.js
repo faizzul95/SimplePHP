@@ -3,6 +3,7 @@ class ModalManager {
     constructor() {
         this.activeModals = new Map();
         this.activeOffcanvas = new Map();
+        this.initializeOverlayStackManager();
         this.defaultModalConfig = {
             size: 'lg',
             title: 'General Modal',
@@ -22,7 +23,7 @@ class ModalManager {
             staticBackdrop: false,
             footerButtons: [{
                 text: 'Close',
-                class: 'btn btn-secondary',
+                class: this.getDefaultSecondaryButtonClass(),
                 dismiss: true
             }],
             onShow: null,
@@ -73,6 +74,171 @@ class ModalManager {
         };
     }
 
+    getBootstrapMajorVersion() {
+        try {
+            const versionCandidates = [
+                window.bootstrap && window.bootstrap.Modal && window.bootstrap.Modal.VERSION,
+                window.bootstrap && window.bootstrap.Tooltip && window.bootstrap.Tooltip.VERSION,
+                $.fn.modal && $.fn.modal.Constructor && $.fn.modal.Constructor.VERSION,
+                $.fn.tooltip && $.fn.tooltip.Constructor && $.fn.tooltip.Constructor.VERSION,
+            ];
+
+            for (let i = 0; i < versionCandidates.length; i++) {
+                const version = versionCandidates[i];
+                if (!version) {
+                    continue;
+                }
+
+                const major = parseInt(String(version).split('.')[0], 10);
+                if (!Number.isNaN(major)) {
+                    return major;
+                }
+            }
+        } catch (error) {
+            console.error('Error detecting Bootstrap version:', error);
+        }
+
+        return 5;
+    }
+
+    isBootstrap5OrNewer() {
+        return this.getBootstrapMajorVersion() >= 5;
+    }
+
+    canUseBootstrapModalClass() {
+        return !!(window.bootstrap && window.bootstrap.Modal);
+    }
+
+    canUseBootstrapOffcanvas() {
+        return !!(
+            this.isBootstrap5OrNewer() &&
+            window.bootstrap &&
+            window.bootstrap.Offcanvas &&
+            typeof window.bootstrap.Offcanvas === 'function'
+        );
+    }
+
+    getDismissAttribute(component) {
+        return (this.isBootstrap5OrNewer() ? 'data-bs-dismiss' : 'data-dismiss') + '="' + component + '"';
+    }
+
+    getDefaultSecondaryButtonClass() {
+        const majorVersion = this.getBootstrapMajorVersion();
+
+        if (majorVersion <= 3) {
+            return 'btn btn-default';
+        }
+
+        if (majorVersion === 4) {
+            return 'btn btn-secondary';
+        }
+
+        return 'btn btn-label-secondary';
+    }
+
+    getModalTitleTag() {
+        return this.getBootstrapMajorVersion() <= 4 ? 'h4' : 'h5';
+    }
+
+    getModalSizeClass(size) {
+        if (size === 'fullscreen') {
+            return this.isBootstrap5OrNewer() ? 'modal-fullscreen' : 'modal-lg';
+        }
+
+        return 'modal-' + size;
+    }
+
+    createCloseButtonHtml(component, extraClasses = '') {
+        const classSuffix = extraClasses ? ' ' + extraClasses : '';
+
+        if (this.isBootstrap5OrNewer()) {
+            return '<button type="button" class="btn-close' + classSuffix + '" ' + this.getDismissAttribute(component) + ' aria-label="Close"></button>';
+        }
+
+        return '<button type="button" class="close' + classSuffix + '" ' + this.getDismissAttribute(component) + ' aria-label="Close"><span aria-hidden="true">&times;</span></button>';
+    }
+
+    createModalInstance(element, options = {}) {
+        if (this.canUseBootstrapModalClass()) {
+            return new window.bootstrap.Modal(element, options);
+        }
+
+        return {
+            show() {
+                $(element).modal({ ...options, show: true });
+            },
+            hide() {
+                $(element).modal('hide');
+            },
+            toggle() {
+                $(element).modal('toggle');
+            },
+            dispose() {
+                $(element).removeData('bs.modal');
+            }
+        };
+    }
+
+    createOffcanvasInstance(element, options = {}) {
+        if (this.canUseBootstrapOffcanvas() && element.classList.contains('offcanvas')) {
+            return new window.bootstrap.Offcanvas(element, options);
+        }
+
+        return this.createModalInstance(element, {
+            backdrop: options.backdrop,
+            keyboard: options.keyboard,
+            focus: true,
+        });
+    }
+
+    getVisibleOverlayElements() {
+        return Array.from(document.querySelectorAll('.modal.show, .modal.in, .offcanvas.show, .offcanvas.showing'));
+    }
+
+    getVisibleBackdropElements() {
+        return Array.from(document.querySelectorAll('.modal-backdrop, .offcanvas-backdrop'));
+    }
+
+    reindexOverlayStack() {
+        const overlayBaseZIndex = 2000;
+        const backdropBaseZIndex = overlayBaseZIndex - 10;
+        const overlayStep = 20;
+        const overlays = this.getVisibleOverlayElements();
+        const backdrops = this.getVisibleBackdropElements();
+
+        overlays.forEach((element, index) => {
+            element.style.zIndex = String(overlayBaseZIndex + (index * overlayStep));
+            element.setAttribute('data-overlay-stack-index', String(index));
+        });
+
+        backdrops.forEach((element, index) => {
+            element.style.zIndex = String(backdropBaseZIndex + (index * overlayStep));
+            element.setAttribute('data-overlay-stack-index', String(index));
+        });
+
+        if (overlays.some(element => element.classList.contains('modal'))) {
+            document.body.classList.add('modal-open');
+        } else {
+            document.body.classList.remove('modal-open');
+        }
+    }
+
+    syncOverlayStack() {
+        window.setTimeout(() => this.reindexOverlayStack(), 0);
+    }
+
+    initializeOverlayStackManager() {
+        if (window.__modalManagerOverlayStackInitialized) {
+            return;
+        }
+
+        window.__modalManagerOverlayStackInitialized = true;
+        document.addEventListener('shown.bs.modal', () => this.syncOverlayStack());
+        document.addEventListener('hidden.bs.modal', () => this.syncOverlayStack());
+        document.addEventListener('shown.bs.offcanvas', () => this.syncOverlayStack());
+        document.addEventListener('hidden.bs.offcanvas', () => this.syncOverlayStack());
+    }
+
     // Generate unique ID for each modal/offcanvas
     generateUniqueId(prefix) {
         try {
@@ -113,7 +279,7 @@ class ModalManager {
             };
             
             // Create Bootstrap modal instance
-            const modal = new bootstrap.Modal(modalElement, bsOptions);
+            const modal = this.createModalInstance(modalElement, bsOptions);
             
             // Create modal controller object
             const modalController = {
@@ -183,6 +349,7 @@ class ModalManager {
             
             // Show modal
             modal.show();
+            this.syncOverlayStack();
             
             return modalController;
         } catch (error) {
@@ -326,6 +493,498 @@ class ModalManager {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    getCsrfTokenValue() {
+        if (typeof getCsrfToken === 'function') {
+            return getCsrfToken() || '';
+        }
+
+        const tokenMeta = document.querySelector('meta[name="secure_token"], meta[name="csrf-token"]');
+        return tokenMeta && typeof tokenMeta.content === 'string' ? tokenMeta.content : '';
+    }
+
+    resolveUrl(url) {
+        if (!url || typeof url !== 'string') {
+            return '';
+        }
+
+        if (/^https?:\/\//i.test(url)) {
+            return url;
+        }
+
+        if (typeof urls === 'function') {
+            return urls(url);
+        }
+
+        return url;
+    }
+
+    syncCsrfToken(xhr) {
+        if (typeof syncCsrfTokenFromJqXhr === 'function') {
+            syncCsrfTokenFromJqXhr(xhr);
+            return;
+        }
+
+        if (!xhr || typeof xhr.getResponseHeader !== 'function') {
+            return;
+        }
+
+        const token = xhr.getResponseHeader('X-CSRF-TOKEN');
+        if (typeof setCsrfToken === 'function' && typeof token === 'string' && token !== '') {
+            setCsrfToken(token);
+        }
+    }
+
+    buildHtmlRequestHeaders(extraHeaders = {}) {
+        const headers = {
+            'X-Requested-With': 'XMLHttpRequest',
+            ...extraHeaders,
+        };
+
+        const csrfToken = this.getCsrfTokenValue();
+        if (csrfToken !== '' && !headers['X-CSRF-TOKEN']) {
+            headers['X-CSRF-TOKEN'] = csrfToken;
+        }
+
+        return headers;
+    }
+
+    extractRequestErrorMessage(xhr, fallbackMessage = 'Failed to load content') {
+        if (!xhr) {
+            return fallbackMessage;
+        }
+
+        if (xhr.responseJSON && typeof xhr.responseJSON.message === 'string' && xhr.responseJSON.message !== '') {
+            return xhr.responseJSON.message;
+        }
+
+        if (typeof xhr.responseText === 'string' && xhr.responseText !== '') {
+            try {
+                const parsed = JSON.parse(xhr.responseText);
+                if (parsed && typeof parsed.message === 'string' && parsed.message !== '') {
+                    return parsed.message;
+                }
+            } catch (_error) {
+                return xhr.responseText;
+            }
+        }
+
+        return fallbackMessage;
+    }
+
+    requestHtmlContent(config = {}) {
+        const requestConfig = {
+            method: 'POST',
+            url: '',
+            data: {},
+            headers: {},
+            dataType: 'html',
+            timeout: 30000,
+            retryOnCsrfMismatch: true,
+            ...config,
+        };
+
+        const executeRequest = (allowRetry) => new Promise((resolve, reject) => {
+            $.ajax({
+                type: requestConfig.method,
+                url: this.resolveUrl(requestConfig.url),
+                data: requestConfig.data,
+                headers: this.buildHtmlRequestHeaders(requestConfig.headers),
+                dataType: requestConfig.dataType,
+                timeout: requestConfig.timeout,
+                success: (data, _status, xhr) => {
+                    this.syncCsrfToken(xhr);
+                    resolve({ data, xhr });
+                },
+                error: (xhr, status, error) => {
+                    this.syncCsrfToken(xhr);
+
+                    if (xhr && xhr.status === 419 && allowRetry) {
+                        resolve(executeRequest(false));
+                        return;
+                    }
+
+                    reject({
+                        xhr,
+                        status,
+                        error,
+                        message: this.extractRequestErrorMessage(xhr),
+                    });
+                }
+            });
+        });
+
+        return executeRequest(requestConfig.retryOnCsrfMismatch !== false);
+    }
+
+    ensureLegacyModalContainer(size) {
+        const modalId = 'generalModal-' + size;
+        let modalElement = document.getElementById(modalId);
+
+        if (!modalElement) {
+            const modalHtml = typeof buildGeneralModalHtml === 'function'
+                ? buildGeneralModalHtml(modalId, size, 'generalTitle-' + size, 'generalContent-' + size)
+                : this.createModalHtml(modalId, 'generalTitle-' + size, 'generalContent-' + size, {
+                    ...this.defaultModalConfig,
+                    size,
+                    title: 'General Modal',
+                    content: 'Please add content',
+                    showFooter: true,
+                    footerButtons: [{
+                        text: 'Close',
+                        class: this.getDefaultSecondaryButtonClass(),
+                        dismiss: true
+                    }],
+                });
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            modalElement = document.getElementById(modalId);
+        }
+
+        return {
+            shellId: modalId,
+            shellElement: modalElement,
+            titleId: 'generalTitle-' + size,
+            contentId: 'generalContent-' + size,
+            mountId: null,
+        };
+    }
+
+    ensureLegacyOffcanvasContainer(width = '400px') {
+        const offcanvasId = 'generaloffcanvas-right';
+        let offcanvasElement = document.getElementById(offcanvasId);
+
+        if (!offcanvasElement) {
+            const offcanvasHtml = typeof buildGeneralOffcanvasHtml === 'function'
+                ? buildGeneralOffcanvasHtml(offcanvasId)
+                : this.createOffcanvasHtml(offcanvasId, 'offCanvasTitle-right', 'offCanvasContent-right', {
+                    ...this.defaultOffcanvasConfig,
+                    title: 'General Offcanvas',
+                    content: 'Please add content',
+                    width,
+                });
+
+            document.body.insertAdjacentHTML('beforeend', offcanvasHtml);
+            offcanvasElement = document.getElementById(offcanvasId);
+        }
+
+        if (offcanvasElement) {
+            if (offcanvasElement.classList.contains('offcanvas')) {
+                offcanvasElement.style.width = width;
+            } else {
+                const dialog = offcanvasElement.querySelector('.modal-dialog');
+                if (dialog && width) {
+                    dialog.style.maxWidth = width;
+                }
+            }
+        }
+
+        return {
+            shellId: offcanvasId,
+            shellElement: offcanvasElement,
+            titleId: 'offCanvasTitle-right',
+            contentId: 'offCanvasContent-right',
+            mountId: 'offCanvasContent-right',
+        };
+    }
+
+    prepareLegacyContainer(idToLoad, sizeModal, typeModal) {
+        if (typeModal === 'modal') {
+            const container = this.ensureLegacyModalContainer(sizeModal);
+            const requestedMountId = idToLoad + '-' + sizeModal;
+            const outerContent = document.getElementById(container.contentId);
+
+            if (outerContent) {
+                if (requestedMountId === container.contentId) {
+                    outerContent.innerHTML = '';
+                    container.mountId = container.contentId;
+                } else {
+                    outerContent.innerHTML = '<div id="' + requestedMountId + '"></div>';
+                    container.mountId = requestedMountId;
+                }
+            } else {
+                container.mountId = requestedMountId;
+            }
+
+            return container;
+        }
+
+        const offcanvasContainer = this.ensureLegacyOffcanvasContainer(sizeModal);
+        const offcanvasContent = document.getElementById(offcanvasContainer.contentId);
+        if (offcanvasContent) {
+            offcanvasContent.innerHTML = '';
+        }
+
+        return offcanvasContainer;
+    }
+
+    showLegacyContainer(container, typeModal) {
+        if (!container || !container.shellElement) {
+            return;
+        }
+
+        if (typeModal === 'modal') {
+            if (window.bootstrap && window.bootstrap.Modal && typeof window.bootstrap.Modal.getOrCreateInstance === 'function') {
+                window.bootstrap.Modal.getOrCreateInstance(container.shellElement).show();
+            } else {
+                $(container.shellElement).modal('show');
+            }
+        } else if (container.shellElement.classList.contains('offcanvas') && this.canUseBootstrapOffcanvas() && typeof window.bootstrap.Offcanvas.getOrCreateInstance === 'function') {
+            window.bootstrap.Offcanvas.getOrCreateInstance(container.shellElement).show();
+        } else if (window.bootstrap && window.bootstrap.Modal && typeof window.bootstrap.Modal.getOrCreateInstance === 'function') {
+            window.bootstrap.Modal.getOrCreateInstance(container.shellElement).show();
+        } else {
+            $(container.shellElement).modal('show');
+        }
+
+        this.syncOverlayStack();
+    }
+
+    populateFormFields(formElement, data = null) {
+        if (!(formElement instanceof HTMLFormElement) || !data || typeof data !== 'object') {
+            return;
+        }
+
+        Object.keys(data).forEach((fieldName) => {
+            const fieldValue = data[fieldName];
+            const safeFieldName = String(fieldName).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const fields = formElement.querySelectorAll('[name="' + safeFieldName + '"]');
+
+            if (!fields.length) {
+                return;
+            }
+
+            fields.forEach((field) => {
+                const fieldType = String(field.type || '').toLowerCase();
+
+                if (fieldType === 'radio') {
+                    field.checked = String(field.value) === String(fieldValue);
+                    return;
+                }
+
+                if (fieldType === 'checkbox') {
+                    const values = Array.isArray(fieldValue) ? fieldValue.map(String) : [String(fieldValue)];
+                    field.checked = values.includes(String(field.value));
+                    return;
+                }
+
+                field.value = fieldValue == null ? '' : fieldValue;
+
+                if (field.tagName === 'SELECT' && typeof jQuery !== 'undefined') {
+                    $(field).trigger('change');
+                }
+            });
+        });
+    }
+
+    mountHtmlContent(mountElement, html) {
+        if (!(mountElement instanceof Element)) {
+            return [];
+        }
+
+        if (typeof jQuery !== 'undefined') {
+            mountElement.innerHTML = '';
+            const appendedNodes = $(html);
+            $(mountElement).append(appendedNodes);
+            return appendedNodes.toArray();
+        }
+
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        const appendedNodes = Array.from(template.content.childNodes);
+        mountElement.innerHTML = '';
+
+        appendedNodes.forEach((node) => {
+            mountElement.appendChild(node.cloneNode(true));
+        });
+
+        this.executeInlineScripts(mountElement);
+        return Array.from(mountElement.childNodes);
+    }
+
+    executeInlineScripts(rootElement) {
+        if (!(rootElement instanceof Element)) {
+            return;
+        }
+
+        rootElement.querySelectorAll('script').forEach((scriptElement) => {
+            const replacement = document.createElement('script');
+
+            Array.from(scriptElement.attributes).forEach((attribute) => {
+                replacement.setAttribute(attribute.name, attribute.value);
+            });
+
+            replacement.text = scriptElement.text || scriptElement.textContent || '';
+            scriptElement.parentNode.replaceChild(replacement, scriptElement);
+        });
+    }
+
+    contentDeclaresSetupHook(html, hookName) {
+        if (typeof html !== 'string' || !hookName) {
+            return false;
+        }
+
+        const escapedHookName = hookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const hookPattern = new RegExp('(?:function\\s+' + escapedHookName + '\\s*\\(|(?:const|let|var)\\s+' + escapedHookName + '\\s*=|window\\.' + escapedHookName + '\\s*=)');
+        return hookPattern.test(html);
+    }
+
+    async invokeContentSetupHook(config = {}, html = '') {
+        const hookName = typeof config.setupHandlerName === 'string' && config.setupHandlerName.trim() !== ''
+            ? config.setupHandlerName.trim()
+            : null;
+
+        if (!hookName) {
+            return;
+        }
+
+        const shouldRequireHook = config.requireSetupHandler === true;
+        if (!shouldRequireHook && !this.contentDeclaresSetupHook(html, hookName)) {
+            return;
+        }
+
+        const hook = window[hookName];
+        if (typeof hook !== 'function') {
+            if (shouldRequireHook) {
+                throw new Error(hookName + ' is not initialized');
+            }
+            return;
+        }
+
+        await hook($('meta[name="base_url"]').attr('content'), config.dataArray);
+    }
+
+    async loadFileContent(options = {}) {
+        const config = {
+            fileName: '',
+            idToLoad: 'generalContent',
+            sizeModal: 'lg',
+            title: 'Default Title',
+            dataArray: null,
+            typeModal: 'modal',
+            setupHandlerName: 'getPassData',
+            requireSetupHandler: false,
+            retryOnCsrfMismatch: true,
+            ...options,
+        };
+
+        const container = this.prepareLegacyContainer(config.idToLoad, config.sizeModal, config.typeModal);
+        const mountElement = document.getElementById(container.mountId || container.contentId);
+        const modalContentUrl = $('meta[name="route.modal.content"]').attr('content') || 'modal/content';
+
+        try {
+            const response = await this.requestHtmlContent({
+                method: 'POST',
+                url: modalContentUrl,
+                data: {
+                    fileName: config.fileName,
+                    dataArray: config.dataArray,
+                },
+                retryOnCsrfMismatch: config.retryOnCsrfMismatch,
+            });
+
+            if (mountElement) {
+                this.mountHtmlContent(mountElement, response.data);
+                if (typeof ensureCsrfFieldsInContainer === 'function') {
+                    ensureCsrfFieldsInContainer(mountElement);
+                }
+            }
+
+            await this.invokeContentSetupHook(config, response.data);
+
+            const titleElement = document.getElementById(container.titleId);
+            if (titleElement) {
+                titleElement.textContent = config.title;
+            }
+
+            this.showLegacyContainer(container, config.typeModal);
+            return response;
+        } catch (requestError) {
+            const statusCode = requestError && requestError.xhr && requestError.xhr.status ? requestError.xhr.status : 500;
+            if (typeof noti === 'function') {
+                noti(statusCode, requestError.message || 'Failed to load modal content');
+            }
+            throw requestError;
+        }
+    }
+
+    async loadFormContent(options = {}) {
+        const config = {
+            fileName: '',
+            idToLoad: 'generalContent',
+            sizeModal: 'lg',
+            urlFunc: null,
+            title: 'Default Title',
+            dataArray: null,
+            typeModal: 'modal',
+            setupHandlerName: 'getPassData',
+            requireSetupHandler: false,
+            retryOnCsrfMismatch: true,
+            ...options,
+        };
+
+        const container = this.prepareLegacyContainer(config.idToLoad, config.sizeModal, config.typeModal);
+        const mountElement = document.getElementById(container.mountId || container.contentId);
+        const modalContentUrl = $('meta[name="route.modal.content"]').attr('content') || 'modal/content';
+
+        try {
+            const response = await this.requestHtmlContent({
+                method: 'POST',
+                url: modalContentUrl,
+                data: {
+                    fileName: config.fileName,
+                    dataArray: config.dataArray,
+                },
+                retryOnCsrfMismatch: config.retryOnCsrfMismatch,
+            });
+
+            if (mountElement) {
+                this.mountHtmlContent(mountElement, response.data);
+                if (typeof ensureCsrfFieldsInContainer === 'function') {
+                    ensureCsrfFieldsInContainer(mountElement);
+                }
+            }
+
+            const formElement = mountElement ? mountElement.querySelector('form') : null;
+            if (formElement instanceof HTMLFormElement) {
+                formElement.reset();
+
+                if (config.urlFunc !== null) {
+                    formElement.setAttribute('action', config.urlFunc);
+                }
+
+                formElement.setAttribute('data-modal', '#' + container.shellId);
+
+                if (typeof ensureCsrfFieldInForm === 'function') {
+                    ensureCsrfFieldInForm(formElement);
+                }
+
+                this.populateFormFields(formElement, config.dataArray);
+            }
+
+            await this.invokeContentSetupHook(config, response.data);
+
+            const titleElement = document.getElementById(container.titleId);
+            if (titleElement) {
+                titleElement.textContent = config.title;
+            }
+
+            this.showLegacyContainer(container, config.typeModal);
+            return response;
+        } catch (requestError) {
+            const statusCode = requestError && requestError.xhr && requestError.xhr.status ? requestError.xhr.status : 500;
+
+            if (typeof isError === 'function' && isError(statusCode) && typeof noti === 'function') {
+                noti(statusCode, requestError.message || 'Failed to load form content');
+            } else if (typeof isUnauthorized === 'function' && isUnauthorized(statusCode) && typeof noti === 'function') {
+                noti(statusCode, 'Unauthorized: Access is denied');
+            } else {
+                console.error(requestError.error || requestError, 'ERROR loadFormContent');
+            }
+
+            throw requestError;
+        }
+    }
+
     // Create loader HTML
     createLoaderHtml(text = 'Loading...') {
         return `
@@ -423,20 +1082,21 @@ class ModalManager {
     // Create modal HTML
     createModalHtml(modalId, titleId, contentId, config) {
         try {
-            const sizeClass = config.size === 'fullscreen' ? 'modal-fullscreen' : 'modal-' + config.size;
+            const sizeClass = this.getModalSizeClass(config.size);
             const centeredClass = config.centered ? 'modal-dialog-centered' : '';
             const scrollableClass = config.scrollable ? 'modal-dialog-scrollable' : '';
             const dialogClasses = [sizeClass, centeredClass, scrollableClass].filter(Boolean).join(' ');
+            const titleTag = this.getModalTitleTag();
             
             // Header HTML
             let headerHtml = '';
             if (config.showHeader) {
                 const closeButton = config.showClose ? 
-                    '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>' : '';
+                    this.createCloseButtonHtml('modal') : '';
                 
                 headerHtml = `
                     <div class="modal-header ${config.headerClass}">
-                        <h5 class="modal-title" id="${titleId}">${config.title}</h5>
+                        <${titleTag} class="modal-title" id="${titleId}">${config.title}</${titleTag}>
                         ${closeButton}
                     </div>
                 `;
@@ -446,14 +1106,15 @@ class ModalManager {
             let footerHtml = '';
             if (config.showFooter && config.footerButtons.length > 0) {
                 const buttonsHtml = config.footerButtons.map(btn => {
-                    const dismissAttr = btn.dismiss ? 'data-bs-dismiss="modal"' : '';
+                    const buttonClass = btn.class || this.getDefaultSecondaryButtonClass();
+                    const dismissAttr = btn.dismiss ? this.getDismissAttribute('modal') : '';
                     const onclickAttr = btn.onclick ? `onclick="${btn.onclick}"` : '';
                     const idAttr = btn.id ? `id="${btn.id}"` : '';
                     const disabledAttr = btn.disabled ? 'disabled' : '';
                     const attributes = btn.attributes || {};
                     const customAttrs = Object.entries(attributes).map(([key, value]) => `${key}="${value}"`).join(' ');
                     
-                    return `<button type="button" class="${btn.class}" ${dismissAttr} ${onclickAttr} ${idAttr} ${disabledAttr} ${customAttrs}>${btn.text}</button>`;
+                    return `<button type="button" class="${buttonClass}" ${dismissAttr} ${onclickAttr} ${idAttr} ${disabledAttr} ${customAttrs}>${btn.text}</button>`;
                 }).join('');
                 
                 footerHtml = `
@@ -650,14 +1311,21 @@ class ModalManager {
             }
             
             // Configure Bootstrap offcanvas options
-            const bsOptions = {
-                backdrop: config.backdrop,
-                keyboard: config.keyboard,
-                scroll: config.scroll
-            };
+            const bsOptions = this.canUseBootstrapOffcanvas()
+                ? {
+                    backdrop: config.backdrop,
+                    keyboard: config.keyboard,
+                    scroll: config.scroll
+                }
+                : {
+                    backdrop: config.backdrop,
+                    keyboard: config.keyboard,
+                    focus: true,
+                };
             
             // Create Bootstrap offcanvas instance
-            const offcanvas = new bootstrap.Offcanvas(offcanvasElement, bsOptions);
+            const offcanvas = this.createOffcanvasInstance(offcanvasElement, bsOptions);
+            const usesOffcanvasFallbackModal = !this.canUseBootstrapOffcanvas() || !offcanvasElement.classList.contains('offcanvas');
             
             // Create offcanvas controller object
             const offcanvasController = {
@@ -667,6 +1335,7 @@ class ModalManager {
                 titleId: titleId,
                 contentId: contentId,
                 config: config,
+                usesModalFallback: usesOffcanvasFallbackModal,
                 updateTitle: (newTitle) => {
                     try {
                         const titleElement = document.getElementById(titleId);
@@ -727,6 +1396,7 @@ class ModalManager {
             
             // Show offcanvas
             offcanvas.show();
+            this.syncOverlayStack();
             
             return offcanvasController;
         } catch (error) {
@@ -738,21 +1408,26 @@ class ModalManager {
     // Add event listeners to offcanvas
     addOffcanvasEventListeners(offcanvasElement, config, controller) {
         try {
+            const showEventName = controller.usesModalFallback ? 'show.bs.modal' : 'show.bs.offcanvas';
+            const shownEventName = controller.usesModalFallback ? 'shown.bs.modal' : 'shown.bs.offcanvas';
+            const hideEventName = controller.usesModalFallback ? 'hide.bs.modal' : 'hide.bs.offcanvas';
+            const hiddenEventName = controller.usesModalFallback ? 'hidden.bs.modal' : 'hidden.bs.offcanvas';
+
             if (config.onShow) {
-                offcanvasElement.addEventListener('show.bs.offcanvas', config.onShow);
+                offcanvasElement.addEventListener(showEventName, config.onShow);
             }
             if (config.onShown) {
-                offcanvasElement.addEventListener('shown.bs.offcanvas', config.onShown);
+                offcanvasElement.addEventListener(shownEventName, config.onShown);
             }
             if (config.onHide) {
-                offcanvasElement.addEventListener('hide.bs.offcanvas', config.onHide);
+                offcanvasElement.addEventListener(hideEventName, config.onHide);
             }
             if (config.onHidden) {
-                offcanvasElement.addEventListener('hidden.bs.offcanvas', config.onHidden);
+                offcanvasElement.addEventListener(hiddenEventName, config.onHidden);
             }
             
             // Auto cleanup on hide
-            offcanvasElement.addEventListener('hidden.bs.offcanvas', () => {
+            offcanvasElement.addEventListener(hiddenEventName, () => {
                 try {
                     offcanvasElement.remove();
                     this.activeOffcanvas.delete(controller.offcanvasId);
@@ -773,7 +1448,30 @@ class ModalManager {
     // Create offcanvas HTML
     createOffcanvasHtml(offcanvasId, titleId, contentId, config) {
         try {
+            if (!this.canUseBootstrapOffcanvas()) {
+                return this.createModalHtml(offcanvasId, titleId, contentId, {
+                    size: 'lg',
+                    title: config.title,
+                    content: config.content,
+                    backdrop: config.backdrop,
+                    keyboard: config.keyboard,
+                    focus: true,
+                    showHeader: config.showHeader,
+                    showFooter: false,
+                    showClose: config.showClose,
+                    headerClass: config.headerClass,
+                    bodyClass: config.bodyClass,
+                    footerClass: '',
+                    modalClass: config.offcanvasClass,
+                    centered: false,
+                    scrollable: false,
+                    staticBackdrop: false,
+                    footerButtons: []
+                });
+            }
+
             const positionClass = 'offcanvas-' + config.position;
+            const titleTag = this.getModalTitleTag();
             
             // Custom styles for width/height
             let customStyles = config.customStyles;
@@ -790,11 +1488,11 @@ class ModalManager {
             let headerHtml = '';
             if (config.showHeader) {
                 const closeButton = config.showClose ? 
-                    '<button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>' : '';
+                    this.createCloseButtonHtml('offcanvas', 'text-reset') : '';
                 
                 headerHtml = `
                     <div class="offcanvas-header ${config.headerClass}">
-                        <h5 id="${titleId}">${config.title}</h5>
+                        <${titleTag} class="offcanvas-title" id="${titleId}">${config.title}</${titleTag}>
                         ${closeButton}
                     </div>
                 `;
@@ -954,6 +1652,8 @@ class ModalManager {
             if (window.handleOffcanvasRefresh) {
                 window.handleOffcanvasRefresh = {};
             }
+
+            this.syncOverlayStack();
         } catch (error) {
             console.error('Error disposing all:', error);
         }

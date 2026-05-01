@@ -8,15 +8,7 @@ class SaveAssignmentRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        if ($this->isCreate()) {
-            return isSuperadmin() || permission('assignments-create');
-        }
-
-        if ($this->isUpdate()) {
-            return isSuperadmin() || permission('assignments-edit');
-        }
-
-        return isSuperadmin();
+        return auth()->can('rbac-roles-update');
     }
 
     public function primaryKey(): string|array

@@ -2,6 +2,7 @@
 
 namespace Components;
 
+use Core\Http\Request;
 use PDO;
 use Exception;
 use InvalidArgumentException;
@@ -23,6 +24,7 @@ class Api
     private array $config;
     private array $routes = [];
     private ?array $currentUser = null;
+    private ?Request $request = null;
     private string $requestMethod;
     private string $requestUri;
     private array $headers;
@@ -31,7 +33,20 @@ class Api
     {
         $this->pdo = $pdo;
         $this->config = array_replace_recursive($this->getDefaultConfig(), $config);
-        $this->requestMethod = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        if (function_exists('request')) {
+            try {
+                $resolvedRequest = request();
+                if ($resolvedRequest instanceof Request) {
+                    $this->request = $resolvedRequest;
+                }
+            } catch (\Throwable $e) {
+                $this->request = null;
+            }
+        }
+
+        $this->requestMethod = $this->request instanceof Request
+            ? $this->request->method()
+            : strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
         $this->requestUri = $this->parseRequestUri();
         $this->headers = $this->getAllHeaders();
     }
@@ -111,13 +126,23 @@ class Api
      */
     private function parseRequestUri(): string
     {
-        $uri = $_SERVER['REQUEST_URI'] ?? '/';
-        $uri = parse_url($uri, PHP_URL_PATH);
+        if ($this->request instanceof Request) {
+            $uri = $this->request->path();
+        } else {
+            $uri = $_SERVER['REQUEST_URI'] ?? '/';
+            $uri = parse_url($uri, PHP_URL_PATH);
+        }
 
-        // Remove the folder name (script's directory) from the URI
-        $base = dirname($_SERVER['SCRIPT_NAME']);
-        if ($base !== '/' && strpos($uri, $base) === 0) {
-            $uri = substr($uri, strlen($base));
+        if (!is_string($uri) || $uri === '') {
+            return '/';
+        }
+
+        if (!$this->request instanceof Request) {
+            // Remove the folder name (script's directory) from the URI
+            $base = dirname($_SERVER['SCRIPT_NAME']);
+            if ($base !== '/' && strpos($uri, $base) === 0) {
+                $uri = substr($uri, strlen($base));
+            }
         }
 
         // Remove everything up to and including '/api/' so only the path after 'api/' remains
@@ -136,6 +161,16 @@ class Api
      */
     private function getAllHeaders(): array
     {
+        if ($this->request instanceof Request) {
+            $headers = [];
+            foreach ($this->request->headers() as $key => $value) {
+                $header = str_replace(' ', '-', ucwords(str_replace('-', ' ', strtolower((string) $key))));
+                $headers[$header] = $value;
+            }
+
+            return $headers;
+        }
+
         $headers = [];
         foreach ($_SERVER as $key => $value) {
             if (strpos($key, 'HTTP_') === 0) {
@@ -721,8 +756,17 @@ class Api
      */
     public function getJsonInput(): array
     {
+        if ($this->request instanceof Request) {
+            if ($this->request->isJson()) {
+                $data = $this->request->input();
+                return is_array($data) ? $data : [];
+            }
+
+            return [];
+        }
+
         $input = file_get_contents('php://input');
-        $data = json_decode($input, true);
+        $data = is_string($input) ? json_decode($input, true) : null;
         return $data ?? [];
     }
 

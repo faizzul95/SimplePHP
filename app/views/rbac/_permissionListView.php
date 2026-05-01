@@ -1,5 +1,3 @@
-<?php $canSaveAbilities = permission('rbac-abilities-create') || permission('rbac-abilities-update'); ?>
-
 <div class="row">
     <div class="col-xl-12 mb-4">
         <div class="d-flex justify-content-between align-items-center">
@@ -8,8 +6,9 @@
     </div>
 
     <div class="col-xl-12 mb-4">
-        <?php if ($canSaveAbilities) : ?>
-        <form id="permissionForm" method="post" action="<?= route('permissions.save') ?>">
+        <?php $canManageAbilities = permission('rbac-abilities-create') || permission('rbac-abilities-update'); ?>
+        @if($canManageAbilities)
+        <form id="permissionForm" method="post" action="{{ route('permissions.save') }}">
             <div class="row">
                 <div class="col-xl-8 mb-3">
                     <label for="abilities_name" class="form-label"> Name <span class="text-danger">*</span></label>
@@ -39,11 +38,11 @@
                 <span class="text-danger">* Indicates a required field</span>
             </div>
         </div>
-        <?php else : ?>
+        @else
         <div class="alert alert-info mb-0" role="alert">
             You have read-only access to abilities.
         </div>
-        <?php endif; ?>
+        @endif
     </div>
 </div>
 
@@ -59,7 +58,7 @@
 
 <div id="bodyPermDiv" class="row mt-4">
     <div class="col-xl-12 mb-4">
-        <div id="nodataPermDiv" style="display: none;"> <?= nodata() ?> </div>
+        <div id="nodataPermDiv" style="display: none;"> {!! nodata() !!} </div>
         <div id="dataListPermDiv" class="table-responsive" style="display: block;">
             <table id="dataListPerm" class="table table-responsive table-hover table-striped table-bordered collapsed nowrap" width="100%">
                 <thead class="table-dark">
@@ -78,87 +77,104 @@
 </div>
 
 <script>
+    window.__permissionsTableManager = window.__permissionsTableManager || null;
+
     async function getPassData(baseUrl, data) {
         await getListPermission();
     }
 
-    // GET DATATABLE (SERVER-SIDE)
-    async function getListPermission() {
-        generateDatatableServer('dataListPerm', '<?= route('permissions.list') ?>', 'nodataPermDiv', {},
-            [{
-                    "data": "name",
-                    "width": "20%",
-                    "targets": 0
-                },
+    function setPermissionFormValues(data = {}) {
+        $('#perm_id').val(data.id ?? '');
+        $('#abilities_name').val(data.abilities_name ?? '');
+        $('#abilities_slug').val(data.abilities_slug ?? '');
+        $('#abilities_desc').val(data.abilities_desc ?? '');
+    }
+
+    async function getListPermission(resetPaging = false) {
+        let permissionsTableManager = window.__permissionsTableManager;
+        const currentTableElement = document.getElementById('dataListPerm');
+        if (permissionsTableManager && permissionsTableManager.instance) {
+            const activeTableElement = typeof permissionsTableManager.instance.table === 'function'
+                ? permissionsTableManager.instance.table().node()
+                : null;
+
+            if (!activeTableElement || !document.body.contains(activeTableElement) || activeTableElement !== currentTableElement) {
+                permissionsTableManager.destroy();
+                permissionsTableManager = null;
+                window.__permissionsTableManager = null;
+            }
+        }
+
+        const tableConfig = {
+            tableId: 'dataListPerm',
+            mode: 'server',
+            rowId: 'row_key',
+            ajax: {
+                url: '{{ route("permissions.list") }}',
+                method: 'POST',
+                data: function() {
+                    return {};
+                }
+            },
+            columns: [
+                { data: 'name', width: '20%', targets: 0 },
+                { data: 'slug', width: '15%', targets: 1 },
+                { data: 'desc', targets: 2 },
+                { data: 'count', width: '5%', targets: 3},
                 {
-                    "data": "slug",
-                    "width": "15%",
-                    "targets": 1
-                },
-                {
-                    "data": "desc",
-                    // "width": "10%",
-                    "targets": 2
-                },
-                {
-                    "data": "count",
-                    "width": "5%",
-                    "targets": 3
-                },
-                {
-                    // Action
-                    "data": "action",
-                    "render": function(data, type, row) {
+                    data: 'action',
+                    render: function(data) {
                         return data;
                     },
-                    "targets": -1,
-                    "width": "3%",
-                    "searchable": false,
-                    "orderable": false
+                    targets: -1,
+                    width: '3%',
+                    searchable: false,
+                    orderable: false
                 }
-            ], 'bodyPermDiv');
+            ],
+            ui: {
+                emptyStateContainerId: 'nodataPermDiv',
+                loadingContainerId: 'bodyPermDiv',
+                useLoadingIndicator: true,
+                renderEmptyState: function() {
+                    return nodata();
+                }
+            },
+            mutation: {
+                rowPath: null
+            }
+        };
+
+        if (!permissionsTableManager || !permissionsTableManager.instance) {
+            permissionsTableManager = datatableManager('dataListPerm', tableConfig);
+            window.__permissionsTableManager = permissionsTableManager;
+            return permissionsTableManager.create(tableConfig);
+        }
+
+        permissionsTableManager = datatableManager('dataListPerm', tableConfig);
+        window.__permissionsTableManager = permissionsTableManager;
+        permissionsTableManager.reload(resetPaging);
+        return permissionsTableManager.instance;
     }
 
     async function editPermRecord(id) {
-        const res = await callApi('get', "<?= route('permissions.show') ?>".replace('{id}', id));
+        const res = await callApi('get', "{{ route('permissions.show') }}".replace('{id}', id));
 
         if (isSuccess(res)) {
-            const response = res.data;
-            $('#perm_id').val(response.data.id);
-            $('#abilities_name').val(response.data.abilities_name);
-            $('#abilities_slug').val(response.data.abilities_slug);
-            $('#abilities_desc').val(response.data.abilities_desc);
+            setPermissionFormValues(res.data.data ?? {});
         }
     }
 
-    async function deletePermRecord(id) {
-        Swal.fire({
-            title: 'Are you sure?',
-            html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#3085d6',
-            cancelButtonColor: '#d33',
-            confirmButtonText: 'Yes, Remove it!',
-            reverseButtons: true,
-            customClass: {
-                container: 'swal2-customCss'
-            },
-        }).then(async (result) => {
-            if (result.isConfirmed) {
-                const res = await callApi('delete', "<?= route('permissions.delete') ?>".replace('{id}', id));
-
-                if (isSuccess(res)) {
-                    const response = res.data;
-                    noti(response.code, response.message);
-
-                    getListPermission(); // reload
-                }
+    async function deletePermRecord(id, rowKey = null) {
+        await confirmDeleteAction({
+            url: "{{ route('permissions.delete') }}".replace('{id}', id),
+            onSuccess: function() {
+                removeDatatableRow('dataListPerm', rowKey);
             }
-        })
+        });
     }
 
-    $("#permissionForm").submit(function(event) {
+    $("#permissionForm").off('submit.permissionForm').on('submit.permissionForm', function(event) {
         event.preventDefault();
 
         if (validateDataPerm(this)) {
@@ -166,40 +182,22 @@
             const form = $(this);
             const url = form.attr('action');
 
-            Swal.fire({
-                title: 'Are you sure?',
-                html: "Form will be submitted!",
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Yes, Confirm!',
-                reverseButtons: true,
-                customClass: {
-                    container: 'swal2-customCss'
-                },
-            }).then(
-                async (result) => {
-                    if (result.isConfirmed) {
-                        const res = await submitApi(url, form.serializeArray(), 'permissionForm');
-                        if (isSuccess(res)) {
+            confirmSubmitAction({
+                onConfirm: async function() {
+                    const res = await submitApi(url, form.serializeArray(), 'permissionForm', null, false);
+                    if (isSuccess(res)) {
 
-                            if (isSuccess(res.data.code)) {
-                                noti(res.status, res.data.message);
-                                getListPermission();
-
-                                // reset form
-                                $('#perm_id').val('');
-                                $('#abilities_name').val('');
-                                $('#abilities_slug').val('');
-                                $('#abilities_desc').val('');
-                            } else {
-                                noti(400, res.data.message)
-                            }
-
+                        if (isSuccess(res.data.code)) {
+                            noti(res.status, res.data.message);
+                            syncDatatableRow('dataListPerm', res.data.data ?? null);
+                            setPermissionFormValues();
+                        } else {
+                            noti(400, res.data.message)
                         }
+
                     }
-                })
+                }
+            });
 
         } else {
             validationJsError('toastr', 'single'); // single or multi

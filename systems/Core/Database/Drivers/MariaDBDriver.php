@@ -15,9 +15,16 @@ namespace Core\Database\Drivers;
 
 use Core\Database\BaseDatabase;
 use Core\Database\ConnectionPool;
+use Core\Database\DriverCapabilities;
+use Core\Database\DriverRegistry;
 
 class MariaDBDriver extends BaseDatabase
 {
+    public function capabilities(): DriverCapabilities
+    {
+        return DriverRegistry::capabilities((string) ($this->driver ?: 'mariadb'));
+    }
+
     public function connect($connectionID = null)
     {
         $connectionName = !empty($connectionID) ? $connectionID : $this->connectionName;
@@ -42,6 +49,7 @@ class MariaDBDriver extends BaseDatabase
         }
 
         $this->driver = $this->config[$connectionName]['driver'];
+        $this->applySessionPerformanceRules();
         self::$_instance = $this;
 
         return $this;
@@ -49,233 +57,52 @@ class MariaDBDriver extends BaseDatabase
 
     public function whereDate($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDate(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $formattedDate = $this->validateDate($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("DATE_FORMAT($column, '%Y-%m-%d')", $formattedDate, $operator, 'AND');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('date', $column, $operator, $value, 'AND');
     }
 
     public function orWhereDate($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereDate(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $formattedDate = $this->validateDate($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("DATE_FORMAT($column, '%Y-%m-%d')", $formattedDate, $operator, 'OR');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('date', $column, $operator, $value, 'OR');
     }
 
     public function whereDay($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereDay(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateDay($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("DAY($column)", (int)$value, $operator, 'AND');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('day', $column, $operator, $value, 'AND');
     }
 
     public function orWhereDay($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereDay(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateDay($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("DAY($column)", (int)$value, $operator, 'OR');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('day', $column, $operator, $value, 'OR');
     }
 
     public function whereMonth($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereMonth(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateMonth($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("MONTH($column)", (int)$value, $operator, 'AND');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('month', $column, $operator, $value, 'AND');
     }
 
     public function orWhereMonth($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereMonth(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateMonth($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("MONTH($column)", (int)$value, $operator, 'OR');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('month', $column, $operator, $value, 'OR');
     }
 
     public function whereYear($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereYear(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateYear($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("YEAR($column)", (int)$value, $operator, 'AND');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('year', $column, $operator, $value, 'AND');
     }
 
     public function orWhereYear($column, $operator = null, $value = null)
     {
-        try {
-
-            $this->validateColumn($column);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereYear(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateYear($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("YEAR($column)", (int)$value, $operator, 'OR');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('year', $column, $operator, $value, 'OR');
     }
 
     public function whereTime($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Disallow raw SQL for safety
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in whereTime(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $formattedTime = $this->validateTime($value); // Custom method to validate 'HH:MM[:SS]'
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("DATE_FORMAT($column, '%H:%i:%s')", $formattedTime, $operator, 'AND');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('time', $column, $operator, $value, 'AND');
     }
 
     public function orWhereTime($column, $operator = null, $value = null)
     {
-        try {
-            $this->validateColumn($column);
-
-            // Disallow raw SQL
-            $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in orWhereTime(). Please use query() function.');
-
-            if ($value === null) {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $formattedTime = $this->validateTime($value);
-            $this->validateOperator($operator);
-
-            $this->_buildWhereClause("DATE_FORMAT($column, '%H:%i:%s')", $formattedTime, $operator, 'OR');
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-        }
+        return $this->applyTemporalWhereClause('time', $column, $operator, $value, 'OR');
     }
 
     public function whereJsonContains($columnName, $jsonPath, $value)

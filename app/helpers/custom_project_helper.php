@@ -41,6 +41,90 @@ if (!function_exists('show_404')) {
     }
 }
 
+if (!function_exists('modalPartialAlert')) {
+    function modalPartialAlert(string $message): string
+    {
+        return '<div class="alert alert-danger" role="alert">' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
+}
+
+if (!function_exists('renderModalPartial')) {
+    function renderModalPartial($filePath = '', $dataArray = []): array
+    {
+        try {
+            $normalizedPath = security()->normalizeRelativeProjectPath((string) $filePath);
+        } catch (\InvalidArgumentException $e) {
+            return [
+                'status' => 422,
+                'content' => modalPartialAlert('Invalid modal file path.'),
+            ];
+        }
+
+        if (!str_starts_with($normalizedPath, 'views/')) {
+            return [
+                'status' => 422,
+                'content' => modalPartialAlert('Invalid modal file path.'),
+            ];
+        }
+
+        if (!str_ends_with($normalizedPath, '.php') && !str_ends_with($normalizedPath, '.blade.php')) {
+            return [
+                'status' => 422,
+                'content' => modalPartialAlert('Invalid file type.'),
+            ];
+        }
+
+        $partialName = pathinfo($normalizedPath, PATHINFO_FILENAME);
+        if (!str_starts_with((string) $partialName, '_')) {
+            return [
+                'status' => 422,
+                'content' => modalPartialAlert('Invalid modal partial.'),
+            ];
+        }
+
+        $viewPath = 'app/' . ltrim($normalizedPath, '/');
+        $absolute = realpath(ROOT_DIR . $viewPath);
+        $allowedDir = realpath(ROOT_DIR . 'app/views');
+
+        if ($absolute === false || $allowedDir === false) {
+            return [
+                'status' => 404,
+                'content' => modalPartialAlert('File not found.'),
+            ];
+        }
+
+        $normalizedAbsolute = str_replace('\\', '/', $absolute);
+        $normalizedAllowedDir = rtrim(str_replace('\\', '/', $allowedDir), '/') . '/';
+        if (!str_starts_with($normalizedAbsolute, $normalizedAllowedDir)) {
+            return [
+                'status' => 404,
+                'content' => modalPartialAlert('File not found.'),
+            ];
+        }
+
+        if (!is_readable($absolute)) {
+            return [
+                'status' => 404,
+                'content' => modalPartialAlert('File does not exist: ' . $viewPath),
+            ];
+        }
+
+        $__modalData = is_array($dataArray) ? array_map(static function ($value) {
+            return is_scalar($value) || $value === null ? $value : null;
+        }, $dataArray) : [];
+
+        $relativePath = ltrim(substr($normalizedAbsolute, strlen(rtrim($normalizedAllowedDir, '/'))), '/');
+        $relativePath = preg_replace('/\.(blade\.)?php$/', '', $relativePath) ?? $relativePath;
+        $viewName = str_replace('/', '.', $relativePath);
+        $content = blade_engine()->render($viewName, $__modalData);
+
+        return [
+            'status' => 200,
+            'content' => is_string($content) ? $content : '',
+        ];
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | SESSION & PERMISSION  
@@ -50,7 +134,10 @@ if (!function_exists('show_404')) {
 if (!function_exists('isLogin')) {
     function isLogin($redirect = true, $param = 'isLoggedIn', $path = null)
     {
-        $isCurrentLogin = hasData($_SESSION, $param);
+        $isCurrentLogin = $param === 'isLoggedIn'
+            ? isAuthenticated(['session', 'token', 'oauth2'])
+            : hasData($_SESSION, $param);
+
         if (!$isCurrentLogin && $redirect) {
             $path = !empty($path) ? $path : url(REDIRECT_LOGIN);
             redirect($path, true);
@@ -77,62 +164,55 @@ if (!function_exists('permission')) {
             return true;
         }
 
-        $listPermission = getSession('permissions');
-
-        // If '*' exists in listPermission, grant all permissions
-        if (!empty($listPermission) && in_array('*', $listPermission)) {
-            // If $params is an array, set each item to true
+        if (function_exists('auth')) {
             if (is_array($params)) {
-                return array_fill_keys($params, true);
+                $permissions = [];
+                foreach ($params as $slug) {
+                    $slug = trim((string) $slug);
+                    if ($slug === '') {
+                        continue;
+                    }
+
+                    $permissions[$slug] = auth()->can($slug);
+                }
+
+                return $permissions;
             }
-            // If $params is a string, return true
-            return true;
+
+            if (is_string($params)) {
+                return auth()->can(trim($params));
+            }
         }
 
-        // Check permissions for each item in params if it's an array
-        if (is_array($params) && !empty($listPermission)) {
+        $listPermission = getSession('permissions');
+        if (empty($listPermission) || !is_array($listPermission)) {
+            return false;
+        }
+
+        if (in_array('*', $listPermission, true)) {
+            return is_array($params)
+                ? array_fill_keys(array_map(static fn($slug) => trim((string) $slug), $params), true)
+                : true;
+        }
+
+        if (is_array($params)) {
             $perm = [];
             foreach ($params as $slug) {
-                $perm[$slug] = in_array($slug, $listPermission) ? true : false;
+                $slug = trim((string) $slug);
+                if ($slug === '') {
+                    continue;
+                }
+
+                $perm[$slug] = in_array($slug, $listPermission, true);
             }
+
             return $perm;
         }
 
-        // If params is a string, check if it exists in listPermission
-        if (is_string($params) && !empty($listPermission)) {
-            return in_array($params, $listPermission);
+        if (is_string($params)) {
+            return in_array(trim($params), $listPermission, true);
         }
 
-        return false;
-    }
-}
-
-/**
- * Checks and enforces page-level permission for the current user.
- *
- * This function checks if the current user has the required permission (from the global $permission variable).
- * If permission is granted, it returns true. If not, and $render is true, it renders a 403 error page and exits.
- * Otherwise, it sets the HTTP response code to 403 and outputs a simple error message.
- *
- * @param bool $render Whether to render the 403 error page and exit on failure (default: true).
- * @return bool Returns true if permission is granted, false otherwise.
- */
-if (!function_exists('requirePagePermission')) {
-    function requirePagePermission($render = true)
-    {
-        global $permission;
-
-        if (permission($permission ?? null)) {
-            return true;
-        }
-
-        if ($render) {
-            show_403();
-            exit;
-        }
-
-        http_response_code(403);
-        echo "403 - No permission";
         return false;
     }
 }
@@ -180,51 +260,6 @@ if (!function_exists('getPermissionSlug')) {
 
         // Return unique slugs
         return array_unique($slug);
-    }
-}
-
-if (!function_exists('resolveAccessibleMenuUrl')) {
-    function resolveAccessibleMenuUrl(array $items): ?string
-    {
-        foreach ($items as $item) {
-            if (!is_array($item)) {
-                continue;
-            }
-
-            $isActive = ($item['active'] ?? true) === true;
-            $requiresAuth = ($item['authenticate'] ?? false) === true;
-            $permission = trim((string) ($item['permission'] ?? ''));
-            $url = trim((string) ($item['url'] ?? ''));
-
-            if ($isActive && $requiresAuth && $url !== '' && $url !== 'javascript:void(0);') {
-                if ($permission === '' || permission($permission)) {
-                    return $url;
-                }
-            }
-
-            $subpages = $item['subpage'] ?? [];
-            if (is_array($subpages) && !empty($subpages)) {
-                $subpageUrl = resolveAccessibleMenuUrl($subpages);
-                if ($subpageUrl !== null) {
-                    return $subpageUrl;
-                }
-            }
-        }
-
-        return null;
-    }
-}
-
-if (!function_exists('resolveAuthenticatedLandingUrl')) {
-    function resolveAuthenticatedLandingUrl(): ?string
-    {
-        global $menuList;
-
-        if (!isset($menuList) || !is_array($menuList)) {
-            return null;
-        }
-
-        return resolveAccessibleMenuUrl($menuList);
     }
 }
 

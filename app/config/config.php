@@ -21,8 +21,7 @@ $config['timezone'] = (string) env('APP_TIMEZONE', $config['timezone']);
 | DEBUG CONFIGURATION
 |--------------------------------------------------------------------------
 */
-$config['error_debug']    = true; // set true or false
-$config['error_debug']    = (bool) env('APP_DEBUG', $config['error_debug']);
+$config['error_debug']    = (bool) env('APP_DEBUG', false);
 $config['error_log_path'] = 'logs/error.log';
 $config['error_log_path'] = (string) env('APP_ERROR_LOG_PATH', $config['error_log_path']);
 

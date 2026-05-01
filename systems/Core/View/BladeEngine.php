@@ -4,6 +4,8 @@ namespace Core\View;
 
 class BladeEngine
 {
+    private const COMPILER_CACHE_VERSION = '2026-04-12-b';
+
     private string $viewPath;
     private string $cachePath;
     private array $sections = [];
@@ -12,6 +14,11 @@ class BladeEngine
     private array $pushStack = [];
     private ?string $extendsView = null;
     private int $renderLevel = 0;
+    private ?array $cachedSharedViewData = null;
+    // Bounded to avoid unbounded memory growth in long-running workers.
+    private const COMPILED_PATH_CACHE_MAX = 256;
+    private const RESOLVE_CACHE_MAX = 256;
+    private static array $compiledPathCache = [];
 
     public function __construct(string $viewPath, string $cachePath)
     {
@@ -43,7 +50,7 @@ class BladeEngine
         ob_start();
         $__blade = $this;
 
-        $vars = array_merge($shared, $data);
+        $vars = array_merge($this->sharedViewData(), $shared, $data);
         if (!empty($vars)) {
             extract($vars, EXTR_SKIP);
         }
@@ -59,6 +66,9 @@ class BladeEngine
 
         $this->renderLevel--;
         if ($this->renderLevel === 0) {
+            if ($this->shouldMinifyRenderedOutput()) {
+                $content = $this->minifyRenderedHtml($content);
+            }
             $this->resetRuntimeStacks();
         }
 
@@ -155,6 +165,39 @@ class BladeEngine
         return $this->stacks[$stack] ?? $default;
     }
 
+    public function sharedViewData(): array
+    {
+        if ($this->cachedSharedViewData !== null) {
+            return $this->cachedSharedViewData;
+        }
+
+        $shared = [];
+
+        if (function_exists('validationErrors')) {
+            $shared['errors'] = validationErrors();
+        }
+
+        $this->cachedSharedViewData = $shared;
+        return $shared;
+    }
+
+    public function renderDebugDump(array $values, bool $die = false): void
+    {
+        if (!$this->isDebugEnabled()) {
+            return;
+        }
+
+        echo '<pre>';
+        foreach ($values as $value) {
+            var_dump($value);
+        }
+        echo '</pre>';
+
+        if ($die) {
+            exit;
+        }
+    }
+
     private function resetState(): void
     {
         $this->sections = [];
@@ -162,6 +205,7 @@ class BladeEngine
         $this->extendsView = null;
         $this->sectionStack = [];
         $this->pushStack = [];
+        $this->cachedSharedViewData = null;
     }
 
     private function resetRuntimeStacks(): void
@@ -169,6 +213,45 @@ class BladeEngine
         $this->sectionStack = [];
         $this->pushStack = [];
         $this->extendsView = null;
+        $this->cachedSharedViewData = null;
+    }
+
+    private function isDebugEnabled(): bool
+    {
+        return (bool) config('error_debug', false);
+    }
+
+    private function shouldMinifyRenderedOutput(): bool
+    {
+        return (bool) config('framework.view_minify_output', false);
+    }
+
+    private function shouldCompactCompiledTemplate(): bool
+    {
+        return (bool) config('framework.view_compact_compiled_cache', false);
+    }
+
+    private function minifyRenderedHtml(string $content): string
+    {
+        if ($content === '' || trim($content) === '') {
+            return $content;
+        }
+
+        $preserved = [];
+        $content = preg_replace_callback('/<(pre|textarea|script|style)\b[^>]*>.*?<\/\1>/is', function ($matches) use (&$preserved) {
+            $key = '__BLADE_MINIFY_BLOCK_' . count($preserved) . '__';
+            $preserved[$key] = $matches[0];
+            return $key;
+        }, $content) ?? $content;
+
+        $content = preg_replace('/>[\t ]*\r?\n[\t\r\n ]*</', '><', $content) ?? $content;
+        $content = preg_replace('/\r?\n{2,}/', "\n", $content) ?? $content;
+
+        if (!empty($preserved)) {
+            $content = strtr($content, $preserved);
+        }
+
+        return $content;
     }
 
     private static array $resolveCache = [];
@@ -180,7 +263,19 @@ class BladeEngine
         }
 
         $normalizedView = trim($view);
+        if ($normalizedView === '' || str_contains($normalizedView, "\0")) {
+            return null;
+        }
+
+        if (str_contains(str_replace('\\', '/', $normalizedView), '../')) {
+            return null;
+        }
+
         $rootPath = rtrim(ROOT_DIR, '/\\');
+        $allowedBase = realpath($this->viewPath);
+        if ($allowedBase === false) {
+            return null;
+        }
 
         $directCandidates = [
             $normalizedView,
@@ -188,9 +283,10 @@ class BladeEngine
         ];
 
         foreach ($directCandidates as $file) {
-            if (is_string($file) && is_file($file)) {
-                self::$resolveCache[$view] = $file;
-                return $file;
+            $resolved = $this->allowedResolvedPath((string) $file, $allowedBase);
+            if ($resolved !== null) {
+                self::rememberResolvedView($view, $resolved);
+                return $resolved;
             }
         }
 
@@ -203,20 +299,39 @@ class BladeEngine
         ];
 
         foreach ($candidates as $file) {
-            if (is_string($file) && is_file($file)) {
-                self::$resolveCache[$view] = $file;
-                return $file;
+            $resolved = $this->allowedResolvedPath((string) $file, $allowedBase);
+            if ($resolved !== null) {
+                self::rememberResolvedView($view, $resolved);
+                return $resolved;
             }
         }
 
         return null;
     }
 
+    private static function rememberResolvedView(string $view, string $resolved): void
+    {
+        if (count(self::$resolveCache) >= self::RESOLVE_CACHE_MAX) {
+            array_shift(self::$resolveCache);
+        }
+        self::$resolveCache[$view] = $resolved;
+    }
+
     private function compileIfNeeded(string $source): string
     {
-        // Use both path and mtime in cache key for reliable invalidation
-        $mtime = filemtime($source);
-        $cacheKey = md5($source . '|' . $mtime);
+        $stat = @stat($source) ?: [];
+        $signature = sha1(
+            self::COMPILER_CACHE_VERSION . '|' .
+            $source . '|' .
+            (string) ($stat['mtime'] ?? 0) . '|' .
+            (string) ($stat['size'] ?? 0) . '|' .
+            ($this->shouldCompactCompiledTemplate() ? 'compact' : 'plain')
+        );
+        if (isset(self::$compiledPathCache[$source]) && self::$compiledPathCache[$source]['signature'] === $signature) {
+            return self::$compiledPathCache[$source]['path'];
+        }
+
+        $cacheKey = md5($source . '|' . $signature);
         $compiled = $this->cachePath . DIRECTORY_SEPARATOR . $cacheKey . '.php';
 
         if (!file_exists($compiled)) {
@@ -226,6 +341,9 @@ class BladeEngine
             }
 
             $compiledContent = $this->compileString($raw);
+            if ($this->shouldCompactCompiledTemplate()) {
+                $compiledContent = $this->compactCompiledTemplate($compiledContent);
+            }
             file_put_contents($compiled, $compiledContent, LOCK_EX);
 
             // Invalidate opcache for the compiled file
@@ -234,7 +352,58 @@ class BladeEngine
             }
         }
 
+        if (count(self::$compiledPathCache) >= self::COMPILED_PATH_CACHE_MAX) {
+            array_shift(self::$compiledPathCache);
+        }
+        self::$compiledPathCache[$source] = [
+            'signature' => $signature,
+            'path' => $compiled,
+        ];
+
         return $compiled;
+    }
+
+    private function compactCompiledTemplate(string $content): string
+    {
+        if ($content === '') {
+            return $content;
+        }
+
+        $compacted = $content;
+
+        if (function_exists('php_strip_whitespace')) {
+            $tempFile = tempnam($this->cachePath, 'blade-compact-');
+            if ($tempFile !== false) {
+                try {
+                    if (file_put_contents($tempFile, $content, LOCK_EX) !== false) {
+                        $stripped = php_strip_whitespace($tempFile);
+                        if (is_string($stripped) && $stripped !== '') {
+                            $compacted = $stripped;
+                        }
+                    }
+                } finally {
+                    if (is_file($tempFile)) {
+                        @unlink($tempFile);
+                    }
+                }
+            }
+        }
+
+        $preserved = [];
+        $compacted = preg_replace_callback('/<(pre|textarea|script|style)\b[^>]*>.*?<\/\1>/is', function ($matches) use (&$preserved) {
+            $key = '__BLADE_COMPILED_BLOCK_' . count($preserved) . '__';
+            $preserved[$key] = $matches[0];
+            return $key;
+        }, $compacted) ?? $compacted;
+
+        $compacted = preg_replace('/>[\t ]*\r?\n[\t\r\n ]*</', '><', $compacted) ?? $compacted;
+        $compacted = preg_replace('/\r?\n{2,}/', "\n", $compacted) ?? $compacted;
+
+        if (!empty($preserved)) {
+            $compacted = strtr($compacted, $preserved);
+        }
+
+        return $compacted !== '' ? $compacted : $content;
     }
 
     private function compileString(string $content): string
@@ -252,34 +421,9 @@ class BladeEngine
             return "<?php \$__blade->setExtends('{$matches[1]}'); ?>";
         }, $content) ?? $content;
 
-        $content = preg_replace_callback('/@include\(\s*[\'\"]([^\'\"]+)[\'\"]\s*(?:,\s*(.+?))?\)/', function ($matches) {
-            $view = $matches[1];
-            $data = isset($matches[2]) ? trim($matches[2]) : '[]';
-            return "<?php echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); ?>";
-        }, $content) ?? $content;
-
-        $content = preg_replace_callback('/@includeIf\(\s*[\'\"]([^\'\"]+)[\'\"]\s*(?:,\s*(.+?))?\)/', function ($matches) {
-            $view = $matches[1];
-            $data = isset($matches[2]) ? trim($matches[2]) : '[]';
-            return "<?php try { echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); } catch (\\Throwable \$e) {} ?>";
-        }, $content) ?? $content;
-
-        $content = preg_replace_callback('/@includeWhen\(\s*(.+?)\s*,\s*[\'\"]([^\'\"]+)[\'\"]\s*(?:,\s*(.+?))?\)/', function ($matches) {
-            $condition = trim($matches[1]);
-            $view = $matches[2];
-            $data = isset($matches[3]) ? trim($matches[3]) : '[]';
-            return "<?php if ({$condition}): ?><?php echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); ?><?php endif; ?>";
-        }, $content) ?? $content;
-
-        $content = preg_replace_callback('/@includeUnless\(\s*(.+?)\s*,\s*[\'\"]([^\'\"]+)[\'\"]\s*(?:,\s*(.+?))?\)/', function ($matches) {
-            $condition = trim($matches[1]);
-            $view = $matches[2];
-            $data = isset($matches[3]) ? trim($matches[3]) : '[]';
-            return "<?php if (!({$condition})): ?><?php echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); ?><?php endif; ?>";
-        }, $content) ?? $content;
-
-        $content = preg_replace('/@section\(\s*[\'\"]([^\'\"]+)[\'\"]\s*,\s*(.+?)\)/', "<?php \$__blade->section('$1', $2); ?>", $content) ?? $content;
-        $content = preg_replace('/@section\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php \$__blade->startSection('$1'); ?>", $content) ?? $content;
+        $content = $this->compileIncludeDirectives($content);
+        $content = $this->compileSectionDirectives($content);
+        $content = $this->compileForelseDirectives($content);
 
         // Batch all simple string replacements in one strtr() call for performance
         // (replaces ~28 individual str_replace calls with a single hash lookup pass)
@@ -303,7 +447,6 @@ class BladeEngine
             '@endif'         => '<?php endif; ?>',
             '@endunless'     => '<?php endif; ?>',
             '@endisset'      => '<?php endif; ?>',
-            '@endforelse'    => '<?php endif; ?>',
             '@endempty'      => '<?php endif; ?>',
             '@endforeach'    => '<?php endforeach; ?>',
             '@endfor'        => '<?php endfor; ?>',
@@ -313,8 +456,7 @@ class BladeEngine
             '@endsession'    => '<?php endif; ?>',
         ]);
 
-        $content = preg_replace('/@yield\(\s*[\'\"]([^\'\"]+)[\'\"]\s*,\s*(.+?)\)/', "<?php echo \$__blade->yieldContent('$1', $2); ?>", $content) ?? $content;
-        $content = preg_replace('/@yield\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php echo \$__blade->yieldContent('$1'); ?>", $content) ?? $content;
+        $content = $this->compileYieldDirectives($content);
         $content = preg_replace('/@hasSection\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php if (\$__blade->hasSection('$1')): ?>", $content) ?? $content;
 
         $content = preg_replace('/@push\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php \$__blade->startPush('$1'); ?>", $content) ?? $content;
@@ -324,9 +466,18 @@ class BladeEngine
 
         $content = preg_replace('/@auth/', '<?php if (auth()->check()): ?>', $content) ?? $content;
         $content = preg_replace('/@guest/', '<?php if (auth()->guest()): ?>', $content) ?? $content;
+        $content = preg_replace('/@can\s*\((.*?)\)/', '<?php if (auth()->can($1)): ?>', $content) ?? $content;
+        $content = preg_replace('/@cannot\s*\((.*?)\)/', '<?php if (auth()->cannot($1)): ?>', $content) ?? $content;
+        $content = strtr($content, [
+            '@endcan' => '<?php endif; ?>',
+            '@endcannot' => '<?php endif; ?>',
+        ]);
 
         // @method('PUT') → hidden input for form method spoofing
-        $content = preg_replace('/@method\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', '<input type="hidden" name="_method" value="$1">', $content) ?? $content;
+        $content = preg_replace_callback('/@method\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', static function ($matches) {
+            $value = htmlspecialchars((string) ($matches[1] ?? ''), ENT_QUOTES, 'UTF-8');
+            return '<input type="hidden" name="_method" value="' . $value . '">';
+        }, $content) ?? $content;
 
         // @error('field') ... @enderror
         $content = preg_replace('/@error\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', '<?php if (isset($errors) && isset($errors[\'$1\'])): ?><?php $message = is_array($errors[\'$1\']) ? $errors[\'$1\'][0] : $errors[\'$1\']; ?>', $content) ?? $content;
@@ -352,23 +503,7 @@ class BladeEngine
             return "<?php if (!isset(\$GLOBALS['__blade_once_{$id}'])): \$GLOBALS['__blade_once_{$id}'] = true; ?>";
         }, $content) ?? $content;
 
-        // @each('view.name', $array, 'varName', 'view.empty')
-        $content = preg_replace_callback('/@each\s*\(\s*[\'\"]([^\'\"]+)[\'\"]\s*,\s*(.+?)\s*,\s*[\'\"]([^\'\"]+)[\'\"]\s*(?:,\s*[\'\"]([^\'\"]+)[\'\"]\s*)?\)/', function ($matches) {
-            $view = $matches[1];
-            $data = trim($matches[2]);
-            $varName = $matches[3];
-            $emptyView = isset($matches[4]) ? $matches[4] : '';
-            if (!empty($emptyView)) {
-                return "<?php if (!empty({$data})): foreach ({$data} as \${$varName}): ?>" .
-                    "<?php echo \$__blade->includeView('{$view}', ['{$varName}' => \${$varName}], get_defined_vars()); ?>" .
-                    "<?php endforeach; else: ?>" .
-                    "<?php echo \$__blade->includeView('{$emptyView}', get_defined_vars()); ?>" .
-                    "<?php endif; ?>";
-            }
-            return "<?php foreach ({$data} as \${$varName}): ?>" .
-                "<?php echo \$__blade->includeView('{$view}', ['{$varName}' => \${$varName}], get_defined_vars()); ?>" .
-                "<?php endforeach; ?>";
-        }, $content) ?? $content;
+        $content = $this->compileEachDirectives($content);
 
         // @style(['class1', 'class2' => condition]) - like @class but for inline styles
         $content = preg_replace('/@style\s*\(\s*(\[.+?\])\s*\)/', '<?php echo implode("; ", array_keys(array_filter($1, function($v, $k) { return is_numeric($k) ? true : $v; }, ARRAY_FILTER_USE_BOTH))); ?>', $content) ?? $content;
@@ -376,35 +511,15 @@ class BladeEngine
         // @session('key') ... @endsession
         $content = preg_replace('/@session\s*\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', '<?php if (isset($_SESSION[\'$1\'])): $value = $_SESSION[\'$1\']; ?>', $content) ?? $content;
 
-        // @dd($var) - dump and die
-        $content = preg_replace('/@dd\s*\((.*?)\)/', '<?php echo \'<pre>\'; var_dump($1); echo \'</pre>\'; exit; ?>', $content) ?? $content;
-
-        // @dump($var) - dump without dying
-        $content = preg_replace('/@dump\s*\((.*?)\)/', '<?php echo \'<pre>\'; var_dump($1); echo \'</pre>\'; ?>', $content) ?? $content;
+        // @dd($var) / @dump($var) - debug-only to avoid leaking state in production
+        $content = preg_replace('/@dd\s*\((.*?)\)/', '<?php $__blade->renderDebugDump([$1], true); ?>', $content) ?? $content;
+        $content = preg_replace('/@dump\s*\((.*?)\)/', '<?php $__blade->renderDebugDump([$1], false); ?>', $content) ?? $content;
 
         $content = preg_replace('/@if\s*\((.*?)\)/', '<?php if ($1): ?>', $content) ?? $content;
         $content = preg_replace('/@elseif\s*\((.*?)\)/', '<?php elseif ($1): ?>', $content) ?? $content;
 
         $content = preg_replace('/@unless\s*\((.*?)\)/', '<?php if (!($1)): ?>', $content) ?? $content;
         $content = preg_replace('/@isset\s*\((.*?)\)/', '<?php if (isset($1)): ?>', $content) ?? $content;
-
-        // @forelse ($items as $item) ... @empty ... @endforelse
-        // Must be processed BEFORE standalone @empty($var)
-        $forelseCounter = 0;
-        $content = preg_replace_callback('/@forelse\s*\((.+?)\s+as\s+(.+?)\)/', function ($m) use (&$forelseCounter) {
-            $forelseCounter++;
-            return "<?php \$__forelseEmpty_{$forelseCounter} = true; foreach ({$m[1]} as {$m[2]}): \$__forelseEmpty_{$forelseCounter} = false; ?>";
-        }, $content) ?? $content;
-
-        // @empty without parentheses inside forelse → end loop + check empty flag
-        $emptyCounter = 0;
-        $content = preg_replace_callback('/@empty(?!\s*\()/', function () use (&$emptyCounter, $forelseCounter) {
-            if ($emptyCounter < $forelseCounter) {
-                $emptyCounter++;
-                return "<?php endforeach; if (\$__forelseEmpty_{$emptyCounter}): ?>";
-            }
-            return '<?php if (empty(null)): ?>';
-        }, $content) ?? $content;
 
         // Standalone @empty($var)
         $content = preg_replace('/@empty\s*\((.*?)\)/', '<?php if (empty($1)): ?>', $content) ?? $content;
@@ -426,5 +541,420 @@ class BladeEngine
         }
 
         return $content;
+    }
+
+    private function compileSectionDirectives(string $content): string
+    {
+        return $this->replaceDirectiveCalls($content, 'section', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 2);
+            $name = $this->parseQuotedString($args[0] ?? '');
+            if ($name === null) {
+                return '@section(' . $expression . ')';
+            }
+
+            if (isset($args[1])) {
+                return "<?php \$__blade->section('{$name}', " . trim($args[1]) . "); ?>";
+            }
+
+            return "<?php \$__blade->startSection('{$name}'); ?>";
+        });
+    }
+
+    private function compileIncludeDirectives(string $content): string
+    {
+        $content = $this->replaceDirectiveCalls($content, 'include', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 2);
+            $view = $this->parseQuotedString($args[0] ?? '');
+            if ($view === null) {
+                return '@include(' . $expression . ')';
+            }
+
+            $data = isset($args[1]) ? trim($args[1]) : '[]';
+            return "<?php echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); ?>";
+        });
+
+        $content = $this->replaceDirectiveCalls($content, 'includeIf', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 2);
+            $view = $this->parseQuotedString($args[0] ?? '');
+            if ($view === null) {
+                return '@includeIf(' . $expression . ')';
+            }
+
+            $data = isset($args[1]) ? trim($args[1]) : '[]';
+            return "<?php try { echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); } catch (\\Throwable \$e) {} ?>";
+        });
+
+        $content = $this->replaceDirectiveCalls($content, 'includeWhen', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 3);
+            $condition = trim($args[0] ?? '');
+            $view = $this->parseQuotedString($args[1] ?? '');
+            if ($condition === '' || $view === null) {
+                return '@includeWhen(' . $expression . ')';
+            }
+
+            $data = isset($args[2]) ? trim($args[2]) : '[]';
+            return "<?php if ({$condition}): ?><?php echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); ?><?php endif; ?>";
+        });
+
+        return $this->replaceDirectiveCalls($content, 'includeUnless', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 3);
+            $condition = trim($args[0] ?? '');
+            $view = $this->parseQuotedString($args[1] ?? '');
+            if ($condition === '' || $view === null) {
+                return '@includeUnless(' . $expression . ')';
+            }
+
+            $data = isset($args[2]) ? trim($args[2]) : '[]';
+            return "<?php if (!({$condition})): ?><?php echo \$__blade->includeView('{$view}', {$data}, get_defined_vars()); ?><?php endif; ?>";
+        });
+    }
+
+    private function compileYieldDirectives(string $content): string
+    {
+        return $this->replaceDirectiveCalls($content, 'yield', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 2);
+            $name = $this->parseQuotedString($args[0] ?? '');
+            if ($name === null) {
+                return '@yield(' . $expression . ')';
+            }
+
+            if (isset($args[1])) {
+                return "<?php echo \$__blade->yieldContent('{$name}', " . trim($args[1]) . "); ?>";
+            }
+
+            return "<?php echo \$__blade->yieldContent('{$name}'); ?>";
+        });
+    }
+
+    private function compileEachDirectives(string $content): string
+    {
+        return $this->replaceDirectiveCalls($content, 'each', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 4);
+            $view = $this->parseQuotedString($args[0] ?? '');
+            $data = trim($args[1] ?? '');
+            $varName = $this->parseQuotedString($args[2] ?? '');
+            $emptyView = isset($args[3]) ? $this->parseQuotedString($args[3]) : '';
+
+            if ($view === null || $data === '' || $varName === null) {
+                return '@each(' . $expression . ')';
+            }
+
+            if (is_string($emptyView) && $emptyView !== '') {
+                return "<?php if (!empty({$data})): foreach ({$data} as \${$varName}): ?>"
+                    . "<?php echo \$__blade->includeView('{$view}', ['{$varName}' => \${$varName}], get_defined_vars()); ?>"
+                    . "<?php endforeach; else: ?>"
+                    . "<?php echo \$__blade->includeView('{$emptyView}', get_defined_vars()); ?>"
+                    . "<?php endif; ?>";
+            }
+
+            return "<?php foreach ({$data} as \${$varName}): ?>"
+                . "<?php echo \$__blade->includeView('{$view}', ['{$varName}' => \${$varName}], get_defined_vars()); ?>"
+                . "<?php endforeach; ?>";
+        });
+    }
+
+    private function compileForelseDirectives(string $content): string
+    {
+        $forelseCounter = 0;
+        $content = $this->replaceDirectiveCalls($content, 'forelse', function (string $expression) use (&$forelseCounter): string {
+            $parts = $this->splitTopLevelAsExpression($expression);
+            if ($parts === null) {
+                return '@forelse(' . $expression . ')';
+            }
+
+            $forelseCounter++;
+            [$iterable, $alias] = $parts;
+            return "<?php \$__bladeForelseStack = \$__bladeForelseStack ?? []; \$__forelseEmpty_{$forelseCounter} = true; \$__bladeForelseStack[] = {$forelseCounter}; foreach ({$iterable} as {$alias}): \$__forelseEmpty_{$forelseCounter} = false; ?>";
+        });
+
+        $content = preg_replace('/@empty(?!\s*\()/', '<?php endforeach; $__bladeForelseCurrent = end($__bladeForelseStack); if ($__bladeForelseCurrent !== false && ${"__forelseEmpty_" . $__bladeForelseCurrent}): ?>', $content) ?? $content;
+        $content = str_replace('@endforelse', '<?php array_pop($__bladeForelseStack); endif; ?>', $content);
+
+        return $content;
+    }
+
+    private function replaceDirectiveCalls(string $content, string $directive, callable $compiler): string
+    {
+        $needle = '@' . $directive . '(';
+        $offset = 0;
+        $result = '';
+
+        while (($position = strpos($content, $needle, $offset)) !== false) {
+            $result .= substr($content, $offset, $position - $offset);
+            $start = $position + strlen($needle) - 1;
+            $parsed = $this->extractBalancedExpression($content, $start);
+
+            if ($parsed === null) {
+                $result .= substr($content, $position, strlen($needle));
+                $offset = $start + 1;
+                continue;
+            }
+
+            [$expression, $endPosition] = $parsed;
+            $result .= $compiler($expression);
+            $offset = $endPosition + 1;
+        }
+
+        return $result . substr($content, $offset);
+    }
+
+    private function extractBalancedExpression(string $content, int $openParenPosition): ?array
+    {
+        $length = strlen($content);
+        if ($openParenPosition < 0 || $openParenPosition >= $length || $content[$openParenPosition] !== '(') {
+            return null;
+        }
+
+        $depth = 0;
+        $quote = null;
+        $escape = false;
+
+        for ($index = $openParenPosition; $index < $length; $index++) {
+            $char = $content[$index];
+
+            if ($quote !== null) {
+                if ($escape) {
+                    $escape = false;
+                    continue;
+                }
+
+                if ($char === '\\') {
+                    $escape = true;
+                    continue;
+                }
+
+                if ($char === $quote) {
+                    $quote = null;
+                }
+
+                continue;
+            }
+
+            if ($char === '\'' || $char === '"') {
+                $quote = $char;
+                continue;
+            }
+
+            if ($char === '(') {
+                $depth++;
+                continue;
+            }
+
+            if ($char === ')') {
+                $depth--;
+                if ($depth === 0) {
+                    return [substr($content, $openParenPosition + 1, $index - $openParenPosition - 1), $index];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function splitTopLevelArguments(string $expression, ?int $limit = null): array
+    {
+        $arguments = [];
+        $current = '';
+        $depthParentheses = 0;
+        $depthBrackets = 0;
+        $depthBraces = 0;
+        $quote = null;
+        $escape = false;
+        $length = strlen($expression);
+
+        for ($index = 0; $index < $length; $index++) {
+            $char = $expression[$index];
+
+            if ($quote !== null) {
+                $current .= $char;
+                if ($escape) {
+                    $escape = false;
+                    continue;
+                }
+
+                if ($char === '\\') {
+                    $escape = true;
+                    continue;
+                }
+
+                if ($char === $quote) {
+                    $quote = null;
+                }
+
+                continue;
+            }
+
+            if ($char === '\'' || $char === '"') {
+                $quote = $char;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === '(') {
+                $depthParentheses++;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === ')') {
+                $depthParentheses--;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === '[') {
+                $depthBrackets++;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === ']') {
+                $depthBrackets--;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === '{') {
+                $depthBraces++;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === '}') {
+                $depthBraces--;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === ',' && $depthParentheses === 0 && $depthBrackets === 0 && $depthBraces === 0 && ($limit === null || count($arguments) < $limit - 1)) {
+                $arguments[] = trim($current);
+                $current = '';
+                continue;
+            }
+
+            $current .= $char;
+        }
+
+        if ($current !== '' || $expression === '') {
+            $arguments[] = trim($current);
+        }
+
+        return $arguments;
+    }
+
+    private function splitTopLevelAsExpression(string $expression): ?array
+    {
+        $depthParentheses = 0;
+        $depthBrackets = 0;
+        $depthBraces = 0;
+        $quote = null;
+        $escape = false;
+        $length = strlen($expression);
+
+        for ($index = 0; $index < $length; $index++) {
+            $char = $expression[$index];
+
+            if ($quote !== null) {
+                if ($escape) {
+                    $escape = false;
+                    continue;
+                }
+
+                if ($char === '\\') {
+                    $escape = true;
+                    continue;
+                }
+
+                if ($char === $quote) {
+                    $quote = null;
+                }
+
+                continue;
+            }
+
+            if ($char === '\'' || $char === '"') {
+                $quote = $char;
+                continue;
+            }
+
+            if ($char === '(') {
+                $depthParentheses++;
+                continue;
+            }
+
+            if ($char === ')') {
+                $depthParentheses--;
+                continue;
+            }
+
+            if ($char === '[') {
+                $depthBrackets++;
+                continue;
+            }
+
+            if ($char === ']') {
+                $depthBrackets--;
+                continue;
+            }
+
+            if ($char === '{') {
+                $depthBraces++;
+                continue;
+            }
+
+            if ($char === '}') {
+                $depthBraces--;
+                continue;
+            }
+
+            if ($depthParentheses === 0 && $depthBrackets === 0 && $depthBraces === 0 && substr($expression, $index, 4) === ' as ') {
+                $iterable = trim(substr($expression, 0, $index));
+                $alias = trim(substr($expression, $index + 4));
+                if ($iterable !== '' && $alias !== '') {
+                    return [$iterable, $alias];
+                }
+
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private function parseQuotedString(string $value): ?string
+    {
+        $value = trim($value);
+        $length = strlen($value);
+        if ($length < 2) {
+            return null;
+        }
+
+        $quote = $value[0];
+        if (($quote !== '\'' && $quote !== '"') || $value[$length - 1] !== $quote) {
+            return null;
+        }
+
+        return stripcslashes(substr($value, 1, -1));
+    }
+
+    private function allowedResolvedPath(string $candidate, string $allowedBase): ?string
+    {
+        if ($candidate === '') {
+            return null;
+        }
+
+        $resolved = realpath($candidate);
+        if ($resolved === false || !is_file($resolved)) {
+            return null;
+        }
+
+        $normalizedResolved = str_replace('\\', '/', $resolved);
+        $normalizedBase = rtrim(str_replace('\\', '/', $allowedBase), '/') . '/';
+
+        if (!str_starts_with($normalizedResolved, $normalizedBase)) {
+            return null;
+        }
+
+        return $resolved;
     }
 }

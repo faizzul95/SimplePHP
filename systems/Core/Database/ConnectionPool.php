@@ -187,10 +187,33 @@ class ConnectionPool
 
             return $pdo;
         } catch (\PDOException $e) {
-            // Never expose password in error messages
-            $safeMessage = preg_replace('/password[=:][^;\s]+/i', 'password=***', $e->getMessage());
-            throw new \Exception("Failed to create connection '$name': " . $safeMessage);
+            throw new \Exception("Failed to create connection '{$name}': " . self::sanitizeConnectionError($e->getMessage()));
         }
+    }
+
+    protected static function sanitizeConnectionError(string $message): string
+    {
+        $patterns = [
+            '/password\s*[=:]\s*[^;\s]+/i',
+            '/username\s*[=:]\s*[^;\s]+/i',
+            '/user\s*[=:]\s*[^;\s]+/i',
+            '/dbname\s*=\s*[^;\s]+/i',
+            '/host\s*=\s*[^;\s]+/i',
+            '/port\s*=\s*[^;\s]+/i',
+            '/unix_socket\s*=\s*[^;\s]+/i',
+        ];
+
+        $replacements = [
+            'password=***',
+            'username=***',
+            'user=***',
+            'dbname=***',
+            'host=***',
+            'port=***',
+            'unix_socket=***',
+        ];
+
+        return preg_replace($patterns, $replacements, $message) ?? 'Connection error';
     }
 
     /**

@@ -143,7 +143,7 @@ class Worker
      */
     private function process(array $jobRow, int $maxTries, int $timeout, ?callable $callback): void
     {
-        $payload = json_decode($jobRow['payload'], true);
+        $payload = $this->decodePayload($jobRow);
         $className = $payload['class'] ?? 'Unknown';
         $shortName = basename(str_replace('\\', '/', $className));
         $attempts = (int) $jobRow['attempts'];
@@ -153,21 +153,7 @@ class Worker
         $effectiveTries = $jobMaxTries ?? $maxTries;
 
         try {
-            if (!class_exists($className)) {
-                throw new \RuntimeException("Job class [{$className}] not found.");
-            }
-
-            // Validate job class is a subclass of Job before deserialization (prevents RCE)
-            if (!is_subclass_of($className, Job::class)) {
-                throw new \RuntimeException("Invalid job class [{$className}]: must extend Job.");
-            }
-
-            // Only allow the specific expected class to be unserialized
-            $jobInstance = unserialize($payload['data'], ['allowed_classes' => [$className]]);
-
-            if (!$jobInstance instanceof Job) {
-                throw new \RuntimeException("Invalid job instance for [{$className}].");
-            }
+            $jobInstance = Job::fromPayload($payload);
 
             // Execute with timeout (if pcntl available)
             $jobTimeout = $payload['timeout'] ?? $timeout;
@@ -199,6 +185,10 @@ class Worker
                 pcntl_alarm(0);
             }
 
+            if (function_exists('pcntl_signal') && defined('SIGALRM')) {
+                pcntl_signal(SIGALRM, SIG_DFL);
+            }
+
             // Attempt to call failed() on the job instance
             if (isset($jobInstance) && $jobInstance instanceof Job) {
                 try {
@@ -228,6 +218,24 @@ class Worker
                 logger()->log_error("Queue job [{$shortName}] attempt {$attempts} failed: " . $e->getMessage());
             }
         }
+    }
+
+    /**
+     * @return array{class?: string, data?: string, queue?: string, delay?: int, tries?: int|null, timeout?: int|null}
+     */
+    private function decodePayload(array $jobRow): array
+    {
+        $rawPayload = $jobRow['payload'] ?? null;
+        if (!is_string($rawPayload) || trim($rawPayload) === '') {
+            throw new \RuntimeException('Invalid queue payload.');
+        }
+
+        $payload = json_decode($rawPayload, true);
+        if (!is_array($payload)) {
+            throw new \RuntimeException('Invalid queue payload.');
+        }
+
+        return $payload;
     }
 
     /**

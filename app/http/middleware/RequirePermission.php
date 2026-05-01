@@ -37,11 +37,6 @@ class RequirePermission implements MiddlewareInterface
         foreach ($this->permissions as $permissionSlug) {
             $hasPermission = auth()->can($permissionSlug);
 
-            // Backward compatibility for custom helper-based checks.
-            if (!$hasPermission && auth()->checkSession() && function_exists('permission')) {
-                $hasPermission = permission($permissionSlug);
-            }
-
             if (!$hasPermission) {
                 if ($request->expectsJson()) {
                     Response::json([

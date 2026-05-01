@@ -1,5 +1,14 @@
 <?php
 
+$trustedHosts = env_list('TRUSTED_HOSTS', []);
+$trustedProxies = env_list('TRUSTED_PROXIES', []);
+$defaultWriteContentTypes = [
+    'application/json',
+    'application/x-www-form-urlencoded',
+    'multipart/form-data',
+    'text/plain',
+];
+
 /*
 |--------------------------------------------------------------------------
 | SECURITY
@@ -7,10 +16,6 @@
 */
 
 $config['security'] = [
-    'throttle_request'   => true,
-    'xss_request'        => true,
-    'permission_request' => true,
-
     'csrf' => [
         'csrf_protection'    => (bool) env('CSRF_PROTECTION', true),
         'csrf_token_name'    => (string) env('CSRF_TOKEN_NAME', 'csrf_token'),
@@ -44,18 +49,29 @@ $config['security'] = [
         'max_uri_length' => 2000,
         'max_body_bytes' => 1048576, // 1 MB
         'max_user_agent_length' => 1024,
-        // Optional host allow-list. Keep empty to allow all hosts.
-        'allowed_hosts' => [
-            // 'localhost',
-            // 'myapp.local',
-        ],
+        'max_header_count' => 64,
+        'max_input_vars' => 200,
+        'max_json_fields' => 200,
+        'max_multipart_parts' => 50,
+        // Host allow-list is sourced from security.trusted.hosts so setup stays in one place.
+        'allowed_hosts' => $trustedHosts,
         // Content types allowed for write requests when body is present.
-        'allowed_write_content_types' => [
-            'application/json',
-            'application/x-www-form-urlencoded',
-            'multipart/form-data',
-            'text/plain',
-        ],
+        'allowed_write_content_types' => $defaultWriteContentTypes,
+    ],
+
+    // Central trust configuration. bootstrap.php mirrors these values into
+    // request_hardening.allowed_hosts and the legacy trusted_proxies key so
+    // older runtime consumers continue to work during the migration.
+    'trusted' => [
+        'hosts' => $trustedHosts,
+        'proxies' => $trustedProxies,
+    ],
+
+    // Allow-list of external hosts that redirect()->away() may send users to.
+    // Same-origin redirects are always permitted; any host listed here is
+    // additionally accepted. Leave empty to refuse all cross-origin redirects.
+    'redirects' => [
+        'allowed_hosts' => env_list('REDIRECT_ALLOWED_HOSTS', []),
     ],
 
     /*
@@ -202,8 +218,5 @@ $config['security'] = [
     ],
 
     // Trusted proxy IPs — only trust forwarded headers from these IPs
-    'trusted_proxies' => [
-        // '10.0.0.1',
-        // '172.16.0.0/12',
-    ],
+    'trusted_proxies' => $trustedProxies,
 ];

@@ -41,6 +41,8 @@ class Backup
     private string $backupPath;
     private string $filenamePrefix;
     private ?string $lastBackupPath = null;
+    private ?string $backupDisk = null;
+    private string $backupDiskPrefix = 'backups';
 
     private Security $security;
 
@@ -51,6 +53,13 @@ class Backup
         $this->filenamePrefix = $this->config['filename_prefix'];
         $this->directories = $this->config['directories'];
         $this->excludePatterns = $this->config['exclude'];
+        $publishConfig = (array) ($this->config['publish'] ?? []);
+        $configuredDisk = $publishConfig['disk'] ?? null;
+        $configuredPrefix = $publishConfig['prefix'] ?? null;
+        $this->backupDisk = is_string($configuredDisk) && trim($configuredDisk) !== '' ? trim($configuredDisk) : null;
+        if (is_string($configuredPrefix) && trim($configuredPrefix) !== '') {
+            $this->backupDiskPrefix = trim(str_replace('\\', '/', $configuredPrefix), '/');
+        }
         $this->security = new Security();
 
         $this->ensureBackupDirectoryExists();
@@ -86,6 +95,7 @@ class Backup
             'max_file_size_mb' => 512,
             'cleanup_days' => 30,
             'notifications' => false,
+            'publish' => $this->resolvePublishConfig(),
         ];
     }
 
@@ -112,6 +122,31 @@ class Backup
             'username' => $dbConfig['username'] ?? '',
             'password' => $dbConfig['password'] ?? '',
             'driver' => $dbConfig['driver'] ?? 'mysql',
+        ];
+    }
+
+    private function resolvePublishConfig(): array
+    {
+        if (!function_exists('config')) {
+            return [
+                'disk' => null,
+                'prefix' => 'backups',
+            ];
+        }
+
+        $publishConfig = config('integration.backup.publish', []);
+        if (!is_array($publishConfig)) {
+            $publishConfig = [];
+        }
+
+        $disk = $publishConfig['disk'] ?? null;
+        $prefix = $publishConfig['prefix'] ?? 'backups';
+
+        return [
+            'disk' => is_string($disk) && trim($disk) !== '' ? trim($disk) : null,
+            'prefix' => is_string($prefix) && trim($prefix) !== ''
+                ? trim(str_replace('\\', '/', $prefix), '/')
+                : 'backups',
         ];
     }
 
@@ -173,6 +208,22 @@ class Backup
     {
         $this->backupPath = rtrim($path, '/\\');
         $this->ensureBackupDirectoryExists();
+
+        return $this;
+    }
+
+    /**
+     * Publish finished backup archives to a managed storage disk after local creation.
+     */
+    public function setBackupDisk(?string $disk, ?string $prefix = null): self
+    {
+        $disk = $disk !== null ? trim($disk) : null;
+        $this->backupDisk = $disk !== '' ? $disk : null;
+
+        if ($prefix !== null) {
+            $cleanPrefix = trim(str_replace('\\', '/', $prefix), '/');
+            $this->backupDiskPrefix = $cleanPrefix !== '' ? $cleanPrefix : 'backups';
+        }
 
         return $this;
     }
@@ -251,6 +302,12 @@ class Backup
 
             $this->createZipArchive($zipPath, $filesToZip, $tempDir);
 
+            $diskPath = null;
+            $diskUrl = null;
+            if ($this->backupDisk !== null) {
+                [$diskPath, $diskUrl] = $this->publishBackupToManagedStorage($zipPath, $zipFilename);
+            }
+
             // Cleanup temp directory
             $this->deleteDirectory($tempDir);
 
@@ -260,6 +317,9 @@ class Backup
             return [
                 'success' => true,
                 'path' => $zipPath,
+                'disk' => $this->backupDisk,
+                'disk_path' => $diskPath,
+                'disk_url' => $diskUrl,
                 'filename' => $zipFilename,
                 'size' => $this->formatFileSize((int) (filesize($zipPath) ?: 0)),
                 'elapsed' => $elapsed . 's',
@@ -310,6 +370,35 @@ class Backup
 
         // Fallback to PHP-based dump
         return $this->phpDatabaseDump($dbConfig, $filePath);
+    }
+
+    private function publishBackupToManagedStorage(string $localPath, string $zipFilename): array
+    {
+        if (!function_exists('storage')) {
+            throw new Exception('Managed storage is not available for backup publishing.');
+        }
+
+        $storage = storage($this->backupDisk);
+        if (!$storage instanceof \Core\Filesystem\FilesystemAdapterInterface) {
+            throw new Exception('Configured backup disk did not resolve to a filesystem adapter.');
+        }
+
+        $prefix = trim(str_replace('\\', '/', $this->backupDiskPrefix), '/');
+        $relativePath = ltrim(($prefix !== '' ? $prefix . '/' : '') . $zipFilename, '/');
+        $stream = fopen($localPath, 'rb');
+        if ($stream === false) {
+            throw new Exception('Unable to open backup archive for managed storage publishing.');
+        }
+
+        try {
+            if (!$storage->writeStream($relativePath, $stream)) {
+                throw new Exception('Failed to publish backup archive to managed storage.');
+            }
+        } finally {
+            fclose($stream);
+        }
+
+        return [$relativePath, $storage->url($relativePath)];
     }
 
     /**
@@ -841,7 +930,8 @@ class Backup
     private function createTemporaryBackupDirectory(string $timestamp): string
     {
         $tempDir = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'MythPHP_backup_' . $timestamp . '_' . bin2hex(random_bytes(4));
-        if (!mkdir($tempDir, 0775, true) && !is_dir($tempDir)) {
+
+        if (!mkdir($tempDir, 0700, true) && !is_dir($tempDir)) {
             throw new Exception('Unable to create temporary backup directory.');
         }
 

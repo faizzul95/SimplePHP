@@ -47,28 +47,15 @@
 
             const form = $(this);
 
-            Swal.fire({
-                title: 'Are you sure?',
-                html: "Form will be submitted!",
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Yes, Confirm!',
-                reverseButtons: true,
-                customClass: {
-                    container: 'swal2-customCss'
-                },
-            }).then(
-                async (result) => {
-                    if (result.isConfirmed) {
-                        const res = await submitApi(form.attr('action'), form.serializeArray(), 'rolesForm');
-                        if (isSuccess(res.data.code ?? res)) {
-                            noti(res.data.code ?? res.status, res.data.message);
-                            getDataList();
-                        }
+            confirmSubmitAction({
+                onConfirm: async function() {
+                    const res = await submitApi(form.attr('action'), form.serializeArray(), 'rolesForm');
+                    if (isSuccess(res.data.code ?? res)) {
+                        noti(res.data.code ?? res.status, res.data.message);
+                        syncDatatableRow('dataList', res.data.data ?? null);
                     }
-                })
+                }
+            });
 
         } else {
             validationJsError('toastr', 'single'); // single or multi

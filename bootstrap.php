@@ -1,51 +1,203 @@
 <?php
 
-ob_start();
-
-define('ROOT_DIR', realpath(__DIR__) . DIRECTORY_SEPARATOR);
-define('APP_NAME', "MythPHP");
-
-define('REDIRECT_LOGIN', 'login');
-define('REDIRECT_403', 'app/views/errors/general_error.php');
-define('REDIRECT_404', 'app/views/errors/404.php');
-
-if (file_exists(__DIR__ . '/vendor/autoload.php')) {
-    require_once __DIR__ . '/vendor/autoload.php';
+if (!defined('ROOT_DIR')) {
+    define('ROOT_DIR', realpath(__DIR__) . DIRECTORY_SEPARATOR);
 }
 
-require_once __DIR__ . '/systems/hooks.php';
-
-if (!class_exists('Myth', false)) {
-    class_alias(\Core\Console\Myth::class, 'Myth');
+if (!defined('APP_NAME')) {
+    define('APP_NAME', 'ResiConnect');
 }
 
-/*
-|--------------------------------------------------------------------------
-| LOAD CONFIG FILES
-|--------------------------------------------------------------------------
-*/
-foreach (glob(__DIR__ . '/app/config/*.php') as $file) {
-    try {
-        if (is_readable($file)) {
-            $included = include_once $file;
+if (!defined('REDIRECT_LOGIN')) {
+    define('REDIRECT_LOGIN', 'login');
+}
 
-            // Support config files that return arrays (e.g., cache.php)
-            if (is_array($included)) {
-                $key = pathinfo($file, PATHINFO_FILENAME);
-                if (!isset($config[$key]) || !is_array($config[$key])) {
-                    $config[$key] = [];
-                }
-                $config[$key] = array_replace_recursive($config[$key], $included);
+if (!defined('REDIRECT_403')) {
+    define('REDIRECT_403', 'app/views/errors/general_error.php');
+}
+
+if (!defined('REDIRECT_404')) {
+    define('REDIRECT_404', 'app/views/errors/404.php');
+}
+
+if (!function_exists('bootstrapFail')) {
+    function bootstrapFail(string $message, int $statusCode = 500, ?\Throwable $previous = null): never
+    {
+        error_log($message . ($previous !== null ? ' :: ' . $previous->getMessage() : ''));
+
+        if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg' && !headers_sent()) {
+            http_response_code($statusCode);
+        }
+
+        if (defined('ENVIRONMENT') && ENVIRONMENT === 'development') {
+            echo $message;
+            if ($previous !== null) {
+                echo ' :: ' . $previous->getMessage();
             }
         } else {
-            throw new Exception("File not readable: $file");
+            echo $statusCode >= 500 ? '500 - Internal Server Error' : 'Application bootstrap failed';
         }
-    } catch (Exception $e) {
-        die("Error: Unable to resolve file path for $file. " . $e->getMessage());
+
+        exit(1);
     }
 }
 
-define('ENVIRONMENT', $config['environment'] ?? 'development');
+$config = isset($config) && is_array($config) ? $config : [];
+
+if (!function_exists('bootstrapLoadComposerAutoload')) {
+    function bootstrapLoadComposerAutoload(): void
+    {
+        $autoloadFile = __DIR__ . '/vendor/autoload.php';
+        if (is_file($autoloadFile)) {
+            require_once $autoloadFile;
+        }
+    }
+}
+
+if (!function_exists('bootstrapLoadCoreHooks')) {
+    function bootstrapLoadCoreHooks(): void
+    {
+        require_once __DIR__ . '/systems/hooks.php';
+    }
+}
+
+if (!function_exists('bootstrapRegisterConsoleAlias')) {
+    function bootstrapRegisterConsoleAlias(): void
+    {
+        if (!class_exists('Myth', false)) {
+            class_alias(\Core\Console\Myth::class, 'Myth');
+        }
+    }
+}
+
+if (!function_exists('loadConfig')) {
+    function loadConfig(array $baseConfig = []): array
+    {
+        global $config;
+
+        $loadedConfig = $baseConfig;
+        $configFiles = glob(__DIR__ . '/app/config/*.php') ?: [];
+        sort($configFiles, SORT_NATURAL | SORT_FLAG_CASE);
+
+        foreach ($configFiles as $file) {
+            try {
+                if (!is_readable($file)) {
+                    throw new RuntimeException('File not readable: ' . $file);
+                }
+
+                $config = $loadedConfig;
+                $included = include $file;
+
+                if (is_array($included)) {
+                    $key = pathinfo($file, PATHINFO_FILENAME);
+                    if (!isset($loadedConfig[$key]) || !is_array($loadedConfig[$key])) {
+                        $loadedConfig[$key] = [];
+                    }
+
+                    $loadedConfig[$key] = array_replace_recursive($loadedConfig[$key], $included);
+                }
+
+                if (isset($config) && is_array($config)) {
+                    $loadedConfig = array_replace_recursive($loadedConfig, $config);
+                }
+            } catch (\Throwable $e) {
+                bootstrapFail('Unable to load config file: ' . $file, 500, $e);
+            }
+        }
+
+        $config = $loadedConfig;
+
+        return $loadedConfig;
+    }
+}
+
+if (!function_exists('bootstrapApplyEnvironmentPresets')) {
+    function bootstrapApplyEnvironmentPresets(array &$config): void
+    {
+        $environmentPresets = $config['security']['presets'][ENVIRONMENT] ?? [];
+        if (!is_array($environmentPresets) || empty($environmentPresets)) {
+            return;
+        }
+
+        foreach ($environmentPresets as $topLevelSection => $sectionOverrides) {
+            if (!is_array($sectionOverrides)) {
+                continue;
+            }
+
+            if (isset($sectionOverrides[$topLevelSection]) && is_array($sectionOverrides[$topLevelSection])) {
+                $sectionOverrides = $sectionOverrides[$topLevelSection];
+            }
+
+            if (!isset($config[$topLevelSection]) || !is_array($config[$topLevelSection])) {
+                $config[$topLevelSection] = [];
+            }
+
+            applyConfigOverrides($config[$topLevelSection], $sectionOverrides);
+        }
+    }
+}
+
+if (!function_exists('bootstrapNormalizeSecurityConfig')) {
+    function bootstrapNormalizeSecurityConfig(array &$config): void
+    {
+        $security = (array) ($config['security'] ?? []);
+        $requestHardening = (array) ($security['request_hardening'] ?? []);
+        $trusted = (array) ($security['trusted'] ?? []);
+
+        $trustedHosts = $trusted['hosts'] ?? $requestHardening['allowed_hosts'] ?? [];
+        $trustedProxies = $trusted['proxies'] ?? $security['trusted_proxies'] ?? [];
+
+        $trustedHosts = array_values(array_filter(array_map(static function ($host) {
+            return trim((string) $host);
+        }, (array) $trustedHosts), static function ($host) {
+            return $host !== '';
+        }));
+
+        $trustedProxies = array_values(array_filter(array_map(static function ($proxy) {
+            return trim((string) $proxy);
+        }, (array) $trustedProxies), static function ($proxy) {
+            return $proxy !== '';
+        }));
+
+        $requestHardening['allowed_hosts'] = $trustedHosts;
+        $security['request_hardening'] = $requestHardening;
+        $security['trusted'] = [
+            'hosts' => $trustedHosts,
+            'proxies' => $trustedProxies,
+        ];
+        $security['trusted_proxies'] = $trustedProxies;
+
+        $config['security'] = $security;
+    }
+}
+
+if (!function_exists('configureEnvironment')) {
+    function configureEnvironment(array &$config): void
+    {
+        if (!defined('ENVIRONMENT')) {
+            define('ENVIRONMENT', (string) ($config['environment'] ?? 'development'));
+        }
+
+        bootstrapApplyEnvironmentPresets($config);
+        bootstrapNormalizeSecurityConfig($config);
+
+        switch (ENVIRONMENT) {
+            case 'development':
+                error_reporting(-1);
+                ini_set('display_errors', '1');
+                break;
+
+            case 'testing':
+            case 'production':
+                ini_set('display_errors', '0');
+                error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT & ~E_USER_NOTICE & ~E_USER_DEPRECATED);
+                break;
+
+            default:
+                bootstrapFail('The application environment is not set correctly.', 503);
+        }
+    }
+}
 
 // Apply security/performance presets for the current environment.
 if (!function_exists('applyConfigOverrides')) {
@@ -62,87 +214,207 @@ if (!function_exists('applyConfigOverrides')) {
     }
 }
 
-$environmentPresets = $config['security']['presets'][ENVIRONMENT] ?? [];
-if (is_array($environmentPresets) && !empty($environmentPresets)) {
-    foreach ($environmentPresets as $topLevelSection => $sectionOverrides) {
-        if (!is_array($sectionOverrides)) {
-            continue;
-        }
-
-        if (isset($sectionOverrides[$topLevelSection]) && is_array($sectionOverrides[$topLevelSection])) {
-            $sectionOverrides = $sectionOverrides[$topLevelSection];
-        }
-
-        if (!isset($config[$topLevelSection]) || !is_array($config[$topLevelSection])) {
-            $config[$topLevelSection] = [];
-        }
-
-        applyConfigOverrides($config[$topLevelSection], $sectionOverrides);
+if (!function_exists('bootstrapRunsInCli')) {
+    function bootstrapRunsInCli(): bool
+    {
+        return PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg';
     }
 }
 
-/*
- *---------------------------------------------------------------
- * ERROR REPORTING
- *---------------------------------------------------------------
- *
- * Different environments will require different levels of error reporting.
- * By default development will show errors but testing and live will hide them.
- */
-switch (ENVIRONMENT) {
-    case 'development':
-        error_reporting(-1);
-        ini_set('display_errors', 1);
-        break;
+if (!function_exists('bootstrapRequestPath')) {
+    function bootstrapRequestPath(): string
+    {
+        $requestUri = (string) ($_SERVER['REQUEST_URI'] ?? '');
+        $requestPath = parse_url($requestUri, PHP_URL_PATH);
 
-    case 'testing':
-    case 'production':
-        ini_set('display_errors', 0);
-        error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT & ~E_USER_NOTICE & ~E_USER_DEPRECATED);
-        break;
-
-    default:
-        header('HTTP/1.1 503 Service Unavailable.', TRUE, 503);
-        echo 'The application environment is not set correctly.';
-        exit(1); // EXIT_ERROR
-}
-
-// Harden session configuration before starting
-ini_set('session.cookie_httponly', '1');
-ini_set('session.cookie_secure', ENVIRONMENT === 'production' ? '1' : '0');
-ini_set('session.cookie_samesite', 'Lax');
-ini_set('session.use_strict_mode', '1');
-ini_set('session.use_only_cookies', '1');
-
-// Only set session ID settings on PHP < 8.4 (deprecated in 8.4)
-if (PHP_VERSION_ID < 80400) {
-    ini_set('session.sid_length', '48');
-    ini_set('session.sid_bits_per_character', '6');
-}
-
-// Start session only if it hasn't been started already
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-    // Set regeneration timer on new sessions
-    if (!isset($_SESSION['last_regeneration'])) {
-        $_SESSION['last_regeneration'] = time();
+        return is_string($requestPath) ? $requestPath : '';
     }
 }
 
-// Regenerate session ID periodically to prevent session fixation
-if (
-    !empty($config['sess_regenerate_destroy'])
-    && session_status() === PHP_SESSION_ACTIVE
-    && (!isset($_SESSION['last_regeneration']) || (time() - $_SESSION['last_regeneration']) > ($config['sess_time_to_update'] ?? 300))
-) {
-    session_regenerate_id(true);
-    $_SESSION['last_regeneration'] = time();
+if (!function_exists('bootstrapHasApiCredential')) {
+    function bootstrapHasApiCredential(): bool
+    {
+        return !empty($_SERVER['HTTP_AUTHORIZATION'])
+            || !empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])
+            || !empty($_SERVER['PHP_AUTH_USER'])
+            || !empty($_SERVER['PHP_AUTH_DIGEST'])
+            || !empty($_SERVER['HTTP_X_API_KEY']);
+    }
 }
 
-define('BASE_URL', getProjectBaseUrl());
-define('APP_DIR', basename(BASE_URL));
-define('APP_ENV', ENVIRONMENT);
-define('TEMPLATE_DIR', __DIR__ . DIRECTORY_SEPARATOR);
+if (!function_exists('bootstrapRuntime')) {
+    function bootstrapRuntime(): string
+    {
+        if (bootstrapRunsInCli()) {
+            return 'cli';
+        }
+
+        $requestPath = bootstrapRequestPath();
+        $isApiRequest = preg_match('#(?:^|/)api(?:/|$)#i', $requestPath) === 1;
+
+        if ($isApiRequest || bootstrapHasApiCredential()) {
+            return 'api';
+        }
+
+        return 'web';
+    }
+}
+
+if (!function_exists('bootstrapSessionConfig')) {
+    function bootstrapSessionConfig(array $config): array
+    {
+        $sessionConfig = (array) ($config['framework']['bootstrap']['session'] ?? []);
+        $sessionConfig['enabled'] = array_key_exists('enabled', $sessionConfig) ? (bool) $sessionConfig['enabled'] : true;
+        $sessionConfig['cli'] = (bool) ($sessionConfig['cli'] ?? false);
+        $sessionConfig['api'] = (bool) ($sessionConfig['api'] ?? false);
+
+        return $sessionConfig;
+    }
+}
+
+if (!function_exists('shouldBootstrapSession')) {
+    function shouldBootstrapSession(array $config): bool
+    {
+        $sessionConfig = bootstrapSessionConfig($config);
+        $enabled = array_key_exists('enabled', $sessionConfig) ? (bool) $sessionConfig['enabled'] : true;
+
+        if (!$enabled) {
+            return false;
+        }
+
+        $sessionName = session_name();
+        $hasSessionCookie = $sessionName !== '' && !empty($_COOKIE[$sessionName]);
+        if ($hasSessionCookie) {
+            return true;
+        }
+
+        return match (bootstrapRuntime()) {
+            'cli' => (bool) ($sessionConfig['cli'] ?? false),
+            'api' => (bool) ($sessionConfig['api'] ?? false),
+            default => true,
+        };
+    }
+}
+
+if (!function_exists('bootstrapConfigureSessionIni')) {
+    function bootstrapConfigureSessionIni(): void
+    {
+        ini_set('session.cookie_httponly', '1');
+        ini_set('session.cookie_secure', ENVIRONMENT === 'production' ? '1' : '0');
+        ini_set('session.cookie_samesite', 'Lax');
+        ini_set('session.use_strict_mode', '1');
+        ini_set('session.use_only_cookies', '1');
+
+        if (PHP_VERSION_ID < 80400) {
+            ini_set('session.sid_length', '48');
+            ini_set('session.sid_bits_per_character', '6');
+        }
+    }
+}
+
+if (!function_exists('bootstrapStartSession')) {
+    function bootstrapStartSession(array $config): void
+    {
+        bootstrapConfigureSessionIni();
+
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+            if (!isset($_SESSION['last_regeneration'])) {
+                $_SESSION['last_regeneration'] = time();
+            }
+        }
+
+        if (
+            !empty($config['sess_regenerate_destroy'])
+            && session_status() === PHP_SESSION_ACTIVE
+            && (!isset($_SESSION['last_regeneration']) || (time() - $_SESSION['last_regeneration']) > ($config['sess_time_to_update'] ?? 300))
+        ) {
+            session_regenerate_id(true);
+            $_SESSION['last_regeneration'] = time();
+        }
+    }
+}
+
+if (!function_exists('initializeSession')) {
+    function initializeSession(array $config): bool
+    {
+        $bootstrapSessionEnabled = shouldBootstrapSession($config);
+
+        if (!defined('BOOTSTRAP_SESSION_ENABLED')) {
+            define('BOOTSTRAP_SESSION_ENABLED', $bootstrapSessionEnabled);
+        }
+
+        if (!defined('BOOTSTRAP_STATEFUL_REQUEST')) {
+            define('BOOTSTRAP_STATEFUL_REQUEST', $bootstrapSessionEnabled);
+        }
+
+        if ($bootstrapSessionEnabled) {
+            bootstrapStartSession($config);
+        }
+
+        return $bootstrapSessionEnabled;
+    }
+}
+
+if (!function_exists('initializeRuntime')) {
+    function initializeRuntime(array $config): array
+    {
+        $runtime = bootstrapRuntime();
+
+        if (!defined('BOOTSTRAP_RUNTIME')) {
+            define('BOOTSTRAP_RUNTIME', $runtime);
+        }
+
+        $sessionEnabled = initializeSession($config);
+
+        if (!defined('BASE_URL')) {
+            define('BASE_URL', getProjectBaseUrl());
+        }
+
+        if (!defined('APP_DIR')) {
+            $basePath = (string) parse_url(BASE_URL, PHP_URL_PATH);
+            define('APP_DIR', basename(trim($basePath, '/')) ?: basename(rtrim(ROOT_DIR, DIRECTORY_SEPARATOR)));
+        }
+
+        if (!defined('APP_ENV')) {
+            define('APP_ENV', ENVIRONMENT);
+        }
+
+        if (!defined('TEMPLATE_DIR')) {
+            define('TEMPLATE_DIR', __DIR__ . DIRECTORY_SEPARATOR);
+        }
+
+        return [
+            'runtime' => $runtime,
+            'session_enabled' => $sessionEnabled,
+            'stateful' => $sessionEnabled,
+        ];
+    }
+}
+
+if (!function_exists('bootstrapInitializeHelpers')) {
+    function bootstrapInitializeHelpers(): void
+    {
+        loadHelperFiles();
+    }
+}
+
+if (!function_exists('bootstrapInitializeSystems')) {
+    function bootstrapInitializeSystems(): void
+    {
+        require_once __DIR__ . '/systems/app.php';
+    }
+}
+
+bootstrapLoadComposerAutoload();
+bootstrapLoadCoreHooks();
+dispatch_event('boot.starting', ['root' => ROOT_DIR]);
+bootstrapRegisterConsoleAlias();
+$config = loadConfig($config);
+dispatch_event('config.loaded', ['config' => $config]);
+configureEnvironment($config);
+$runtimeState = initializeRuntime($config);
+bootstrapRegisterServiceProviders($config, $runtimeState);
 
 /*
 |--------------------------------------------------------------------------
@@ -150,67 +422,7 @@ define('TEMPLATE_DIR', __DIR__ . DIRECTORY_SEPARATOR);
 |--------------------------------------------------------------------------
 */
 
-loadHelperFiles();
+bootstrapInitializeHelpers();
 
-/*
-|--------------------------------------------------------------------------
-| MENU SIDEBAR 
-|--------------------------------------------------------------------------
-*/
-
-$menuList = [
-    'main' => [
-        'dashboard' => [
-            'desc' => 'Dashboard',
-            'url' => url('dashboard'),
-            'file' => 'app/views/dashboard/admin.php',
-            'icon' => 'tf-icons bx bx-home-smile',
-            'permission' => null,
-            'authenticate' => true,
-            'active' => true,
-            'subpage' => [],
-        ],
-        'directory' => [
-            'desc' => 'Directory',
-            'url' => url('directory'),
-            'file' => 'app/views/directory/users.php',
-            'icon' => 'tf-icons bx bx-user',
-            'permission' => 'user-view',
-            'authenticate' => true,
-            'active' => true,
-            'subpage' => [],
-        ],
-        'rbac' => [
-            'desc' => 'App Management',
-            'url' => 'javascript:void(0);',
-            'icon' => 'tf-icons bx bx-shield-quarter',
-            'permission' => 'management-view',
-            'active' => true,
-            'subpage' => [
-                'roles' => [
-                    'desc' => 'Roles',
-                    'url' => url('rbac/roles'),
-                    'file' => 'app/views/rbac/roles.php',
-                    'permission' => 'rbac-roles-view',
-                    'active' => true,
-                    'authenticate' => true,
-                ],
-                'email' => [
-                    'desc' => 'Email Template',
-                    'url' => url('rbac/email'),
-                    'file' => 'app/views/rbac/emailTemplate.php',
-                    'permission' => 'rbac-email-view',
-                    'active' => true,
-                    'authenticate' => true,
-                ]
-            ],
-        ],
-    ]
-];
-
-$redirectAuth = $menuList['main']['dashboard']['url']; // Default redirect after login, can be changed as needed
-
-// Start connection to database, all configuration in app/config/database.php
-require_once __DIR__ . '/systems/app.php';
-
-ob_end_flush();
+// Start connection to database, middleware bootstrap, and database helpers.
+bootstrapInitializeSystems();

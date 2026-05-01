@@ -2,6 +2,10 @@
 
 namespace Core\Console;
 
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
+use SplFileInfo;
+
 /**
  * Console Kernel - Laravel-like Artisan command handler
  *
@@ -46,6 +50,7 @@ class Kernel
         Myth::setKernel($this);
 
         Commands::register($this);
+        $this->discoverClassCommands();
 
         $console = $this;
         $framework = config('framework') ?? [];
@@ -185,7 +190,7 @@ class Kernel
             return [];
         }
 
-        $tokens = str_getcsv($trimmed, ' ', '"');
+        $tokens = str_getcsv($trimmed, ' ', '"', '\\');
         return array_values(array_filter($tokens, static function ($token) {
             return $token !== null && $token !== '';
         }));
@@ -200,6 +205,13 @@ class Kernel
             'handler' => $handler,
             'description' => $description,
         ];
+
+        return $this;
+    }
+
+    public function registerCommand(Command $command): self
+    {
+        $command->register($this);
 
         return $this;
     }
@@ -278,6 +290,26 @@ class Kernel
             return is_int($result) ? $result : 0;
         } catch (\Throwable $e) {
             $this->error('Error: ' . $e->getMessage());
+
+            // Preserve full diagnostic context (class, file:line, trace) rather
+            // than collapsing to a single line — invaluable when a scheduled
+            // job fails in the middle of the night.
+            if (function_exists('logger')) {
+                try {
+                    logger()->error('Console command failed', [
+                        'command' => $commandName,
+                        'exception' => get_class($e),
+                        'message' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                        'trace' => $e->getTraceAsString(),
+                    ]);
+                } catch (\Throwable) {
+                    error_log('[console] ' . get_class($e) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+                }
+            } else {
+                error_log('[console] ' . get_class($e) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            }
             return 1;
         }
     }
@@ -326,6 +358,47 @@ class Kernel
     public function getCommands(): array
     {
         return $this->commands;
+    }
+
+    private function discoverClassCommands(): void
+    {
+        $consolePath = ROOT_DIR . 'app/console';
+        if (!is_dir($consolePath)) {
+            return;
+        }
+
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($consolePath, \FilesystemIterator::SKIP_DOTS)
+        );
+
+        foreach ($iterator as $file) {
+            if (!$file instanceof SplFileInfo || strtolower($file->getExtension()) !== 'php') {
+                continue;
+            }
+
+            $className = $this->consoleClassFromFile($consolePath, $file->getPathname());
+            if ($className === null || !class_exists($className) || !is_subclass_of($className, Command::class)) {
+                continue;
+            }
+
+            $instance = new $className();
+            $this->registerCommand($instance);
+        }
+    }
+
+    private function consoleClassFromFile(string $consolePath, string $filePath): ?string
+    {
+        $relative = substr($filePath, strlen(rtrim($consolePath, DIRECTORY_SEPARATOR)) + 1);
+        if (!is_string($relative) || $relative === '') {
+            return null;
+        }
+
+        $relative = str_replace(['/', '\\'], '\\', $relative);
+        if (!str_ends_with($relative, '.php')) {
+            return null;
+        }
+
+        return 'App\\Console\\' . substr($relative, 0, -4);
     }
 
     /**

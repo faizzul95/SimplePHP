@@ -45,7 +45,7 @@
 | `serve` | Start PHP development server |
 | `key:generate` | Generate application key |
 | `storage:link` | Create symbolic link for storage |
-| `down` | Put application in maintenance mode |
+| `down` | Put application in maintenance mode (`--message`, `--retry`, `--refresh`, `--secret`, `--status`, `--redirect`, `--render`) |
 | `up` | Bring application out of maintenance mode |
 | `env` | Display current environment |
 | `env:check` | Validate env keys/types and feature-gated secrets (`--strict`, `--ci`, `--show-values`) |
@@ -58,7 +58,7 @@
 | `security:audit` | Run OWASP-aligned baseline checks (`--strict`, `--ci`) |
 | `auth:security:test` | Run auth hardening tests (`--strict`, `--ci`) |
 | `perf:benchmark` | Run routing/validation/query benchmark workload |
-| `perf:report` | Show and optionally export performance monitor report |
+| `perf:report` | Show and optionally export/reset performance monitor report (`--json`, `--export`, `--limit`, `--reset`) |
 
 ### Queue (5)
 
@@ -88,12 +88,15 @@ In addition to the above, the Console Kernel registers:
 ```bash
 php myth list                               # Show all commands
 php myth route:list --method=POST           # Filter routes by method
+php myth down --secret=superadmin-bypass    # Maintenance mode with bypass URL
+php myth down --redirect=/status            # Redirect traffic while app is down
+php myth down --render=app/views/errors/503.php --refresh=30
 php myth make:controller UserController --resource
 php myth backup:run --only-db
 php myth queue:work --queue=emails --tries=3 --timeout=60
 php myth schedule:run                       # Run due scheduled tasks
 php myth schedule:list                      # List all schedules
-php myth down --secret=bypass123            # Maintenance with bypass
+php myth down --secret=bypass123 --status=503
 php myth cache:clear --store=file           # Clear specific store
 ```
 

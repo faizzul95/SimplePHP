@@ -1047,14 +1047,15 @@ class Validation
 
             $allowedTags = [
                 'a', 'abbr', 'b', 'blockquote', 'br', 'caption', 'cite', 'code', 'col', 'colgroup',
-                'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'li', 'mark',
-                'ol', 'p', 'pre', 'small', 'span', 'strong', 'sub', 'sup', 'table', 'tbody',
-                'td', 'tfoot', 'th', 'thead', 'tr', 'u', 'ul'
+                'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'hr', 'html', 'i', 'img',
+                'li', 'mark', 'meta', 'ol', 'p', 'pre', 'small', 'span', 'strong', 'style',
+                'sub', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'title', 'tr',
+                'u', 'ul', 'body'
             ];
 
             $blockedTags = [
                 'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'form',
-                'input', 'button', 'textarea', 'select', 'option', 'meta', 'link', 'base',
+                'input', 'button', 'textarea', 'select', 'option', 'link', 'base',
                 'svg', 'math', 'video', 'audio', 'canvas', 'source'
             ];
 
@@ -1101,6 +1102,15 @@ class Validation
                 }
             }
 
+            if (preg_match_all('/<style\b[^>]*>(.*?)<\/style>/is', $value, $styleMatches, PREG_SET_ORDER)) {
+                foreach ($styleMatches as $styleMatch) {
+                    $styleBlock = trim((string) ($styleMatch[1] ?? ''));
+                    if ($styleBlock !== '' && !$this->isSafeEmbeddedStyle($styleBlock)) {
+                        return false;
+                    }
+                }
+            }
+
             return true;
         } catch (Exception $e) {
             return false;
@@ -1115,12 +1125,14 @@ class Validation
         $globalAttributes = ['class', 'id', 'title', 'lang', 'dir', 'role', 'align', 'width', 'height', 'style'];
         $tagSpecific = [
             'a' => ['href', 'target', 'rel', 'name'],
+            'meta' => ['charset', 'name', 'content', 'http-equiv'],
             'img' => ['src', 'alt', 'width', 'height'],
             'table' => ['cellpadding', 'cellspacing', 'border'],
             'td' => ['colspan', 'rowspan', 'valign'],
             'th' => ['colspan', 'rowspan', 'scope', 'valign'],
             'col' => ['span', 'width'],
             'colgroup' => ['span', 'width'],
+            'style' => ['type', 'media'],
         ];
 
         if (str_starts_with($attributeName, 'data-') || str_starts_with($attributeName, 'aria-')) {
@@ -1140,15 +1152,29 @@ class Validation
     private function isAllowedHtmlUrlValue(string $value): bool
     {
         $value = trim(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-        if ($value === '' || str_starts_with($value, '#') || str_starts_with($value, '/')) {
+        $normalizedValue = $this->normalizeTrustedHtmlUrlValue($value);
+
+        if ($normalizedValue === '' || str_starts_with($normalizedValue, '#') || str_starts_with($normalizedValue, '/')) {
             return true;
         }
 
-        if (preg_match('/^(https?:|mailto:|tel:|cid:)/i', $value) === 1) {
+        if (preg_match('/^(https?:|mailto:|tel:|cid:)/i', $normalizedValue) === 1) {
             return true;
         }
 
-        return preg_match('/^data:image\/(png|jpeg|jpg|gif|webp);base64,[a-z0-9+\/=\s]+$/i', $value) === 1;
+        return preg_match('/^data:image\/(png|jpeg|jpg|gif|webp);base64,[a-z0-9+\/=\s]+$/i', $normalizedValue) === 1;
+    }
+
+    /**
+     * Strip supported template placeholder tokens from trusted HTML URL values
+     * before evaluating their safety.
+     */
+    private function normalizeTrustedHtmlUrlValue(string $value): string
+    {
+        $normalizedValue = preg_replace('/%[a-z0-9_.-]+%/i', '', $value) ?? $value;
+        $normalizedValue = preg_replace('/\{\{\{?\s*[a-z0-9_.-]+\s*\}?\}\}/i', '', $normalizedValue) ?? $normalizedValue;
+
+        return trim($normalizedValue);
     }
 
     /**
@@ -1159,6 +1185,20 @@ class Validation
         $value = strtolower(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
 
         return preg_match('/expression\s*\(|javascript\s*:|vbscript\s*:|@import|behavior\s*:|-moz-binding|url\s*\(\s*["\']?\s*(javascript:|vbscript:|data:text\/html)/i', $value) !== 1;
+    }
+
+    /**
+     * Reject stylesheet blocks that contain executable or imported content.
+     */
+    private function isSafeEmbeddedStyle(string $value): bool
+    {
+        $decodedValue = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        if (preg_match('/<\/?\s*(script|iframe|object|embed)\b/i', $decodedValue) === 1) {
+            return false;
+        }
+
+        return $this->isSafeInlineStyle($decodedValue);
     }
 
     /**

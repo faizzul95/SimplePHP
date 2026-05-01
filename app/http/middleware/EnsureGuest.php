@@ -17,7 +17,7 @@ class EnsureGuest implements MiddlewareInterface
                 Response::json(['code' => 403, 'message' => 'Already authenticated'], 403);
             }
 
-            $landingUrl = function_exists('resolveAuthenticatedLandingUrl') ? resolveAuthenticatedLandingUrl() : null;
+            $landingUrl = menu_manager()->resolveAuthenticatedLandingUrl();
             if ($landingUrl !== null) {
                 Response::redirect($landingUrl);
             }

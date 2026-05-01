@@ -20,6 +20,7 @@ class Commands
         self::routeCommands($console);
         self::makeCommands($console);
         self::databaseCommands($console);
+        self::storageCommands($console);
         self::migrationCommands($console);
         self::serveCommand($console);
         self::keyCommand($console);
@@ -785,11 +786,18 @@ PHP;
 
             try {
                 $backup = new \Components\Backup();
+                if (!empty($options['disk'])) {
+                    $backup->setBackupDisk((string) $options['disk'], isset($options['prefix']) ? (string) $options['prefix'] : null);
+                }
                 $result = $backup->database()->run();
 
                 if ($result['success']) {
                     $console->task('Database backup', true);
                     $console->line("    Path: {$result['path']}");
+                    if (!empty($result['disk'])) {
+                        $console->line("    Published Disk: {$result['disk']}");
+                        $console->line("    Published Path: {$result['disk_path']}");
+                    }
                     $console->line("    Size: {$result['size']}");
                 } else {
                     $console->task('Database backup', false);
@@ -800,7 +808,7 @@ PHP;
             }
 
             $console->newLine();
-        }, 'Create a database backup');
+        }, 'Create a database backup [--disk=name] [--prefix=path]');
 
         $console->command('backup:run', function (array $args = [], array $options = []) use ($console) {
             $console->newLine();
@@ -808,6 +816,9 @@ PHP;
 
             try {
                 $backup = new \Components\Backup();
+                if (!empty($options['disk'])) {
+                    $backup->setBackupDisk((string) $options['disk'], isset($options['prefix']) ? (string) $options['prefix'] : null);
+                }
 
                 $onlyDb = isset($options['only-db']);
                 $onlyFiles = isset($options['only-files']);
@@ -823,6 +834,10 @@ PHP;
                 if ($result['success']) {
                     $console->task('Application backup', true);
                     $console->line("    Path: {$result['path']}");
+                    if (!empty($result['disk'])) {
+                        $console->line("    Published Disk: {$result['disk']}");
+                        $console->line("    Published Path: {$result['disk_path']}");
+                    }
                     $console->line("    Size: {$result['size']}");
                 } else {
                     $console->task('Application backup', false);
@@ -833,7 +848,7 @@ PHP;
             }
 
             $console->newLine();
-        }, 'Run full backup [--only-db] [--only-files]');
+        }, 'Run full backup [--only-db] [--only-files] [--disk=name] [--prefix=path]');
 
         $console->command('backup:clean', function (array $args = [], array $options = []) use ($console) {
             $days = isset($options['days']) ? (int) $options['days'] : 30;
@@ -897,6 +912,118 @@ PHP;
             }
             $console->newLine();
         }, 'Run or list raw SQL seed files from #db/ [filename.sql]');
+    }
+
+    private static function storageCommands(Kernel $console): void
+    {
+        $console->command('storage:check', function (array $args = [], array $options = []) use ($console) {
+            $disk = trim((string) ($options['disk'] ?? $args[0] ?? ''));
+            if ($disk === '') {
+                $console->error('  Storage check requires --disk=name or a disk name argument.');
+                $console->newLine();
+                return 1;
+            }
+
+            $path = trim((string) ($options['path'] ?? 'healthchecks/' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.bin'));
+            $bytes = isset($options['bytes']) ? max(1, (int) $options['bytes']) : 1048576;
+            $keep = isset($options['keep']);
+
+            $console->newLine();
+            $console->info("  Probing storage disk [{$disk}]...");
+
+            $writeStream = fopen('php://temp/maxmemory:2097152', 'r+b');
+            if ($writeStream === false) {
+                $console->error('  Failed to allocate the probe stream.');
+                $console->newLine();
+                return 1;
+            }
+
+            $expectedHash = hash_init('sha256');
+            $pattern = str_repeat('0123456789abcdef', 4096);
+            $remaining = $bytes;
+
+            while ($remaining > 0) {
+                $chunk = substr($pattern, 0, min($remaining, strlen($pattern)));
+                fwrite($writeStream, $chunk);
+                hash_update($expectedHash, $chunk);
+                $remaining -= strlen($chunk);
+            }
+
+            rewind($writeStream);
+
+            try {
+                $storage = storage($disk);
+                $console->task('Resolve disk', true, $disk);
+
+                $writeOk = $storage->writeStream($path, $writeStream);
+                $console->task('Write stream', $writeOk, $path);
+                if (!$writeOk) {
+                    throw new \RuntimeException('Disk writeStream returned false.');
+                }
+
+                $exists = $storage->exists($path);
+                $console->task('Existence check', $exists, $path);
+                if (!$exists) {
+                    throw new \RuntimeException('Probe file was not found after write.');
+                }
+
+                $readStream = $storage->readStream($path);
+                if (!is_resource($readStream)) {
+                    throw new \RuntimeException('Disk readStream did not return a stream resource.');
+                }
+
+                try {
+                    $actualHash = hash_init('sha256');
+                    $actualBytes = 0;
+                    while (!feof($readStream)) {
+                        $chunk = fread($readStream, 1048576);
+                        if ($chunk === false) {
+                            throw new \RuntimeException('Failed to read probe file from the disk stream.');
+                        }
+
+                        if ($chunk === '') {
+                            continue;
+                        }
+
+                        $actualBytes += strlen($chunk);
+                        hash_update($actualHash, $chunk);
+                    }
+                } finally {
+                    fclose($readStream);
+                }
+
+                $expectedDigest = hash_final($expectedHash);
+                $actualDigest = hash_final($actualHash);
+                $integrityOk = $actualBytes === $bytes && hash_equals($expectedDigest, $actualDigest);
+                $console->task('Integrity check', $integrityOk, $actualBytes . ' bytes');
+                if (!$integrityOk) {
+                    throw new \RuntimeException('Probe file integrity verification failed.');
+                }
+
+                $url = $storage->url($path);
+                $console->line("    URL: {$url}");
+
+                if (!$keep) {
+                    $deleted = $storage->delete($path);
+                    $console->task('Cleanup probe', $deleted, $path);
+                    if (!$deleted) {
+                        throw new \RuntimeException('Failed to remove the probe file after verification.');
+                    }
+                } else {
+                    $console->comment("  Probe file retained at {$path}");
+                }
+
+                $console->success('  Storage disk probe completed successfully.');
+                $console->newLine();
+                return 0;
+            } catch (\Throwable $e) {
+                $console->error('  Storage probe failed: ' . $e->getMessage());
+                $console->newLine();
+                return 1;
+            } finally {
+                fclose($writeStream);
+            }
+        }, 'Probe a storage disk with streamed write/read verification [disk] [--path=file] [--bytes=N] [--keep]');
     }
 
     // ─── Migration Commands ──────────────────────────────────
@@ -1374,7 +1501,11 @@ PHP;
                 'time'    => time(),
                 'message' => $options['message'] ?? 'Service Unavailable',
                 'retry'   => isset($options['retry']) ? (int) $options['retry'] : null,
+                'refresh' => isset($options['refresh']) ? (int) $options['refresh'] : null,
                 'secret'  => $options['secret'] ?? null,
+                'status'  => isset($options['status']) ? (int) $options['status'] : 503,
+                'redirect' => isset($options['redirect']) ? (string) $options['redirect'] : null,
+                'render' => isset($options['render']) ? (string) $options['render'] : null,
             ], JSON_PRETTY_PRINT);
 
             file_put_contents($file, $payload);
@@ -1382,7 +1513,7 @@ PHP;
             $console->newLine();
             $console->warn("  Application is now in maintenance mode.");
             $console->newLine();
-        }, 'Put the application into maintenance mode [--message=] [--retry=] [--secret=]');
+        }, 'Put the application into maintenance mode [--message=] [--retry=] [--refresh=] [--secret=] [--status=] [--redirect=] [--render=]');
 
         $console->command('up', function () use ($console) {
             $file = ROOT_DIR . 'storage/framework/down';
@@ -2077,8 +2208,15 @@ PHP;
         }, 'Run baseline performance benchmark [--iterations=200] [--routes=200] [--db-iterations=100]');
 
         $console->command('perf:report', function (array $args = [], array $options = []) use ($console) {
+            $limit = max(1, (int) ($options['limit'] ?? 5));
+
             try {
-                $report = db()->getPerformanceReport();
+                $report = db()->getPerformanceReport([
+                    'slow_limit' => $limit,
+                    'frequent_limit' => $limit,
+                    'recent_limit' => $limit,
+                    'heavy_limit' => $limit,
+                ]);
             } catch (\Throwable $e) {
                 $console->newLine();
                 $console->error('  Unable to build performance report: ' . $e->getMessage());
@@ -2101,7 +2239,7 @@ PHP;
             $console->line('  Max query time (s) : ' . round((float) ($summary['max_time'] ?? 0), 6));
             $console->line('  Memory peak (MB)   : ' . round(((float) ($summary['memory_peak'] ?? 0)) / 1048576, 2));
 
-            $slow = array_slice((array) ($report['slow_queries'] ?? []), 0, 5);
+            $slow = array_slice((array) ($report['slow_queries'] ?? []), 0, $limit);
             if (!empty($slow)) {
                 $rows = [];
                 foreach ($slow as $item) {
@@ -2114,6 +2252,37 @@ PHP;
                 }
                 $console->newLine();
                 $console->table(['Type', 'Time (s)', 'Rows', 'SQL'], $rows);
+            }
+
+            $heavy = array_slice((array) ($report['heavy_queries'] ?? []), 0, $limit);
+            if (!empty($heavy)) {
+                $rows = [];
+                foreach ($heavy as $item) {
+                    $rows[] = [
+                        $item['query_type'] ?? 'unknown',
+                        (int) ($item['count'] ?? 0),
+                        round((float) ($item['total_time'] ?? 0), 6),
+                        round((float) ($item['avg_time'] ?? 0), 6),
+                        mb_strimwidth((string) ($item['sql'] ?? ''), 0, 80, '...'),
+                    ];
+                }
+                $console->newLine();
+                $console->table(['Type', 'Count', 'Total (s)', 'Avg (s)', 'SQL'], $rows);
+            }
+
+            $recent = array_slice((array) ($report['recent_queries'] ?? []), 0, $limit);
+            if (!empty($recent)) {
+                $rows = [];
+                foreach ($recent as $item) {
+                    $rows[] = [
+                        $item['query_type'] ?? 'unknown',
+                        round((float) ($item['execution_time'] ?? 0), 6),
+                        date('Y-m-d H:i:s', (int) ($item['timestamp'] ?? time())),
+                        mb_strimwidth((string) ($item['sql'] ?? ''), 0, 80, '...'),
+                    ];
+                }
+                $console->newLine();
+                $console->table(['Type', 'Time (s)', 'Timestamp', 'SQL'], $rows);
             }
 
             if (!empty($options['export'])) {
@@ -2130,8 +2299,13 @@ PHP;
                 $console->success('  Report exported to: ' . $path);
             }
 
+            if (isset($options['reset'])) {
+                \Core\Database\PerformanceMonitor::reset();
+                $console->line('  Performance monitor state reset.');
+            }
+
             $console->newLine();
-        }, 'Show performance monitor report [--json] [--export=logs/perf_report.json]');
+        }, 'Show performance monitor report [--json] [--export=logs/perf_report.json] [--limit=5] [--reset]');
     }
 
     // ─── Queue Commands ──────────────────────────────────────

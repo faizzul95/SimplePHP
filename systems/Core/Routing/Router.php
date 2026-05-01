@@ -150,39 +150,15 @@ class Router
     private function normalizeRedirectTarget(string $target): string
     {
         $target = trim($target);
-        if ($target === '' || preg_match('/[\r\n\0]/', $target) === 1) {
+        if ($target === '') {
             return '/';
         }
 
-        if (str_starts_with($target, '//')) {
-            return '/';
+        if (preg_match('#^https?://#i', $target) === 1) {
+            return Response::sanitizeRedirectTarget($target, false);
         }
 
-        $parts = parse_url($target);
-        if ($parts === false) {
-            return '/';
-        }
-
-        $isAbsolute = isset($parts['scheme']) || isset($parts['host']);
-        if (!$isAbsolute) {
-            $normalizedTarget = ltrim($target, '/');
-            if (function_exists('url')) {
-                return url($normalizedTarget);
-            }
-
-            return '/' . $normalizedTarget;
-        }
-
-        $requestHost = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
-        $requestHost = preg_replace('/:\d+$/', '', $requestHost);
-        $targetHost = strtolower((string) ($parts['host'] ?? ''));
-        $targetHost = preg_replace('/:\d+$/', '', $targetHost);
-
-        if ($requestHost === '' || $targetHost === '' || $requestHost !== $targetHost) {
-            return '/';
-        }
-
-        return $target;
+        return Response::sanitizeRedirectTarget(url(ltrim($target, '/')), false);
     }
 
     /**
@@ -191,8 +167,7 @@ class Router
     public function view(string $uri, string $view, array $data = []): RouteDefinition
     {
         return $this->get($uri, function () use ($view, $data) {
-            echo blade_engine()->render($view, $data);
-            exit;
+            response()->view($view, $data)->send();
         });
     }
 
@@ -302,6 +277,14 @@ class Router
                     'message' => $e->getMessage(),
                     'errors' => $e->errors(),
                 ], $e->statusCode());
+            }
+
+            if ($e->statusCode() === 422 && !in_array($request->method(), ['GET', 'HEAD'], true)) {
+                redirect()
+                    ->back('/')
+                    ->withErrors($e->errors())
+                    ->withInput($request->except(['_token', 'password', 'password_confirmation', 'current_password', 'new_password', 'new_password_confirmation']))
+                    ->send();
             }
 
             http_response_code($e->statusCode());
@@ -794,6 +777,16 @@ class Router
                 self::$namedRoutes[$route->name] = $route->uri;
             }
         }
+    }
+
+    public static function registerNamedRoute(string $name, string $uri): void
+    {
+        $name = trim($name);
+        if ($name === '') {
+            return;
+        }
+
+        self::$namedRoutes[$name] = $uri;
     }
 
     public static function hasNamedRoute(string $name): bool

@@ -9,14 +9,14 @@ class SaveEmailTemplateRequest extends FormRequest
     public function authorize(): bool
     {
         if ($this->isCreate()) {
-            return isSuperadmin() || permission('email-templates-create');
+            return auth()->can('rbac-email-create');
         }
 
         if ($this->isUpdate()) {
-            return isSuperadmin() || permission('email-templates-edit');
+            return auth()->can('rbac-email-update');
         }
 
-        return isSuperadmin();
+        return false;
     }
 
     public function primaryKey(): string|array

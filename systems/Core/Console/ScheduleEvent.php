@@ -576,25 +576,47 @@ class ScheduleEvent
         $lockFile = $this->getLockPath();
         $lockDir = dirname($lockFile);
         if (!is_dir($lockDir)) {
-            mkdir($lockDir, 0775, true);
+            @mkdir($lockDir, 0775, true);
         }
 
-        // Check if lock exists and hasn't expired
-        if (file_exists($lockFile)) {
-            $lockTime = (int) @file_get_contents($lockFile);
-            $elapsed = time() - $lockTime;
+        // Open or create the lock file and hold an exclusive advisory lock
+        // across the check-and-write. This closes the TOCTOU window between
+        // reading the timestamp, unlinking a stale lock, and writing a fresh
+        // one, which otherwise allowed two concurrent workers to both enter.
+        $handle = @fopen($lockFile, 'c+b');
+        if ($handle === false) {
+            return false;
+        }
 
-            if ($elapsed < ($this->expiresAt * 60)) {
-                return false; // Still locked
+        if (!flock($handle, LOCK_EX | LOCK_NB)) {
+            fclose($handle);
+            return false;
+        }
+
+        try {
+            $contents = '';
+            while (!feof($handle)) {
+                $chunk = fread($handle, 1024);
+                if ($chunk === false) {
+                    break;
+                }
+                $contents .= $chunk;
             }
 
-            // Lock expired — remove it
-            @unlink($lockFile);
-        }
+            $lockTime = (int) trim($contents);
+            if ($lockTime > 0 && (time() - $lockTime) < ($this->expiresAt * 60)) {
+                return false;
+            }
 
-        // Atomic lock creation using LOCK_EX
-        file_put_contents($lockFile, (string) time(), LOCK_EX);
-        return true;
+            ftruncate($handle, 0);
+            rewind($handle);
+            fwrite($handle, (string) time());
+            fflush($handle);
+            return true;
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     /**
@@ -751,12 +773,18 @@ class ScheduleEvent
     }
 
     /**
-     * Sanitize output file path to prevent directory traversal
+     * Sanitize output file path to prevent directory traversal.
+     *
+     * Whatever basename survives, it is scrubbed to alphanumerics + . _ - so
+     * that names like `..`, backslash tricks, or null bytes cannot sneak past
+     * the fallback branch.
      */
     private function sanitizeOutputPath(string $filePath): string
     {
         $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR;
         $realRoot = realpath($rootDir);
+
+        $safeBasename = $this->sanitizeBasename($filePath);
 
         // Resolve the absolute path
         $resolved = realpath(dirname($filePath));
@@ -766,7 +794,7 @@ class ScheduleEvent
             if (!is_dir($safeDir)) {
                 mkdir($safeDir, 0775, true);
             }
-            return $safeDir . DIRECTORY_SEPARATOR . basename($filePath);
+            return $safeDir . DIRECTORY_SEPARATOR . $safeBasename;
         }
 
         // Prevent path traversal outside project root
@@ -775,9 +803,21 @@ class ScheduleEvent
             if (!is_dir($safeDir)) {
                 mkdir($safeDir, 0775, true);
             }
-            return $safeDir . DIRECTORY_SEPARATOR . basename($filePath);
+            return $safeDir . DIRECTORY_SEPARATOR . $safeBasename;
         }
 
         return $filePath;
+    }
+
+    private function sanitizeBasename(string $filePath): string
+    {
+        $name = basename(str_replace('\\', '/', $filePath));
+        $name = str_replace("\0", '', $name);
+        $name = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name) ?? '';
+        $name = trim($name, '.');
+        if ($name === '' || $name === '.' || $name === '..') {
+            $name = 'schedule-' . date('Ymd-His') . '.log';
+        }
+        return $name;
     }
 }
