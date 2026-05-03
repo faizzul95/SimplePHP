@@ -36,12 +36,25 @@ RouteDefinition convenience helpers now include:
 - `webAuth()`
 - `apiAuth()`
 - `guestOnly()`
+- `featureFlag(...)`
+- `feature(...)` as an alias of `featureFlag(...)`
 - `permission(...)`
 - `permissionAny(...)`
 - `can(...)` as an alias of `permission(...)`
 - `canAny(...)` as an alias of `permissionAny(...)`
 - `role(...)`
 - `ability(...)`
+
+Feature-gated route example:
+
+```php
+$router->post('/uploads/image-cropper', [UploadController::class, 'uploadImageCropper'])
+	->permission('user-upload-profile')
+	->middleware('api.upload.image')
+	->middleware('xss:image')
+	->featureFlag('uploads.image-cropper')
+	->name('uploads.image-cropper');
+```
 
 ### 2) Grouped routes with shared middleware and prefix
 

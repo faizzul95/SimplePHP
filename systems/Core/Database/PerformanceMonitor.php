@@ -56,6 +56,11 @@ class PerformanceMonitor
     protected static $enabled = false;
 
     /**
+     * @var bool Capture stack traces for monitored queries.
+     */
+    protected static $captureBacktraces = false;
+
+    /**
      * @var array Performance statistics
      */
     protected static $stats = [
@@ -101,8 +106,11 @@ class PerformanceMonitor
             'query_type' => strtolower($queryType),
             'start_time' => microtime(true),
             'start_memory' => memory_get_usage(true),
-            'backtrace' => self::getBacktrace()
         ];
+
+        if (self::$captureBacktraces) {
+            self::$timers[$queryId]['backtrace'] = self::getBacktrace();
+        }
     }
 
     /**
@@ -136,8 +144,11 @@ class PerformanceMonitor
             'memory_used' => $memoryUsed,
             'row_count' => $rowCount,
             'timestamp' => time(),
-            'backtrace' => $timer['backtrace']
         ];
+
+        if (isset($timer['backtrace'])) {
+            $entry['backtrace'] = $timer['backtrace'];
+        }
 
         // Add to query log
         self::addToLog($entry);
@@ -241,6 +252,7 @@ class PerformanceMonitor
     {
         return array_merge(self::$stats, [
             'slow_query_threshold' => self::$slowQueryThreshold,
+            'capture_backtraces' => self::$captureBacktraces,
             'queries_logged' => count(self::$queryLog),
             'slow_queries_logged' => count(self::$slowQueries),
             'current_memory' => memory_get_usage(true),
@@ -434,6 +446,7 @@ class PerformanceMonitor
         self::$queryLog = [];
         self::$slowQueries = [];
         self::$timers = [];
+        self::$captureBacktraces = false;
         self::$stats = [
             'total_queries' => 0,
             'slow_queries' => 0,
@@ -492,6 +505,27 @@ class PerformanceMonitor
     public static function disable()
     {
         self::$enabled = false;
+    }
+
+    /**
+     * Enable or disable stack trace capture for monitored queries.
+     *
+     * @param bool $enabled
+     * @return void
+     */
+    public static function setCaptureBacktraces($enabled): void
+    {
+        self::$captureBacktraces = (bool) $enabled;
+    }
+
+    /**
+     * Check whether stack trace capture is enabled.
+     *
+     * @return bool
+     */
+    public static function isCapturingBacktraces(): bool
+    {
+        return self::$captureBacktraces;
     }
 
     /**

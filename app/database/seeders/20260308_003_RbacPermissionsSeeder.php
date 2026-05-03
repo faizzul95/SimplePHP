@@ -40,7 +40,7 @@ return new class extends Seeder
             ['abilities_name' => 'RBAC Roles Create', 'abilities_slug' => 'rbac-roles-create', 'abilities_desc' => 'Create new roles.'],
             ['abilities_name' => 'RBAC Roles Update', 'abilities_slug' => 'rbac-roles-update', 'abilities_desc' => 'Update existing roles and assignments.'],
             ['abilities_name' => 'RBAC Roles Delete', 'abilities_slug' => 'rbac-roles-delete', 'abilities_desc' => 'Delete roles.'],
-            ['abilities_name' => 'Upload Image', 'abilities_slug' => 'settings-upload-image', 'abilities_desc' => 'Upload and remove protected images.'],
+            ['abilities_name' => 'Upload Profile', 'abilities_slug' => 'user-upload-profile', 'abilities_desc' => 'Upload and remove protected profile images.'],
             ['abilities_name' => 'User View', 'abilities_slug' => 'user-view', 'abilities_desc' => 'View user directory records and detail screens.'],
             ['abilities_name' => 'User Create', 'abilities_slug' => 'user-create', 'abilities_desc' => 'Create new user accounts.'],
             ['abilities_name' => 'User Update', 'abilities_slug' => 'user-update', 'abilities_desc' => 'Update user records and reset passwords.'],

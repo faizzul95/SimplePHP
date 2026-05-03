@@ -85,11 +85,14 @@
         if (empty(data)) {
             $('#passwordDiv').show();
         } else {
-            if (!isset(data.profile.role_id)) {
-                $('#role_id').val('');
-            } else {
-                $('#role_id').val(data.profile.role_id);
-            }
+            const profile = isset(data.profile) && typeof data.profile === 'object'
+                ? data.profile
+                : null;
+            const roleId = isset(profile) && isset(profile.role_id)
+                ? profile.role_id
+                : '';
+
+            $('#role_id').val(roleId);
             $('#passwordDiv').hide();
         }
     }

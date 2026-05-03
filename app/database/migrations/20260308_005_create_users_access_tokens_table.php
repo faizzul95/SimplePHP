@@ -12,6 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create($this->table, function (Blueprint $table) {
+            $table->engine('InnoDB');
             $table->charset('utf8mb4');
             $table->collation('utf8mb4_general_ci');
 
@@ -29,6 +30,7 @@ return new class extends Migration
 
         if (($authConfig['api_key']['enabled'] ?? false) === true) {
             Schema::create('users_api_keys', function (Blueprint $table) {
+                $table->engine('InnoDB');
                 $table->charset('utf8mb4');
                 $table->collation('utf8mb4_general_ci');
 
@@ -50,6 +52,7 @@ return new class extends Migration
 
         if (($authConfig['oauth2']['enabled'] ?? false) === true) {
             Schema::create('oauth2_access_tokens', function (Blueprint $table) {
+                $table->engine('InnoDB');
                 $table->charset('utf8mb4');
                 $table->collation('utf8mb4_general_ci');
 

@@ -59,6 +59,14 @@ Source: `systems/hooks.php` (~524 lines).
 | `cache` | `cache(string\|array\|null $key = null, mixed $default = null): mixed` | `mixed` | Get CacheManager instance (no args), get cached value (string key), or batch set (array key) |
 | `dispatch` | `dispatch(\Core\Queue\Job $job): ?string` | `?string` | Dispatch a job to the queue. Returns job ID or null. |
 
+### Feature Flags
+
+| Function | Signature | Return | Description |
+|----------|-----------|--------|-------------|
+| `feature` | `feature(?string $key = null, bool $default = false, array $context = [])` | `mixed` | Resolve the feature manager when called without a key, or return whether the given feature flag is enabled. |
+| `featureFlag` | `featureFlag(?string $key = null, bool $default = false, array $context = [])` | `mixed` | Compatibility alias of `feature(...)`. Use when code reads more clearly as a boolean feature check in controllers/views. |
+| `feature_value` | `feature_value(string $key, mixed $default = null, array $context = [])` | `mixed` | Read a feature flag variant/value when the flag definition exposes a `value`. |
+
 ---
 
 ## Helper Auto-loading
@@ -108,6 +116,11 @@ if (auth()->can('manage_users')) {
 $router->get('/admin/users', [UserController::class, 'index'])
     ->webAuth()
     ->can('user-view');
+
+// Feature flag checks are available in runtime code too
+if (featureFlag('uploads.image-cropper')) {
+    // render cropper affordance
+}
 
 // Logout
 auth()->logout();

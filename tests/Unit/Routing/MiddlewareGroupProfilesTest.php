@@ -36,7 +36,7 @@ final class MiddlewareGroupProfilesTest extends TestCase
         $router->middlewareGroup([
             'api' => ['trace:api'],
             'api.app' => ['api', 'auth'],
-            'api.upload' => ['api.app', 'permission:settings-upload-image', 'content.type:multipart'],
+            'api.upload' => ['api.app', 'permission:user-upload-profile', 'content.type:multipart'],
         ]);
 
         $router->get('/profile', static function (Request $request): array {
@@ -49,7 +49,7 @@ final class MiddlewareGroupProfilesTest extends TestCase
         $result = $router->dispatch(new Request([], [], $_SERVER, []));
 
         self::assertSame(200, $result['code']);
-        self::assertSame(['api', 'auth', 'permission:settings-upload-image', 'multipart'], $result['trace']);
+        self::assertSame(['api', 'auth', 'permission:user-upload-profile', 'multipart'], $result['trace']);
     }
 
     public function testOverridableMiddlewareKeepsLastContentTypeDeclaration(): void

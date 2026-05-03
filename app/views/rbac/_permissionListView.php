@@ -135,6 +135,7 @@
             ui: {
                 emptyStateContainerId: 'nodataPermDiv',
                 loadingContainerId: 'bodyPermDiv',
+                showSkeleton: true,
                 useLoadingIndicator: true,
                 renderEmptyState: function() {
                     return nodata();

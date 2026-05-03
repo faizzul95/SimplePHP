@@ -103,6 +103,7 @@
                 ui: {
                     emptyStateContainerId: 'nodataDiv',
                     loadingContainerId: 'bodyDiv',
+                    showSkeleton: true,
                     useLoadingIndicator: true,
                     renderEmptyState: function() {
                         return nodata();

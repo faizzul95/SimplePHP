@@ -11,6 +11,7 @@
             "App\\Http\\": "app/http/",
             "App\\Console\\": "app/console/",
             "App\\Providers\\": "app/providers/",
+            "App\\Support\\": "app/support/",
             "App\\": "app/"
         }
     },

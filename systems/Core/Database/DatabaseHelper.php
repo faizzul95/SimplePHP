@@ -43,6 +43,11 @@ class DatabaseHelper
      */
     protected $validatedTableNames = [];
 
+    /**
+     * @var array<string, bool> Cache for string inputs that already passed raw-query validation.
+     */
+    protected $validatedRawQueryInputs = [];
+
     # GENERAL SECTION
 
     /**
@@ -97,6 +102,50 @@ class DatabaseHelper
     }
 
     /**
+     * Normalize database values for storage or internal processing without HTML escaping.
+     * Protected against deep recursion attacks with a configurable depth limit.
+     *
+     * @param mixed $value The input data to normalize.
+     * @param array $ignoreList List of keys/columns to ignore during normalization.
+     * @param int $depth Current recursion depth (internal use).
+     * @return mixed|null The normalized input data or null if $value is null.
+     * @throws \RuntimeException If the maximum recursion depth is exceeded.
+     */
+    protected function normalizeDatabaseValue($value = null, $ignoreList = [], $depth = 0)
+    {
+        if (!isset($value) || is_null($value)) {
+            return $value;
+        }
+
+        if ($depth > self::$maxSanitizeDepth) {
+            throw new \RuntimeException('Maximum sanitization depth exceeded. Input is too deeply nested.');
+        }
+
+        switch (gettype($value)) {
+            case 'string':
+                return trim(str_replace("\0", '', $value));
+            case 'integer':
+            case 'double':
+                return $value;
+            case 'boolean':
+                return (bool) $value;
+            case 'array':
+                $result = [];
+                foreach ($value as $key => $val) {
+                    $safeKey = is_string($key) ? trim(str_replace("\0", '', $key)) : $key;
+                    if (in_array($key, $ignoreList, true)) {
+                        $result[$safeKey] = $val;
+                    } else {
+                        $result[$safeKey] = $this->normalizeDatabaseValue($val, $ignoreList, $depth + 1);
+                    }
+                }
+                return $result;
+            default:
+                return $value;
+        }
+    }
+
+    /**
      * Validates a raw query string to prevent full SQL statement execution and SQL injection.
      * Blocks full statements, comment injections, hex/char obfuscation, stacked queries,
      * and common SQL injection payloads.
@@ -119,9 +168,23 @@ class DatabaseHelper
                 continue;
             }
 
+            if (isset($this->validatedRawQueryInputs[$str])) {
+                continue;
+            }
+
             // Block null bytes (common injection payload)
             if (strpos($str, "\0") !== false) {
                 throw new \InvalidArgumentException('Null bytes are not allowed in query parameters');
+            }
+
+            // Fast-path common identifiers and scalar tokens while still rejecting bare SQL keywords.
+            if (preg_match('/^[a-zA-Z0-9_`.]+$/', $str) === 1) {
+                if (preg_match('/^(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|GRANT|REVOKE|SHOW|UNION|EXEC|EXECUTE)$/i', $str) === 1) {
+                    throw new \InvalidArgumentException($message);
+                }
+
+                $this->validatedRawQueryInputs[$str] = true;
+                continue;
             }
 
             // Block stacked queries (semicolons followed by statements)
@@ -157,6 +220,8 @@ class DatabaseHelper
             if ($hasPotentialKeyword && preg_match('/\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|GRANT|REVOKE|SHOW|UNION|EXEC|EXECUTE)\b/i', $str)) {
                 throw new \InvalidArgumentException($message);
             }
+
+            $this->validatedRawQueryInputs[$str] = true;
         }
     }
 

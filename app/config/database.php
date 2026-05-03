@@ -31,6 +31,10 @@ $config['db'] = [
         'ttl' => (int) env('DB_CACHE_TTL', 120),             // Default cache time in seconds
         'path' => env('DB_CACHE_PATH', null),                // null = auto (storage/cache/query)
     ],
+    'pagination' => [
+        'default_limit' => (int) env('DB_PAGINATION_DEFAULT_LIMIT', 10),
+        'max_limit' => (int) env('DB_PAGINATION_MAX_LIMIT', 500),
+    ],
     'default' => [
         'development' => [
             'driver'   => (string) env('DB_CONNECTION', 'mysql'),

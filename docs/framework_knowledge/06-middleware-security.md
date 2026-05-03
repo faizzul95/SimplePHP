@@ -30,8 +30,8 @@
 - `api.public.submit` => `throttle:auth` on top of the base `api` group
 - `api.external.auth` => `auth.api` on top of the base `api` group
 - `api.app` => `auth` on top of the base `api` group
-- `api.upload.image` => `api.app + permission:settings-upload-image + content.type:multipart + upload.guard:image-cropper`
-- `api.upload.action` => `api.app + permission:settings-upload-image + upload.guard:delete`
+- `api.upload.image` => `api.app + permission:user-upload-profile + content.type:multipart + upload.guard:image-cropper`
+- `api.upload.action` => `api.app + permission:user-upload-profile + upload.guard:delete`
 
 Important:
 - Middleware groups are only applied when you attach them to a route or route group. Defining the `web` group in `framework.php` does not make it automatic for `web.php` routes.
@@ -160,7 +160,7 @@ Checks a configured feature flag before allowing the request through.
 
 Behavior:
 - Returns `403` when the feature is disabled.
-- Uses the same feature manager backing `feature()` and `feature_value()` helpers.
+- Uses the same feature manager backing `feature()`, `featureFlag()`, and `feature_value()` helpers.
 - Intended for operational kill switches and staged rollout on route groups.
 
 ```php
@@ -173,8 +173,9 @@ Current routed usage:
 - `rbac.role`
 - `rbac.permission`
 - `email-template`
+- `uploads.image-cropper`
 
-The RBAC roles page and email-template page in `web.php` now carry the same feature middleware as their API/data routes so disabling a module blocks both the HTML entrypoint and the backing AJAX endpoints.
+The RBAC roles page and email-template page in `web.php` now carry the same feature middleware as their API/data routes so disabling a module blocks both the HTML entrypoint and the backing AJAX endpoints. The upload cropper API route is also feature-gated directly through the fluent `->featureFlag(...)` route helper.
 
 ### `RequireAnyPermission` (alias: `permission.any`)
 

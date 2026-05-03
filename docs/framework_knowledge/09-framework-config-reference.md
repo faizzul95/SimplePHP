@@ -65,10 +65,11 @@ Runtime behavior:
 
 ## `app/config/features.php`
 
-- route and operational feature flags used by `feature()` and `feature_value()`
+- route and operational feature flags used by `feature()`, `featureFlag()`, and `feature_value()`
 - route-level rollout / kill-switch flags consumed by `feature:*` middleware
-- current routed flags include `rbac.role`, `rbac.permission`, and `email-template`
+- current routed flags include `rbac.role`, `rbac.permission`, `email-template`, and `uploads.image-cropper`
 - `rbac.role` and `email-template` now gate both the HTML pages in `web.php` and their backing API groups, preventing partial UI exposure when a feature is disabled
+- `uploads.image-cropper` gates both the upload cropper API endpoint and controller-level affordances such as the profile-camera action in user rows
 
 ## `app/config/api.php`
 

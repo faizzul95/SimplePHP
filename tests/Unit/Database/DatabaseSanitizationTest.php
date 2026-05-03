@@ -12,29 +12,34 @@ final class DatabaseHelperSanitizationProbe extends DatabaseHelper
     {
         return $this->sanitize($value);
     }
+
+    public function normalizeValue(mixed $value): mixed
+    {
+        return $this->normalizeDatabaseValue($value);
+    }
 }
 
 final class DatabaseSanitizationTest extends TestCase
 {
-    public function testDatabaseHelperPreservesRawHtmlStrings(): void
+    public function testDatabaseHelperEscapesHtmlStringsForSafeOutputBoundary(): void
     {
         $helper = new DatabaseHelperSanitizationProbe();
 
         $result = $helper->sanitizeValue('  <b>admin</b>  ');
 
-        self::assertSame('<b>admin</b>', $result);
+        self::assertSame('&lt;b&gt;admin&lt;/b&gt;', $result);
     }
 
-    public function testDatabaseHelperPreservesRawArrayKeysAndValues(): void
+    public function testDatabaseHelperNormalizesRawArrayKeysAndValuesForPersistenceBoundary(): void
     {
         $helper = new DatabaseHelperSanitizationProbe();
 
-        $result = $helper->sanitizeValue([' profile ' => ' <i>active</i> ']);
+        $result = $helper->normalizeValue([' profile ' => ' <i>active</i> ']);
 
         self::assertSame(['profile' => '<i>active</i>'], $result);
     }
 
-    public function testSafeOutputNoLongerEscapesDatabaseResults(): void
+    public function testSafeOutputEscapesDatabaseResults(): void
     {
         $database = new class extends BaseDatabase {
             public function __construct()
@@ -72,6 +77,6 @@ final class DatabaseSanitizationTest extends TestCase
 
         $result = $database->inspectOutput(['bio' => '<script>alert(1)</script>']);
 
-        self::assertSame(['bio' => '<script>alert(1)</script>'], $result);
+        self::assertSame(['bio' => '&lt;script&gt;alert(1)&lt;/script&gt;'], $result);
     }
 }

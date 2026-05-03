@@ -44,11 +44,11 @@ $router->group(['middleware' => ['web']], function ($router) {
             ->permission('user-view')
             ->name('directory');
         $router->get('/rbac/roles', [RoleController::class, 'index'])
-            ->middleware('feature:rbac.role')
+            ->featureFlag('rbac.role')
             ->permission('rbac-roles-view')
             ->name('rbac.roles');
         $router->get('/rbac/email', [MasterEmailTemplateController::class, 'index'])
-            ->middleware('feature:email-template')
+            ->featureFlag('email-template')
             ->permission('rbac-email-view')
             ->name('rbac.email');
     });

@@ -8,7 +8,7 @@ class UploadImageCropperRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return auth()->can('settings-upload-image');
+        return auth()->can('user-upload-profile');
     }
 
     public function primaryKey(): string|array

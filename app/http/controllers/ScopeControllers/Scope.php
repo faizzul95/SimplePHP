@@ -5,13 +5,17 @@
  * File: app/http/controllers/ScopeControllers/Scope.php
  */
 
+use Core\Database\BaseDatabase;
+
 // Single Scope Registration
 
 if (!function_exists('scopeWithTrashed')) {
     function scopeWithTrashed($query)
     {
         $query->scope(function () {
+            // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
             $this->softDelete = false;
+            // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
             return $this;
         });
     }
@@ -21,8 +25,11 @@ if (!function_exists('scopeOnlyTrashed')) {
     function scopeOnlyTrashed($query)
     {
         $query->scope(function ($column = 'deleted_at') {
+            // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
             $this->softDelete = true;
+            // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
             $this->softDeleteColumn = $column;
+            // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
             return $this;
         });
     }
@@ -36,9 +43,11 @@ if (!function_exists('scopeSystemQuery')) {
         try {
             $listOfScope = [
                 'latest' => function ($column = 'created_at') {
+                    // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
                     return $this->orderBy($column, 'DESC');
                 },
                 'oldest' => function ($column = 'created_at') {
+                    // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
                     return $this->orderBy($column, 'ASC');
                 },
                 'recent' => function (int $days = 7, $column = 'created_at') {
@@ -47,6 +56,7 @@ if (!function_exists('scopeSystemQuery')) {
                     }
 
                     $date = date('Y-m-d', strtotime("-{$days} days"));
+                    // @phpstan-ignore-next-line Bound to the active query builder by Scopeable::callScope().
                     return $this->whereDate($column, '>=', $date);
                 },
             ];
@@ -56,7 +66,9 @@ if (!function_exists('scopeSystemQuery')) {
                 $db->scopes($listOfScope);
             }
         } catch (Exception $e) {
-            logger()->logException($e);
+            if (function_exists('logger')) {
+                logger()->logException($e);
+            }
         }
     }
 }

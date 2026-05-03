@@ -75,8 +75,7 @@ class UserController extends Controller
             ->paginate_ajax($request->all());
 
         if (!empty($result['data'])) {
-            $listSuperadmin = db()->table('user_profile')->where('role_id', 1)->pluck('user_id');
-            $result['data'] = array_map(fn($row) => $this->mapUserDatatableRow($row, $listSuperadmin), $result['data']);
+            $result['data'] = array_map(fn($row) => $this->mapUserDatatableRow($row), $result['data']);
         }
 
         jsonResponse($result);
@@ -226,12 +225,10 @@ class UserController extends Controller
             ->safeOutput()
             ->fetch();
 
-        $listSuperadmin = db()->table('user_profile')->where('role_id', 1)->pluck('user_id');
-
         jsonResponse([
             'code' => 200,
             'message' => 'User saved',
-            'data' => !empty($row) ? $this->mapUserDatatableRow($row, $listSuperadmin) : null,
+            'data' => !empty($row) ? $this->mapUserDatatableRow($row) : null,
         ]);
     }
 
@@ -253,7 +250,7 @@ class UserController extends Controller
         jsonResponse(['code' => 200, 'message' => 'User deleted']);
     }
 
-    private function mapUserDatatableRow(array $row, array $listSuperadmin = []): array
+    private function mapUserDatatableRow(array $row): array
     {
         $key = encodeID($row['id']);
         $rowKey = 'user-row-' . $row['id'];
@@ -261,7 +258,7 @@ class UserController extends Controller
         $avatarOriginal = isset($row['avatar']['files_path']) ? asset($row['avatar']['files_path'], false) : asset('upload/default.jpg');
         $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
         $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$key}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
-        $uploadAction = permission('settings-upload-image') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">                             
+        $uploadAction = permission('user-upload-profile') && featureFlag('uploads.image-cropper') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">                             
                                                                             <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>                            
                                                                         </a>' : '';
 
@@ -280,6 +277,8 @@ class UserController extends Controller
             }
         }
 
+        $isSuperadmin = in_array('1', $profileRoleIds, true);
+
         $statusMarkup = !empty($row['deleted_at'])
             ? self::USER_STATUS_BADGES[3]
             : (self::USER_STATUS_BADGES[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>');
@@ -292,7 +291,7 @@ class UserController extends Controller
             $resetAction = permission('user-update') ? "<a href='javascript:void(0);' onclick='resetPassword(\"{$key}\")' class='dropdown-item'>
                                                                                                 <i class='bx bx-key me-1'></i> Reset Password
                                                                                             </a>" : '';
-            $dropdownAction = in_array($row['id'], $listSuperadmin) ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
+            $dropdownAction = $isSuperadmin ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
                                                                                         <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
                                                                                             <i class='bx bx-dots-vertical-rounded'></i>
                                                                                         </button>
@@ -316,8 +315,8 @@ class UserController extends Controller
                 . '<img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '" onerror="this.onerror=null;this.src=\'' . asset('upload/default.jpg') . '\';">'
                 . $uploadAction
                 . '</div>',
-            'name' => $row['name'] . (!empty($profileRoleNames) ? ' <span class="text-muted"><i><small>(' . implode(', ', $profileRoleNames) . ')</i></small></span>' : ''),
-            'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . $row['email'], empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
+            'name' => ($row['name'] ?? '') . (!empty($profileRoleNames) ? ' <span class="text-muted"><i><small>(' . implode(', ', $profileRoleNames) . ')</i></small></span>' : ''),
+            'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . ($row['email'] ?? ''), empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
             'gender' => (int) ($row['user_gender'] ?? 0) === 1 ? 'Male' : 'Female',
             'status' => $statusMarkup,
             'action' => $action,

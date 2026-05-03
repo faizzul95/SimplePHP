@@ -258,7 +258,7 @@ class Request
                 $processed[$key] = [];
                 for ($i = 0; $i < count($file['name']); $i++) {
                     $processed[$key][] = [
-                        'name' => $this->sanitizeInput($file['name'][$i]),
+                        'name' => is_string($file['name'][$i]) ? str_replace("\0", '', $file['name'][$i]) : $file['name'][$i],
                         'type' => $file['type'][$i],
                         'tmp_name' => $file['tmp_name'][$i],
                         'error' => $file['error'][$i],
@@ -267,7 +267,7 @@ class Request
                 }
             } else {
                 $processed[$key] = [
-                    'name' => $this->sanitizeInput($file['name']),
+                    'name' => is_string($file['name']) ? str_replace("\0", '', $file['name']) : $file['name'],
                     'type' => $file['type'],
                     'tmp_name' => $file['tmp_name'],
                     'error' => $file['error'],

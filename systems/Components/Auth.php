@@ -2859,6 +2859,11 @@ class Auth
 
     protected function clientIpAddress(): string
     {
+        $serverIp = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+        if ($serverIp !== '') {
+            return $serverIp;
+        }
+
         if (function_exists('request')) {
             try {
                 $ip = trim((string) request()->ip());
@@ -2870,8 +2875,7 @@ class Auth
             }
         }
 
-        $ip = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
-        return $ip !== '' ? $ip : 'unknown';
+        return 'unknown';
     }
 
     private function resetLastAttemptStatus(): void

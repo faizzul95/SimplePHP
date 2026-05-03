@@ -1,0 +1,88 @@
+name: Security and Performance Guardrails
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: resiemas_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      APP_ENV: development
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: resiemas_ci
+      DB_USERNAME: root
+      DB_PASSWORD: root
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Validate composer manifest
+        run: composer validate --no-check-all --strict
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Lint PHP sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            php -l "$file"
+          done < <(git ls-files '*.php')
+
+      - name: Run PHPUnit
+        run: vendor/bin/phpunit --configuration phpunit.xml.dist
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse app systems tests --no-progress
+
+      - name: Reset migration deploy state
+        shell: bash
+        run: printf '[]\n' > app/database/deploy.json
+
+      - name: Migration smoke test
+        run: |
+          php myth migrate
+          php myth migrate:status
+          php myth migrate:rollback --step=1
+          php myth migrate
+
+      - name: MythPHP security audit (strict)
+        run: php myth security:audit --ci
+
+      - name: MythPHP auth security tests (strict)
+        run: php myth auth:security:test --ci
+
+      - name: MythPHP performance smoke benchmark
+        run: php myth perf:benchmark --iterations=80 --routes=120 --db-iterations=40
+
+      - name: Cleanup migration state
+        if: always()
+        shell: bash
+        run: |
+          php myth migrate:rollback --step=1 || true
+          printf '[]\n' > app/database/deploy.json

@@ -115,6 +115,21 @@ Notes:
 
 ## Usage
 
+### Database Performance Benchmark
+
+Use the synthetic benchmark script to validate database iteration and eager-loading hot paths without needing a real database connection:
+
+```bash
+php tools/performance/database_benchmark.php
+php tools/performance/database_benchmark.php --rows=50000 --children-per-parent=2 --chunk=2000
+```
+
+The script reports elapsed time and memory growth for:
+- automatic keyset delegation in `chunk()`
+- offset-based fallback iteration for non-eligible query shapes
+- `lazy()` iteration on eligible scans
+- eager-loading attachment for both `get` and `fetch` relation modes
+
 ### Routing
 
 MythPHP uses a clean URL router. Define routes in `app/routes/web.php` (web) or `app/routes/api.php` (API):

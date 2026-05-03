@@ -12,6 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create($this->table, function (Blueprint $table) {
+            $table->engine('InnoDB');
             $table->charset('utf8mb4');
             $table->collation('utf8mb4_general_ci');
 
@@ -23,7 +24,9 @@ return new class extends Migration
             $table->timestamps();
             $table->softDeletes();
 
-            $table->index('user_id');
+            $table->index('user_id', 'user_profile_user_id_index');
+            $table->index(['role_id', 'user_id'], 'user_profile_role_user_index');
+            $table->index(['user_id', 'profile_status'], 'user_profile_user_status_index');
         });
     }
 

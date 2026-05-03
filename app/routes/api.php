@@ -1,8 +1,6 @@
 <?php
 
 use App\Http\Controllers\AuthController;
-use App\Http\Controllers\MasterEmailTemplateController;
-use App\Http\Controllers\UploadController;
 
 /*
 |--------------------------------------------------------------------------
@@ -68,33 +66,10 @@ $router->group(['prefix' => $apiPrefix, 'middleware' => ['api.external.auth']], 
 // ─── Application API (Web Front-End) ────────────────────────────────────────
 
 $router->group(['prefix' => $apiPrefix, 'middleware' => ['api.app']], function ($router) {
-
-	// Auth
-	$router->post('/auth/reset-password', [AuthController::class, 'resetPassword'])
-		->middleware('throttle:5,1,auth-route')
-		->middleware('xss')
-		->permission('user-update')
-		->name('auth.reset-password');
-	$router->get('/auth/devices', [AuthController::class, 'devices'])->name('auth.devices');
-	$router->delete('/auth/devices/{sessionId}', [AuthController::class, 'revokeDevice'])->name('auth.devices.revoke');
-	$router->post('/auth/logout-other-devices', [AuthController::class, 'logoutOtherDevices'])->middleware('xss')->name('auth.logout-other-devices');
-	$router->get('/auth/tokens', [AuthController::class, 'tokens'])->name('auth.tokens');
-
+	require_once __DIR__ . '/API/auth.php';
 	require_once __DIR__ . '/API/dashboard.php';
 	require_once __DIR__ . '/API/users.php';
 	require_once __DIR__ . '/API/rbac_roles_permissions.php';
-
-	// Email Templates
-	$router->group(['prefix' => 'email-templates', 'middleware' => ['permission:rbac-email-view', 'feature:email-template']], function ($router) {
-		$router->post('/list', [MasterEmailTemplateController::class, 'listEmailTemplateDatatable'])->name('email-templates.list');
-		$router->get('/show/{id}', [MasterEmailTemplateController::class, 'show'])->name('email-templates.show');
-		$router->post('/save', [MasterEmailTemplateController::class, 'save'])->middleware('xss:email_body')->permissionAny(['rbac-email-create', 'rbac-email-update'])->name('email-templates.save');
-		$router->delete('/delete/{id}', [MasterEmailTemplateController::class, 'destroy'])->permission('rbac-email-delete')->name('email-templates.delete');
-	});
-
-	// Uploads
-	$router->group(['prefix' => 'uploads'], function ($router) {
-		$router->post('/image-cropper', [UploadController::class, 'uploadImageCropper'])->permission('settings-upload-image')->middleware('api.upload.image')->middleware('xss:image')->name('uploads.image-cropper');
-		$router->post('/delete', [UploadController::class, 'removeUploadFiles'])->permission('settings-upload-image')->middleware('api.upload.action')->middleware('xss')->name('uploads.delete');
-	});
+	require_once __DIR__ . '/API/email_templates.php';
+	require_once __DIR__ . '/API/uploads.php';
 });

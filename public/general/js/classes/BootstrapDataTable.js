@@ -228,8 +228,8 @@ class BootstrapDataTable {
                 useLoadingIndicator: true,
                 renderSkeleton: null,
                 renderEmptyState: null,
-                skeletonRowCount: 5,
-                skeletonColumnCount: 5,
+                skeletonRowCount: null,
+                skeletonColumnCount: null,
                 noDataText: 'No data available.',
             },
             mutation: {
@@ -794,6 +794,30 @@ class BootstrapDataTable {
         return this.options.ui.tableWrapperId || (this.options.tableId ? this.options.tableId + 'Div' : null);
     }
 
+    getLoadingContainer() {
+        const loadingContainerId = this.options.ui.loadingContainerId;
+        if (loadingContainerId) {
+            const $loadingContainer = $('#' + loadingContainerId);
+            if ($loadingContainer.length) {
+                return $loadingContainer;
+            }
+        }
+
+        const tableWrapperId = this.getTableWrapperId();
+        if (tableWrapperId) {
+            const $tableWrapper = $('#' + tableWrapperId);
+            if ($tableWrapper.length) {
+                return $tableWrapper;
+            }
+        }
+
+        return this.$table && this.$table.length ? this.$table.parent() : $();
+    }
+
+    getSkeletonContainerId() {
+        return this.options.tableId ? this.options.tableId + '-dt-skeleton' : 'bootstrap-datatable-skeleton';
+    }
+
     toggleEmptyState(hasRows) {
         const emptyStateContainerId = this.options.ui.emptyStateContainerId;
         const tableWrapperId = this.getTableWrapperId();
@@ -830,52 +854,172 @@ class BootstrapDataTable {
         return '<div class="alert alert-light border text-center mb-0">' + this.escapeHtml(this.options.ui.noDataText) + '</div>';
     }
 
+    getSkeletonColumnCount() {
+        if (Number.isFinite(Number(this.options.ui.skeletonColumnCount)) && Number(this.options.ui.skeletonColumnCount) > 0) {
+            return Number(this.options.ui.skeletonColumnCount);
+        }
+
+        if (Array.isArray(this.options.columns) && this.options.columns.length > 0) {
+            return this.options.columns.length;
+        }
+
+        if (this.$table && this.$table.length) {
+            const headerCount = this.$table.find('thead th').length;
+            if (headerCount > 0) {
+                return headerCount;
+            }
+        }
+        return 4;
+    }
+
+    getSkeletonRowCount() {
+        if (Number.isFinite(Number(this.options.ui.skeletonRowCount)) && Number(this.options.ui.skeletonRowCount) > 0) {
+            return Number(this.options.ui.skeletonRowCount);
+        }
+
+        return 3;
+    }
+
+    getSkeletonHeaders(columnCount) {
+        const headers = [];
+
+        if (this.$table && this.$table.length) {
+            this.$table.find('thead th').each(function () {
+                headers.push($(this).text().trim());
+            });
+        }
+
+        while (headers.length < columnCount) {
+            headers.push('Column ' + (headers.length + 1));
+        }
+
+        return headers.slice(0, columnCount);
+    }
+
     renderDefaultSkeleton() {
-        const rowCount = Number(this.options.ui.skeletonRowCount || 5);
-        const columnCount = Number(this.options.ui.skeletonColumnCount || 5);
-        let body = '';
+        const rowCount = this.getSkeletonRowCount();
+        const columnCount = this.getSkeletonColumnCount();
+        const headers = this.getSkeletonHeaders(columnCount);
+        let headerHtml = '';
+        let bodyHtml = '';
+
+        for (let columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            const headerLabel = this.escapeHtml(headers[columnIndex] || ('Column ' + (columnIndex + 1)));
+            const sortIcon = columnIndex === columnCount - 1
+                ? ''
+                : '<span class="d-inline-flex flex-column ms-2 opacity-50" aria-hidden="true"><span style="font-size:8px; line-height:8px;">▲</span><span style="font-size:8px; line-height:8px; margin-top:1px;">▼</span></span>';
+
+            headerHtml += '<th class="text-uppercase small text-white fw-semibold">'
+                + '<div class="d-flex align-items-center justify-content-between gap-2">'
+                + '<span>' + headerLabel + '</span>'
+                + sortIcon
+                + '</div>'
+                + '</th>';
+        }
 
         for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
             let columns = '';
             for (let columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                columns += '<td><span class="placeholder col-12"></span></td>';
+                const widthClass = columnIndex === columnCount - 1
+                    ? 'col-4'
+                    : (columnIndex === 0 ? 'col-8' : 'col-10');
+                columns += '<td class="py-3"><span class="placeholder ' + widthClass + '"></span></td>';
             }
-            body += '<tr>' + columns + '</tr>';
+            bodyHtml += '<tr>' + columns + '</tr>';
         }
 
-        return '<div class="table-responsive"><table class="table"><tbody>' + body + '</tbody></table></div>';
+        return [
+            '<div class="bootstrap-datatable-skeleton">',
+                '<div class="row align-items-center g-2 mb-3">',
+                    '<div class="col-sm-12 col-md-6">',
+                        '<div class="d-inline-flex align-items-center gap-2">',
+                            '<span class="placeholder col-4" style="min-width:48px; height:31px; border-radius:.375rem;"></span>',
+                            '<span class="text-muted small">item / page</span>',
+                        '</div>',
+                    '</div>',
+                    '<div class="col-sm-12 col-md-6">',
+                        '<div class="d-flex justify-content-md-end align-items-center">',
+                            '<span class="placeholder col-4" style="width:180px; max-width:100%; height:31px; border-radius:.375rem;"></span>',
+                        '</div>',
+                    '</div>',
+                '</div>',
+                '<div class="table-responsive">',
+                    '<table class="table table-hover table-striped table-bordered mb-0">',
+                        '<thead class="table-dark"><tr>' + headerHtml + '</tr></thead>',
+                        '<tbody>' + bodyHtml + '</tbody>',
+                    '</table>',
+                '</div>',
+                '<div class="row align-items-center g-2 mt-3">',
+                    '<div class="col-sm-12 col-md-5">',
+                        '<span class="text-muted small">Showing 1 to ' + Math.max(1, Math.min(rowCount, this.options.pageLength || rowCount)) + ' of ' + Math.max(rowCount, this.options.pageLength || rowCount) + ' items</span>',
+                    '</div>',
+                    '<div class="col-sm-12 col-md-7">',
+                        '<div class="d-flex justify-content-md-end">',
+                            '<ul class="pagination pagination-sm mb-0">',
+                                '<li class="page-item disabled"><span class="page-link">Previous</span></li>',
+                                '<li class="page-item active" aria-current="page"><span class="page-link">1</span></li>',
+                                '<li class="page-item disabled"><span class="page-link">Next</span></li>',
+                            '</ul>',
+                        '</div>',
+                    '</div>',
+                '</div>',
+            '</div>',
+        ].join('');
     }
 
     showLoading() {
-        const loadingContainerId = this.options.ui.loadingContainerId;
+        const $loadingContainer = this.getLoadingContainer();
 
-        if (this.options.ui.showSkeleton && loadingContainerId) {
+        if (this.options.ui.showSkeleton && $loadingContainer.length) {
             const renderer = typeof this.options.ui.renderSkeleton === 'function'
                 ? this.options.ui.renderSkeleton
                 : () => this.renderDefaultSkeleton();
 
-            $('#' + loadingContainerId).html(renderer(this)).show();
+            const skeletonContainerId = this.getSkeletonContainerId();
+            let $skeletonContainer = $('#' + skeletonContainerId);
+
+            if (!$skeletonContainer.length) {
+                $skeletonContainer = $('<div></div>', {
+                    id: skeletonContainerId,
+                    'data-bootstrap-datatable-skeleton': 'true',
+                });
+                $loadingContainer.prepend($skeletonContainer);
+            }
+
+            $loadingContainer.children().not($skeletonContainer).addClass('dt-skeleton-hidden').hide();
+            $skeletonContainer.html(renderer(this)).show();
             return;
         }
 
-        if (loadingContainerId && this.options.ui.useLoadingIndicator && typeof loading === 'function') {
-            loading('#' + loadingContainerId, true);
+        if ($loadingContainer.length && this.options.ui.useLoadingIndicator && typeof loading === 'function') {
+            const loadingContainerId = $loadingContainer.attr('id');
+            if (loadingContainerId) {
+                loading('#' + loadingContainerId, true);
+            }
         }
     }
 
     hideLoading() {
-        const loadingContainerId = this.options.ui.loadingContainerId;
-        if (!loadingContainerId) {
+        const $loadingContainer = this.getLoadingContainer();
+        if (!$loadingContainer.length) {
             return;
         }
 
         if (this.options.ui.showSkeleton) {
-            $('#' + loadingContainerId).hide().empty();
+            const $skeletonContainer = $('#' + this.getSkeletonContainerId());
+            if ($skeletonContainer.length) {
+                $skeletonContainer.hide().empty();
+            }
+
+            $loadingContainer.children('.dt-skeleton-hidden').show().removeClass('dt-skeleton-hidden');
             return;
         }
 
         if (this.options.ui.useLoadingIndicator && typeof loading === 'function') {
-            loading('#' + loadingContainerId, false);
+            const loadingContainerId = $loadingContainer.attr('id');
+            if (loadingContainerId) {
+                loading('#' + loadingContainerId, false);
+            }
         }
     }
 
@@ -1038,6 +1182,90 @@ class BootstrapDataTable {
         this.applyRowIdentity(rowNode, rowData);
     }
 
+    getColumnTitle(columnIndex) {
+        if (!this.instance || typeof this.instance.settings !== 'function') {
+            return '';
+        }
+
+        const settings = this.instance.settings()[0];
+        const column = settings && Array.isArray(settings.aoColumns) ? settings.aoColumns[columnIndex] : null;
+        if (!column) {
+            return '';
+        }
+
+        if (typeof column.sTitle === 'string' && column.sTitle !== '') {
+            return column.sTitle.replace(/<[^>]*>/g, '').trim();
+        }
+
+        const headerCell = column.nTh;
+        return headerCell && typeof headerCell.textContent === 'string' ? headerCell.textContent.trim() : '';
+    }
+
+    isCellResponsiveHidden(cell) {
+        if (!(cell instanceof HTMLElement)) {
+            return false;
+        }
+
+        if (cell.hidden || cell.classList.contains('dtr-hidden')) {
+            return true;
+        }
+
+        const style = window.getComputedStyle ? window.getComputedStyle(cell) : null;
+        return !!style && style.display === 'none';
+    }
+
+    refreshResponsiveChildRow(rowApi, rowData) {
+        const rowNode = rowApi && typeof rowApi.node === 'function' ? rowApi.node() : null;
+        if (!(rowNode instanceof HTMLTableRowElement)) {
+            return;
+        }
+
+        const childRow = rowNode.nextElementSibling;
+        if (!(childRow instanceof HTMLTableRowElement) || !childRow.classList.contains('child')) {
+            return;
+        }
+
+        const detailsList = childRow.querySelector('ul.dtr-details');
+        if (!(detailsList instanceof HTMLElement)) {
+            return;
+        }
+
+        const columns = this.getRenderableColumns();
+        const cells = Array.from(rowNode.cells || []);
+        const rowIndex = typeof rowApi.index === 'function' ? rowApi.index() : 0;
+        const hiddenColumns = [];
+
+        for (let index = 0; index < cells.length; index++) {
+            const cell = cells[index];
+            if (!this.isCellResponsiveHidden(cell)) {
+                continue;
+            }
+
+            const columnConfig = columns[index] || {};
+            let cellValue = this.resolveColumnValue(columnConfig, rowData, index);
+
+            if (typeof columnConfig.render === 'function') {
+                cellValue = columnConfig.render(cellValue, 'display', rowData, {
+                    col: index,
+                    settings: this.instance ? this.instance.settings()[0] : null,
+                });
+            }
+
+            hiddenColumns.push({
+                index,
+                title: this.getColumnTitle(index),
+                value: cellValue == null ? '' : String(cellValue),
+            });
+        }
+
+        detailsList.innerHTML = hiddenColumns.map((column) => {
+            return '<li class="dtr-data-row" data-dt-row="' + rowIndex + '" data-dt-column="' + column.index + '">'
+                + '<span class="dtr-title">' + column.title + '</span> '
+                + '<span class="dtr-data">' + column.value + '</span>'
+                + '</li>';
+        }).join('');
+    }
+
     updateRow(rowId, rowData, redraw = false) {
         const row = this.getRow(rowId);
         if (!row) {
@@ -1046,7 +1274,25 @@ class BootstrapDataTable {
 
         if (this.isServerSideTable() && !redraw) {
             row.data(rowData);
+            if (typeof row.invalidate === 'function') {
+                row.invalidate();
+            }
+
             this.refreshRowNode(row, rowData);
+            this.refreshResponsiveChildRow(row, rowData);
+
+            if (this.instance && typeof this.instance.columns === 'function') {
+                this.instance.columns.adjust();
+            }
+
+            const responsiveApi = this.instance && this.instance.responsive;
+            if (responsiveApi && typeof responsiveApi.rebuild === 'function') {
+                responsiveApi.rebuild();
+            }
+            if (responsiveApi && typeof responsiveApi.recalc === 'function') {
+                responsiveApi.recalc();
+            }
+
             this.toggleEmptyState(this.countRows() > 0);
             return true;
         }

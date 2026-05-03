@@ -17,6 +17,7 @@ return new class extends Migration
         }
 
         Schema::create($this->table, function (Blueprint $table) {
+            $table->engine('InnoDB');
             $table->charset('utf8mb4');
             $table->collation('utf8mb4_general_ci');
 

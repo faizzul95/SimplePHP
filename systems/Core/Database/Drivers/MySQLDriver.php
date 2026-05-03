@@ -172,8 +172,9 @@ class MySQLDriver extends BaseDatabase
                 $this->table = $table;
             }
 
-            // Start profiler for performance measurement
-            $this->_startProfiler(__FUNCTION__);
+            if ($this->enableProfiling) {
+                $this->_startProfiler(__FUNCTION__);
+            }
 
             // Check if query is empty then generate it first
             if (empty($this->_query)) {
@@ -234,15 +235,15 @@ class MySQLDriver extends BaseDatabase
             }
 
             // Bind parameters if any
-            if (!empty($this->_binds)) {
-                $this->_bindParams($stmtTotal, $this->_binds);
+            $bindings = $this->getSelectQueryBindings();
+            if (!empty($bindings)) {
+                $this->_bindParams($stmtTotal, $bindings);
             }
 
-            // Log the query for debugging 
-            $this->_profiler['profiling'][__FUNCTION__]['query'] = $sqlTotal;
-
-            // Generate the full query string with bound values 
-            $this->_generateFullQuery($sqlTotal, $this->_binds);
+            if ($this->enableProfiling) {
+                $this->_profiler['profiling'][__FUNCTION__]['query'] = $sqlTotal;
+                $this->_generateFullQuery($sqlTotal, $bindings);
+            }
 
             // Execute with error handling
             if (!$stmtTotal->execute()) {
@@ -256,8 +257,9 @@ class MySQLDriver extends BaseDatabase
                 throw new \RuntimeException('Failed to fetch count result');
             }
 
-            // Stop profiler
-            $this->_stopProfiler();
+            if ($this->enableProfiling) {
+                $this->_stopProfiler();
+            }
 
             return (int)($totalResult['count'] ?? 0);
         } catch (\PDOException $e) {
@@ -267,7 +269,7 @@ class MySQLDriver extends BaseDatabase
                 'table' => $this->table ?? 'unknown',
                 'original_query' => $this->_query ?? 'not_available',
                 'generated_count_query' => $sqlTotal ?? 'not_generated',
-                'binds' => $this->_binds ?? [],
+                'binds' => $bindings ?? [],
                 'has_group_by' => isset($hasGroupBy) ? $hasGroupBy : 'unknown',
                 'has_having' => isset($hasHaving) ? $hasHaving : 'unknown'
             ];
@@ -275,14 +277,14 @@ class MySQLDriver extends BaseDatabase
             $this->db_error_log($e, __FUNCTION__, 'Count query failed', $context);
 
             // Stop profiler on error
-            if (method_exists($this, '_stopProfiler')) {
+            if ($this->enableProfiling && method_exists($this, '_stopProfiler')) {
                 $this->_stopProfiler();
             }
 
             throw new \RuntimeException('Database error in count(): ' . $e->getMessage(), 0, $e);
         } catch (\Exception $e) {
             // Stop profiler on error
-            if (method_exists($this, '_stopProfiler')) {
+            if ($this->enableProfiling && method_exists($this, '_stopProfiler')) {
                 $this->_stopProfiler();
             }
 
@@ -297,8 +299,9 @@ class MySQLDriver extends BaseDatabase
                 $this->table = $table;
             }
 
-            // Start profiler for performance measurement
-            $this->_startProfiler(__FUNCTION__);
+            if ($this->enableProfiling) {
+                $this->_startProfiler(__FUNCTION__);
+            }
 
             // Check if query is empty then generate it first.
             if (empty($this->_query)) {
@@ -321,21 +324,22 @@ class MySQLDriver extends BaseDatabase
             $stmt = $this->pdo[$this->connectionName]->prepare($existsSql);
 
             // Bind parameters if any
-            if (!empty($this->_binds)) {
-                $this->_bindParams($stmt, $this->_binds);
+            $bindings = $this->getSelectQueryBindings();
+            if (!empty($bindings)) {
+                $this->_bindParams($stmt, $bindings);
             }
 
-            // Log the query for debugging
-            $this->_profiler['profiling'][__FUNCTION__]['query'] = $existsSql;
-
-            // Generate the full query string with bound values
-            $this->_generateFullQuery($existsSql, $this->_binds);
+            if ($this->enableProfiling) {
+                $this->_profiler['profiling'][__FUNCTION__]['query'] = $existsSql;
+                $this->_generateFullQuery($existsSql, $bindings);
+            }
 
             $stmt->execute();
             $result = $stmt->fetch(\PDO::FETCH_ASSOC);
 
-            // Stop profiler
-            $this->_stopProfiler();
+            if ($this->enableProfiling) {
+                $this->_stopProfiler();
+            }
 
             return $result !== false && (bool)($result['row_exists'] ?? false);
         } catch (\PDOException $e) {
@@ -388,7 +392,7 @@ class MySQLDriver extends BaseDatabase
                 }
 
                 // Sanitize non-empty values
-                return $this->sanitize($value);
+                return $this->normalizeDatabaseValue($value);
             }, $data);
         } else {
             // Even without sanitization, empty string should be null
@@ -441,7 +445,7 @@ class MySQLDriver extends BaseDatabase
                     $cleanRow = array_intersect_key($row, array_flip($validColumns));
                     if ($this->_secureInput) {
                         $cleanRow = array_map(function ($value) {
-                            return $value === '' ? null : $this->sanitize($value);
+                            return $value === '' ? null : $this->normalizeDatabaseValue($value);
                         }, $cleanRow);
                     } else {
                         $cleanRow = array_map(function ($value) {
@@ -539,7 +543,7 @@ class MySQLDriver extends BaseDatabase
                 $cleanRow = array_intersect_key($row, array_flip($validColumns));
                 if ($this->_secureInput) {
                     $cleanRow = array_map(function ($value) {
-                        return $value === '' ? null : $this->sanitize($value);
+                        return $value === '' ? null : $this->normalizeDatabaseValue($value);
                     }, $cleanRow);
                 } else {
                     $cleanRow = array_map(function ($value) {
@@ -703,7 +707,7 @@ class MySQLDriver extends BaseDatabase
 
                         if ($this->_secureInput ?? false) {
                             $cleanRow = array_map(function ($value) {
-                                return $value === '' ? null : $this->sanitize($value);
+                                return $value === '' ? null : $this->normalizeDatabaseValue($value);
                             }, $cleanRow);
                         } else {
                             $cleanRow = array_map(function ($value) {

@@ -335,6 +335,85 @@ await confirmDeleteAction({
 });
 ```
 
+Full supported properties:
+
+`confirmSubmitAction(options)` forwards to `confirmAction()` and keeps these defaults unless overridden:
+
+```javascript
+confirmSubmitAction({
+	title: 'Are you sure?',
+	html: 'Form will be submitted!',
+	icon: 'warning',
+	showCancelButton: true,
+	confirmButtonColor: '#3085d6',
+	cancelButtonColor: '#d33',
+	confirmButtonText: 'Yes, Confirm!',
+	reverseButtons: true,
+	customClass: {},
+	onConfirm: async function (result) {},
+	onCancel: async function (result) {},
+	// Any extra SweetAlert2 options also pass through.
+	allowOutsideClick: false,
+	allowEscapeKey: true,
+	focusCancel: true
+});
+```
+
+`confirmDeleteAction(options)` forwards to `confirmApiAction()`, which then forwards to `confirmAction()`. These are the effective properties you can use:
+
+```javascript
+await confirmDeleteAction({
+	title: 'Are you sure?',
+	html: 'You won\'t be able to revert this action!<br><strong>This item will be permanently deleted.</strong>',
+	icon: 'warning',
+	showCancelButton: true,
+	confirmButtonColor: '#3085d6',
+	cancelButtonColor: '#d33',
+	confirmButtonText: 'Yes, Remove it!',
+	reverseButtons: true,
+	customClass: {},
+	method: 'delete',
+	url: deleteUrl,
+	data: null,
+	apiOptions: {},
+	token: null,
+	autoNotify: true,
+	onSuccess: async function (res, result) {},
+	onError: async function (res, result) {},
+	onCancel: async function (result) {},
+	// Any extra SweetAlert2 options also pass through.
+	allowOutsideClick: false,
+	allowEscapeKey: true,
+	focusCancel: true
+});
+```
+
+Minimal-change rule to keep the standard message:
+
+- For `confirmSubmitAction()`, only add `onConfirm` and, if needed, `onCancel`.
+- For `confirmDeleteAction()`, only add `url`, `onSuccess`, and optionally `onError` or `onCancel`.
+- Do not override `title`, `html`, or `confirmButtonText` unless the screen intentionally needs a custom confirmation message.
+
+Preferred minimal-change examples:
+
+```javascript
+confirmSubmitAction({
+	onConfirm: async function () {
+		const saveRes = await submitApi(url, form.serializeArray(), 'rolesForm');
+		if (isSuccess(saveRes.data.code ?? saveRes)) {
+			syncDatatableRow('dataList', saveRes.data.data ?? null);
+		}
+	}
+});
+
+await confirmDeleteAction({
+	url: "{{ route('roles.delete') }}".replace('{id}', id),
+	onSuccess: function () {
+		removeDatatableRow('dataList', rowKey);
+	}
+});
+```
+
 Operational rules:
 
 - `syncDatatableRow()` updates an existing visible row locally.

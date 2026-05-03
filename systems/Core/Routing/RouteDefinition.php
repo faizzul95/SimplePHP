@@ -88,6 +88,23 @@ class RouteDefinition
         return $this->permissionAny($permissions);
     }
 
+    public function featureFlag(array|string $features): self
+    {
+        $featureList = is_array($features) ? $features : explode(',', (string) $features);
+        $featureList = array_values(array_filter(array_map(static fn($feature) => trim((string) $feature), $featureList)));
+
+        if (empty($featureList)) {
+            return $this;
+        }
+
+        return $this->middleware('feature:' . implode(',', $featureList));
+    }
+
+    public function feature(array|string $features): self
+    {
+        return $this->featureFlag($features);
+    }
+
     public function role(array|string $roles): self
     {
         $roleList = is_array($roles) ? $roles : explode(',', (string) $roles);

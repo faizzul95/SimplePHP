@@ -17,6 +17,7 @@ namespace Core;
  *
  * @template TKey of array-key
  * @template TValue
+ * @phpstan-consistent-constructor
  */
 class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonSerializable
 {

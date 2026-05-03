@@ -46,4 +46,28 @@ final class PerformanceMonitorTest extends TestCase
         self::assertContains($report['heavy_queries'][0]['sql'], ['SELECT 1', 'UPDATE users SET name = ?']);
         self::assertGreaterThan(0, $report['heavy_queries'][0]['total_time']);
     }
+
+    public function testBacktracesAreOptIn(): void
+    {
+        PerformanceMonitor::startQuery('query-no-trace', 'SELECT 1', [], 'select');
+        usleep(1000);
+        PerformanceMonitor::endQuery('query-no-trace', 1);
+
+        $entries = PerformanceMonitor::getQueryLog();
+        self::assertArrayNotHasKey('backtrace', $entries[0]);
+        self::assertFalse(PerformanceMonitor::isCapturingBacktraces());
+
+        PerformanceMonitor::reset();
+        PerformanceMonitor::enable();
+        PerformanceMonitor::setCaptureBacktraces(true);
+
+        PerformanceMonitor::startQuery('query-trace', 'SELECT 1', [], 'select');
+        usleep(1000);
+        PerformanceMonitor::endQuery('query-trace', 1);
+
+        $entries = PerformanceMonitor::getQueryLog();
+        self::assertArrayHasKey('backtrace', $entries[0]);
+        self::assertIsArray($entries[0]['backtrace']);
+        self::assertTrue(PerformanceMonitor::isCapturingBacktraces());
+    }
 }

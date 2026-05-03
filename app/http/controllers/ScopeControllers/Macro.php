@@ -1,5 +1,9 @@
 <?php
 
+use Closure;
+use Core\Database\BaseDatabase;
+use InvalidArgumentException;
+
 function macroQuery($db, $includeOnly = ['*'])
 {
     try {
@@ -17,6 +21,7 @@ function macroQuery($db, $includeOnly = ['*'])
                     throw new InvalidArgumentException('whereLike not support for callback/closure');
                 }
 
+                // @phpstan-ignore-next-line Bound to the active query builder by Macroable::__call().
                 return $this->where($column, 'LIKE', "%{$value}%");
             }
         ];
@@ -37,6 +42,8 @@ function macroQuery($db, $includeOnly = ['*'])
             $db->macros($listOfMacros);
         }
     } catch (Exception $e) {
-        logger()->logException($e);
+        if (function_exists('logger')) {
+            logger()->logException($e);
+        }
     }
 }

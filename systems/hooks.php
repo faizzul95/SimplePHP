@@ -878,6 +878,13 @@ if (!function_exists('feature')) {
     }
 }
 
+if (!function_exists('featureFlag')) {
+    function featureFlag(?string $key = null, bool $default = false, array $context = [])
+    {
+        return feature($key, $default, $context);
+    }
+}
+
 if (!function_exists('feature_value')) {
     function feature_value(string $key, mixed $default = null, array $context = [])
     {
