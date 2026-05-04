@@ -29,8 +29,19 @@ class EagerLoadOptimizer
 
     /**
      * @var array Performance history for adaptive sizing
+     *
+     * @note PHP-FPM scope: this static array is reset each request.
+     *       Call _loadHistoryFromCache() to hydrate it from the QueryCache
+     *       file layer when a table entry is not found in memory.
      */
     protected static $performanceHistory = [];
+
+    /**
+     * @var int TTL in seconds for persisted performance history entries.
+     *          30 minutes is a reasonable default — short enough to adapt
+     *          to schema changes, long enough to accumulate useful signal.
+     */
+    protected static $historyTTL = 1800;
 
     /**
      * Calculate optimal chunk size based on data characteristics
@@ -57,6 +68,12 @@ class EagerLoadOptimizer
         }
 
         // For large datasets, calculate based on history
+        if ($table && !isset(self::$performanceHistory[$table])) {
+            // Memory is cold for this table; attempt to hydrate from the file cache
+            // so adaptive sizing works across requests, not just within one.
+            self::_loadHistoryFromCache($table);
+        }
+
         if ($table && isset(self::$performanceHistory[$table])) {
             $avgTime = self::$performanceHistory[$table]['avg_time'];
             $avgSize = self::$performanceHistory[$table]['avg_size'];
@@ -118,6 +135,46 @@ class EagerLoadOptimizer
 
         self::$performanceHistory[$table]['avg_time'] = $totalTime / $count;
         self::$performanceHistory[$table]['avg_size'] = $totalSize / $count;
+
+        // Persist to QueryCache so adaptive history survives across requests.
+        self::_saveHistoryToCache($table);
+    }
+
+    /**
+     * Load persisted performance history for a table from the QueryCache file layer.
+     * Called lazily when $performanceHistory[$table] is not in memory.
+     *
+     * @param string $table
+     * @return void
+     */
+    protected static function _loadHistoryFromCache(string $table): void
+    {
+        if (!QueryCache::isEnabled()) {
+            return;
+        }
+
+        $cacheKey = 'eager_optimizer_' . md5($table);
+        $cached = QueryCache::get($cacheKey);
+
+        if (is_array($cached) && isset($cached['avg_time'])) {
+            self::$performanceHistory[$table] = $cached;
+        }
+    }
+
+    /**
+     * Persist the in-memory performance history for a table to the QueryCache file layer.
+     *
+     * @param string $table
+     * @return void
+     */
+    protected static function _saveHistoryToCache(string $table): void
+    {
+        if (!QueryCache::isEnabled() || !isset(self::$performanceHistory[$table])) {
+            return;
+        }
+
+        $cacheKey = 'eager_optimizer_' . md5($table);
+        QueryCache::set($cacheKey, self::$performanceHistory[$table], self::$historyTTL, ['eager_optimizer']);
     }
 
     /**

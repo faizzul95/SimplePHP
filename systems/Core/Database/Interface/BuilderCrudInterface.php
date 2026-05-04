@@ -127,6 +127,25 @@ interface BuilderCrudInterface
     public function firstOrCreate(array $conditions, array $data = []);
 
     /**
+     * Get the first record matching conditions or return an unsaved attribute array.
+     *
+     * @param array $conditions Conditions to search for.
+     * @param array $data Additional attributes to merge into the unsaved payload.
+     * @return array
+     */
+    public function firstOrNew(array $conditions, array $data = []);
+
+    /**
+     * Update a matching record or create a new one, then return the persisted row.
+     *
+     * @param array $conditions Conditions to search for.
+     * @param array $data Data to update or insert.
+     * @param string $primaryKey Primary key column name.
+     * @return mixed
+     */
+    public function updateOrCreate(array $conditions, array $data = [], string $primaryKey = 'id');
+
+    /**
      * Increment a column's value by a given amount
      *
      * @param string $column Column to increment
@@ -145,4 +164,20 @@ interface BuilderCrudInterface
      * @return mixed Result of the update operation
      */
     public function decrement(string $column, int $amount = 1, array $extra = []);
+
+    /**
+     * Force a hard delete even when the table supports soft deletes.
+     *
+     * @param bool $returnData Whether to return deleted rows.
+     * @return mixed
+     */
+    public function forceDelete(bool $returnData = false);
+
+    /**
+     * Restore a soft-deleted row by clearing the soft-delete marker column.
+     *
+     * @param string $column Soft-delete marker column.
+     * @return mixed
+     */
+    public function restore(string $column = 'deleted_at');
 }

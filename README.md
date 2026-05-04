@@ -6,6 +6,7 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 
 - **Organized File Structure** - Clean separation of controllers, helpers, and core components
 - **Database Query Builder** - Fluent, expressive database interactions with Laravel-style eager loading — no models required
+- **Database Runtime Performance** - Persistent PDO connection reuse, in-request statement caching, APCu-backed cross-worker query warmth metadata, and focused query-builder concern traits
 - **Large Dataset Eager Loading** - Adaptive chunking plus incremental relation attach to keep memory usage stable on high-cardinality datasets
 - **Modern HTTP Router** - Fast indexed routing with middleware pipeline, named routes, route groups, multi-parameter routes, `where()` constraints, explicit `options()` support, and 405 Method Not Allowed detection
 - **Safer Redirect Helpers** - Convenience redirects are normalized to local app targets so route-level redirects do not silently become external redirects
@@ -117,6 +118,16 @@ Notes:
 
 ### Database Performance Benchmark
 
+MythPHP's database layer uses a two-tier performance model:
+- `ConnectionPool` keeps one PDO handle per connection name inside the current request and enables PDO persistent connections by default, so PHP workers can reuse database sockets across requests.
+- `StatementCache` keeps prepared statements in an in-process LRU cache and uses APCu, when available, only as a shared SQL warmth registry. PDOStatement objects are never stored in APCu because they cannot be safely serialized across processes.
+- `BaseDatabase` delegates large query-builder areas to concern traits under `systems/Core/Database/Concerns/`, reducing the base class size while preserving the fluent public API.
+- The query builder now includes Laravel-style helpers such as `find()`, `findMany()`, `findOrFail()`, `firstOrNew()`, `updateOrCreate()`, `forceDelete()`, and `restore()` for primary-key lookups and soft-delete workflows.
+
+APCu is optional. When the extension is missing or disabled, the database layer automatically falls back to request-local pooling and statement caching.
+
+Disable persistent PDO for long-running CLI workers by passing `persistent => false` in a connection config if the worker lifecycle needs explicit connection teardown.
+
 Use the synthetic benchmark script to validate database iteration and eager-loading hot paths without needing a real database connection:
 
 ```bash
@@ -126,9 +137,19 @@ php tools/performance/database_benchmark.php --rows=50000 --children-per-parent=
 
 The script reports elapsed time and memory growth for:
 - automatic keyset delegation in `chunk()`
+- automatic keyset delegation for explicit key-column selects and ascending key-order scans
 - offset-based fallback iteration for non-eligible query shapes
 - `lazy()` iteration on eligible scans
 - eager-loading attachment for both `get` and `fetch` relation modes
+
+Streaming helpers preserve an existing `LIMIT` when they auto-delegate to `chunkById()` or `lazyById()`, so bounded exports and background jobs stop at the same row cap instead of drifting into a longer keyset scan.
+
+Recent query-builder correctness hardening also includes:
+- empty `whereIn([])` now compiles to a safe false predicate instead of invalid SQL
+- empty `whereNotIn([])` remains a no-op
+- grouped closure `where()` / `orWhere()` clauses reuse trusted builder-generated SQL instead of re-triggering raw-query guards
+- temporal `whereDate()` / `whereTime()` expressions now compile through quoted driver grammar expressions
+- explicit `SELECT col1, col2 ...` lists are no longer rewritten into wildcard table selects during query expansion
 
 ### Routing
 

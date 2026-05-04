@@ -12,6 +12,10 @@ final class ApiRequestIntegrationTest extends TestCase
     {
         parent::setUp();
 
+        if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('pdo_sqlite is required for API request integration tests.');
+        }
+
         Request::setCurrent(null);
         $_SERVER = [
             'REQUEST_METHOD' => 'POST',

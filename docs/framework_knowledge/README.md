@@ -99,6 +99,10 @@ Each file is intentionally topic-scoped so AI agents and junior developers can l
 - `systems/Components/Api.php`
 - `systems/Components/Validation.php`
 - `systems/Core/Cache/*.php`
+- `systems/Core/Database/BaseDatabase.php`
+- `systems/Core/Database/ConnectionPool.php`
+- `systems/Core/Database/StatementCache.php`
+- `systems/Core/Database/Concerns/*.php`
 - `systems/Core/Queue/*.php`
 - `systems/Core/Console/Commands.php`
 - `systems/Components/Backup.php`

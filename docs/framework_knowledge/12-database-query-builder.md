@@ -2,12 +2,36 @@
 
 ## Core Builder
 
-- Builder implementation: `systems/Core/Database/BaseDatabase.php` (~5300 lines).
+- Builder implementation: `systems/Core/Database/BaseDatabase.php` plus focused concern traits in `systems/Core/Database/Concerns/`.
 - The DB facade delegates driver calls through `Database::__call`.
 - Drivers: `MySQLDriver.php`, `MariaDBDriver.php` (in `systems/Core/Database/Drivers/`).
 - Entry point: `db()->table('table_name')` to begin any query chain.
 - Driver metadata now resolves through `systems/Core/Database/DriverRegistry.php`.
 - `Database` exposes `capabilities()`, `schemaGrammar()`, and `queryGrammar()` for the configured driver.
+
+### Internal Architecture
+
+- `BaseDatabase` keeps connection state, query execution, CRUD, pagination, result conversion, transactions, and driver-abstract hooks.
+- `HasWhereConditions` owns WHERE, relationship-existence predicates, temporal helper compilation, and raw-where normalization.
+- `HasJoins` owns JOIN builders and JOIN condition escaping.
+- `HasAggregates` owns aggregate functions, grouping, having, ordering, unions, index hints, and eager aggregate helpers.
+- `HasEagerLoading` owns batched eager-load processing and incremental relation attachment.
+- `HasStreaming` owns `chunk`, `cursor`, `lazy`, `chunkById`, and `lazyById` large-data iteration helpers.
+- `HasProfiling` owns query profiling, slow-query logging, retry behavior, and per-session performance rules.
+- `HasDebugHelpers` owns SQL/debug rendering helpers such as `toSql`, `toRawSql`, `dump`, `dd`, and `toDebugSql`.
+- Primary-key lookup helpers now include `find`, `findMany`, and `findOrFail` in addition to `fetch`, `firstOrFail`, and `sole`.
+- Record-creation helpers now include `firstOrNew`, `firstOrCreate`, `insertOrUpdate`, `updateOrInsert`, and `updateOrCreate`.
+- Soft-delete flows now expose `softDelete`, `delete`, `forceDelete`, and `restore` explicitly.
+
+### Connection Pool and Statement Cache
+
+- `ConnectionPool` has an in-request static PDO pool keyed by connection name.
+- PDO persistent connections are enabled by default through `PDO::ATTR_PERSISTENT`, allowing the same PHP worker to reuse the underlying database socket across requests.
+- `ConnectionPool` stores only lightweight APCu metadata (`last_used`, hit/miss counters, worker PID) when APCu is available; it never stores PDO objects in shared memory.
+- `StatementCache` keeps PDOStatement handles in an in-process LRU cache. Handles are request/process resources and are not cross-process serializable.
+- `StatementCache` uses APCu, when available, as a SQL warmth registry so new workers can pre-prepare hot SQL strings with `prewarmFromRegistry()`.
+- APCu calls are optional and dynamically guarded. When APCu is missing, disabled, or unavailable in CLI, the database layer falls back to local pooling/caching without changing the public API.
+- Long-running CLI workers can opt out of persistent PDO by setting a connection config value `persistent => false`.
 
 ### Driver registry and grammars
 
@@ -226,11 +250,36 @@
 | `fetch` | `fetch(string\|null $table = null)` | `array\|null` | Fetch single row |
 | `firstOrFail` | `firstOrFail(string\|null $table = null)` | `array` | Fetch single row or throw `\Exception('No records found matching the query')` |
 | `sole` | `sole(string\|null $table = null)` | `array` | Fetch exactly one row. Throws if 0 records (`'No records found'`) or >1 records (`'Multiple records found, expected only one'`). Internally uses `limit(2)` to detect multiples. |
+| `find` | `find(mixed $id, array\|string $columns = ['*'])` | `array\|null` | Fetch one row by primary key. Arrays delegate to `findMany`. |
+| `findMany` | `findMany(array $ids, array\|string $columns = ['*'])` | `array` | Fetch multiple rows by primary key list. Empty lists return `[]`. |
+| `findOrFail` | `findOrFail(mixed $id, array\|string $columns = ['*'])` | `array` | Primary-key lookup that throws when no row exists. |
 | `pluck` | `pluck(string $column, string\|null $keyColumn = null)` | `array` | Extract single column (optionally keyed by another column) |
-| `value` | `value(string $column)` | `mixed` | Get single column value from first row |
+| `value` | `value(string $column)` | `mixed` | Get single column value from first row. Qualified columns such as `users.name` resolve against the fetched column alias safely. |
 | `count` | `count(string\|null $table = null)` | `int` | Count matching rows |
 | `exists` | `exists(string\|null $table = null)` | `bool` | Check if any rows match |
 | `doesntExist` | `doesntExist(string\|null $table = null)` | `bool` | Inverse of `exists` |
+
+### Create / Update / Delete Helpers
+
+| Method | Signature | Return | Description |
+|--------|-----------|--------|-------------|
+| `firstOrNew` | `firstOrNew(array $conditions, array $data = [])` | `array` | Return the first matching row or an unsaved merged attribute payload |
+| `firstOrCreate` | `firstOrCreate(array $conditions, array $data = [])` | `array` | Return the first matching row or insert a new one |
+| `insertOrUpdate` | `insertOrUpdate(array $conditions, array $data, string $primaryKey = 'id')` | `mixed` | Update an existing matching row or insert a new one |
+| `updateOrInsert` | `updateOrInsert(array $conditions, array $data)` | `mixed` | Alias for `insertOrUpdate` |
+| `updateOrCreate` | `updateOrCreate(array $conditions, array $data = [], string $primaryKey = 'id')` | `mixed` | Persist then refetch the matching row |
+| `softDelete` | `softDelete(string\|array $column = 'deleted_at', $value = null)` | `mixed` | Mark rows deleted by updating the soft-delete column |
+| `delete` | `delete(bool $returnData = false)` | `mixed` | Delete rows, routing through `softDelete()` when the table supports it |
+| `forceDelete` | `forceDelete(bool $returnData = false)` | `mixed` | Hard-delete rows even when the table supports soft deletes |
+| `restore` | `restore(string $column = 'deleted_at')` | `mixed` | Clear the soft-delete marker column |
+
+### Verified Builder Corrections
+
+- Empty `whereIn([])` and `orWhereIn([])` compile to a false predicate instead of invalid `IN ()` SQL.
+- Empty `whereNotIn([])` and `orWhereNotIn([])` are treated as no-ops.
+- Closure-based grouped `where()` / `orWhere()` clauses reuse trusted builder-generated SQL instead of passing the generated fragment back through the public raw-query guard.
+- Temporal where helpers qualify the column before handing it to the driver grammar.
+- Wildcard expansion only rewrites true `SELECT *` statements and leaves explicit select lists untouched.
 
 ### Pagination / Streaming
 
@@ -241,8 +290,14 @@
 | `setPaginateFilterColumn` | `setPaginateFilterColumn(array $cols): self` | `self` | Configure searchable columns for `paginate_ajax` |
 | `setAllowedSortColumns` | `setAllowedSortColumns(array $cols): self` | `self` | Configure the only columns `paginate_ajax` may order by |
 | `chunk` | `chunk(int $size, callable $callback): void` | `void` | Process rows in fixed-size batches. Respects existing `limit()` if set. Callback receives `$rows` array per batch; return `false` to stop early. |
-| `cursor` | `cursor(int $chunkSize = 1000)` | `LazyCollection` | Returns streaming iterator for row-by-row processing |
+| `cursor` | `cursor(int $chunkSize = 1000)` | `\Generator` | Yields rows one at a time from chunked reads |
 | `lazy` | `lazy(int $chunkSize = 1000)` | `LazyCollection` | Alternative to cursor. Returns `LazyCollection` |
+| `chunkById` | `chunkById(int $size, callable $callback, string $column = 'id', ?string $alias = null)` | `self` | Keyset pagination for large indexed scans |
+| `lazyById` | `lazyById(int $chunkSize = 1000, string $column = 'id', ?string $alias = null)` | `LazyCollection` | Lazy keyset pagination for large indexed scans |
+
+`chunk()`, `cursor()`, and `lazy()` conservatively auto-delegate to ID-based pagination only when the query shape is simple enough to preserve behavior: no raw query, no existing offset/group/join/having/union, selected columns still expose the key column, and any explicit ordering remains a single ascending order on that same key.
+
+When `chunkById()` or `lazyById()` run against a builder that already had `LIMIT` applied, the original limit is preserved across keyset pages so iteration stops at the same row cap as the original query.
 
 `paginate_ajax()` now clamps unsafe client pagination input and can keep search columns separate from sortable columns. For DataTables-style endpoints, set both `setPaginateFilterColumn([...])` and `setAllowedSortColumns([...])` when the rendered table columns do not map 1:1 to searchable columns.
 

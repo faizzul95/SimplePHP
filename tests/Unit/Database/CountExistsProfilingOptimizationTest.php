@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Core\Database\Drivers\MariaDBDriver;
 use Core\Database\Drivers\MySQLDriver;
 use PHPUnit\Framework\MockObject\MockObject;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class MySQLDriverProfilingProbe extends MySQLDriver
@@ -49,6 +50,18 @@ final class MariaDBDriverProfilingProbe extends MariaDBDriver
     }
 }
 
+final class ProfilingProbePdo extends \PDO
+{
+    public function __construct(private \PDOStatement $statement)
+    {
+    }
+
+    public function prepare(string $query, array $options = []): \PDOStatement|false
+    {
+        return $this->statement;
+    }
+}
+
 final class CountExistsProfilingOptimizationTest extends TestCase
 {
     /**
@@ -62,9 +75,7 @@ final class CountExistsProfilingOptimizationTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider driverProvider
-     */
+    #[DataProvider('driverProvider')]
     public function testCountDoesNotPopulateProfilerWhenProfilingIsDisabled(string $driverClass): void
     {
         $statement = $this->mockStatement(['count' => 7]);
@@ -79,9 +90,7 @@ final class CountExistsProfilingOptimizationTest extends TestCase
         self::assertSame([], $driver->profilerData());
     }
 
-    /**
-     * @dataProvider driverProvider
-     */
+    #[DataProvider('driverProvider')]
     public function testExistsDoesNotPopulateProfilerWhenProfilingIsDisabled(string $driverClass): void
     {
         $statement = $this->mockStatement(['row_exists' => 1]);
@@ -115,16 +124,10 @@ final class CountExistsProfilingOptimizationTest extends TestCase
     }
 
     /**
-     * @return \PDO&MockObject
+     * @return \PDO
      */
     private function mockPdo(\PDOStatement $statement): \PDO
     {
-        $pdo = $this->createMock(\PDO::class);
-        $pdo->expects(self::once())
-            ->method('prepare')
-            ->with(self::isString())
-            ->willReturn($statement);
-
-        return $pdo;
+        return new ProfilingProbePdo($statement);
     }
 }

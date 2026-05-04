@@ -10,13 +10,11 @@ namespace Core\Database;
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   0.0.1
+ * @version   1.0.0
  */
 
-use PDO;
 use PDOException;
 
-use Core\LazyCollection;
 use Core\Database\Interface\ConnectionInterface;
 use Core\Database\Interface\BuilderCrudInterface;
 use Core\Database\Interface\BuilderStatementInterface;
@@ -27,10 +25,16 @@ use Core\Database\Traits\Macroable;
 use Core\Database\Traits\Scopeable;
 use Core\Database\Traits\ValidationTrait;
 
-use Core\Database\ConnectionPool;
+use Core\Database\Concerns\HasDebugHelpers;
+use Core\Database\Concerns\HasStreaming;
+use Core\Database\Concerns\HasWhereConditions;
+use Core\Database\Concerns\HasJoins;
+use Core\Database\Concerns\HasAggregates;
+use Core\Database\Concerns\HasEagerLoading;
+use Core\Database\Concerns\HasProfiling;
+
 use Core\Database\StatementCache;
 use Core\Database\QueryCache;
-use Core\Database\EagerLoadOptimizer;
 use Core\Database\PerformanceMonitor;
 
 use Components\Logger;
@@ -39,6 +43,9 @@ use Components\Logger;
 abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterface, BuilderStatementInterface, QueryInterface, BuilderCrudInterface, ResultInterface
 {
     use Macroable, Scopeable, ValidationTrait;
+    use HasDebugHelpers, HasStreaming;
+    use HasWhereConditions, HasJoins, HasAggregates;
+    use HasEagerLoading, HasProfiling;
 
     protected const DEFAULT_PAGINATE_LIMIT = 10;
     protected const MAX_PAGINATE_LIMIT = 500;
@@ -132,7 +139,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $joins = null;
 
     /**
-     * @var array The relations use for eager loading (N+1).
+     * @var array The relations used for eager loading (N+1).
      */
     protected $relations = [];
 
@@ -157,7 +164,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $_secureOutput = false;
 
     /**
-     * @var array The list of column that will be ignore to sanitize
+     * @var array The list of columns that will be ignored during sanitization.
      */
     protected $_secureOutputExeception = [];
 
@@ -203,7 +210,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     ];
 
     /**
-     * @var string An string to store current active profiler
+     * @var string A string that stores the current active profiler identifier.
      */
     protected $_profilerActive = 'main';
 
@@ -222,7 +229,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $returnType = 'array';
 
     /**
-     * @var array|string The list of column for pagination
+     * @var array|string The list of columns used for pagination filtering.
      */
     protected $_paginateColumn = [];
 
@@ -232,7 +239,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $_paginateAllowedSortColumns = [];
 
     /**
-     * @var string The list of column for pagination
+     * @var string|null The current pagination filter value.
      */
     protected $_paginateFilterValue = null;
 
@@ -355,8 +362,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     public function getPlatform()
     {
-        $dbPlatform = isset($this->config['driver']) ? strtolower($this->config['driver']) : '-';
-        return $this->listDatabaseDriverSupport[$dbPlatform];
+        $dbPlatform = strtolower((string) ($this->driver ?: ($this->config[$this->connectionName]['driver'] ?? '-')));
+        return $this->listDatabaseDriverSupport[$dbPlatform] ?? $this->listDatabaseDriverSupport['-'];
     }
 
     /**
@@ -414,7 +421,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->connectionName = 'default';
         }
 
-        // Remove connection settings if $remove is true
         if ($remove && isset($this->config[$connection])) {
             unset($this->config[$connection]);
         }
@@ -652,924 +658,47 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Set the SELECT clause to a trusted raw SQL expression.
+     * Set the SELECT clause to a raw SQL expression, with optional positional bindings.
+     *
+     * Guards against null bytes, stacked queries, and comment injection.
+     * SQL keywords such as SELECT, COUNT, and SUM are intentionally permitted
+     * because aggregate expressions and correlated subqueries are valid here.
      *
      * @param string $expression
+     * @param array  $bindings Optional positional binding values merged into the bind list.
      * @return $this
      */
-    public function selectRaw($expression)
+    public function selectRaw($expression, array $bindings = [])
     {
         if (empty($expression)) {
             throw new \InvalidArgumentException('Expression cannot be empty in selectRaw()');
         }
 
+        // Null-byte injection guard
+        if (strpos($expression, "\0") !== false) {
+            throw new \InvalidArgumentException('Null bytes are not allowed in selectRaw() expressions');
+        }
+
+        // Stacked-query guard: reject semicolons followed by DML/DDL keywords
+        if (preg_match('/;\s*(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|EXEC|EXECUTE|UNION|GRANT|REVOKE)/i', $expression)) {
+            throw new \InvalidArgumentException('Stacked queries are not allowed in selectRaw()');
+        }
+
+        // Comment-injection guard
+        if (preg_match('/\/\*[\s\S]*?\*\/|--\s|#\s|#$/', $expression)) {
+            throw new \InvalidArgumentException('SQL comments are not allowed in selectRaw() expressions');
+        }
+
         $this->column = $expression;
+
+        if (!empty($bindings)) {
+            $this->_binds = array_merge($this->_binds, array_values($bindings));
+        }
+
         return $this;
     }
 
-    /**
-     * Append a raw WHERE fragment with bound parameters.
-     *
-     * @param string $rawQuery
-     * @param array $value
-     * @param string $whereType
-     * @return $this
-     */
-    public function whereRaw($rawQuery, $value = [], $whereType = 'AND')
-    {
-        try {
-            $this->validateColumn($rawQuery, 'query');
 
-            if (!empty($value) && !is_array($value)) {
-                throw new \InvalidArgumentException("Value for " . __FUNCTION__ . " must be an array");
-            }
-
-            // Ensure where type AND / OR
-            if (!in_array($whereType, ['AND', 'OR'])) {
-                throw new \InvalidArgumentException('Invalid where type. Supported operators are: AND/OR');
-            }
-
-            $this->_buildWhereClause($rawQuery, $value, 'RAW', $whereType);
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e; // Rethrow the exception after logging it
-        }
-    }
-
-    /**
-     * Add an AND where clause, grouped closure, or associative array of clauses.
-     *
-     * @param mixed $columnName
-     * @param mixed $operator
-     * @param mixed $value
-     * @return $this
-     */
-    public function where($columnName, $operator = null, $value = null)
-    {
-        try {
-
-            if (!is_callable($columnName) && !is_string($columnName) && !is_array($columnName)) {
-                throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
-            }
-
-            if (is_callable($columnName)) {
-                $db = $this->createSubQueryBuilder();
-                $db->table = $this->table; // set current table
-                $columnName($db); // Pass the current object to the closure
-
-                if (!empty($db->where) && is_string($db->where)) {
-                    // Check if variable contains a full SQL statement
-                    $this->_forbidRawQuery($db->where, 'Full/Sub SQL statements are not allowed in where(). Please use query() function.');
-                    $this->whereRaw($db->where, $db->_binds, 'AND');
-                } else {
-                    throw new \InvalidArgumentException('Callable must return a valid SQL clause string.');
-                }
-
-                unset($db);
-                return $this;
-            }
-
-            // If it's an array, we'll assume it's a key-value pair of conditions
-            if (is_array($columnName)) {
-                foreach ($columnName as $key => $val) {
-                    $this->where($key, $val);
-                }
-                return $this;
-            }
-
-            // If only two parameters are given, we'll assume it's column and value
-            if ($value === null && $operator !== 'IS NULL' && $operator !== 'IS NOT NULL') {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateOperator($operator, ['IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in query builder. Please use query() function.');
-            if (!is_array($value)) {
-                $this->_forbidRawQuery($value, 'Full/Sub SQL statements are not allowed in query builder. Please use query() function.');
-            }
-
-            $this->_buildWhereClause($this->_qualifyColumn($columnName), $value, $operator, 'AND');
-
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e;
-        }
-    }
-
-    /**
-     * Normalize a column reference into a safely quoted identifier.
-     *
-     * @param string $column
-     * @return string
-     */
-    protected function _qualifyColumn(string $column): string
-    {
-        $column = trim($column);
-        if ($column === '*' || $column === '') {
-            return $column;
-        }
-        if (strpos($column, '`') !== false) {
-            return $column;
-        }
-        if (strpos($column, '.') !== false) {
-            $parts = explode('.', $column, 2);
-            return '`' . str_replace('`', '``', $parts[0]) . '`.`' . str_replace('`', '``', $parts[1]) . '`';
-        }
-        if (!empty($this->table)) {
-            return '`' . str_replace('`', '``', $this->table) . '`.`' . str_replace('`', '``', $column) . '`';
-        }
-        return '`' . str_replace('`', '``', $column) . '`';
-    }
-
-    /**
-     * Add an OR where clause, grouped closure, or associative array of clauses.
-     *
-     * @param mixed $columnName
-     * @param mixed $operator
-     * @param mixed $value
-     * @return $this
-     */
-    public function orWhere($columnName, $operator = null, $value = null)
-    {
-        try {
-
-            if (!is_callable($columnName) && !is_string($columnName) && !is_array($columnName)) {
-                throw new \InvalidArgumentException('Invalid column name. Must be a string or an associative array.');
-            }
-
-            if (is_callable($columnName)) {
-                $db = $this->createSubQueryBuilder();
-                $db->table = $this->table; // set current table
-                $columnName($db); // Pass the current object to the closure
-
-                if (!empty($db->where) && is_string($db->where)) {
-                    // Check if variable contains a full SQL statement
-                    $this->_forbidRawQuery($db->where, 'Full/Sub SQL statements are not allowed in orWhere(). Please use query() function.');
-
-                    $this->whereRaw($db->where, $db->_binds, 'OR');
-                } else {
-                    throw new \InvalidArgumentException('Callable must return a valid SQL clause string.');
-                }
-
-                unset($db);
-                return $this;
-            }
-
-            // If it's an array, we'll assume it's a key-value pair of conditions
-            if (is_array($columnName)) {
-                foreach ($columnName as $key => $val) {
-                    $this->orWhere($key, $val);
-                }
-                return $this;
-            }
-
-            // If only two parameters are given, we'll assume it's column and value
-            if ($value === null && $operator !== 'IS NULL' && $operator !== 'IS NOT NULL') {
-                $value = $operator;
-                $operator = '=';
-            }
-
-            $this->validateOperator($operator, ['IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']);
-
-            // Check if variable contains a full SQL statement
-            $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in orWhere(). Please use query() function.');
-            if (!is_array($value)) {
-                $this->_forbidRawQuery($value, 'Full/Sub SQL statements are not allowed in orWhere(). Please use query() function.');
-            }
-
-            if (is_array($columnName)) {
-                foreach ($columnName as $column => $val) {
-                    if (!is_string($column)) {
-                        throw new \InvalidArgumentException('Invalid column name in array. Must be a string.');
-                    }
-                    $this->_buildWhereClause($this->_qualifyColumn($column), $val, $operator, 'OR');
-                }
-            } else {
-                $this->_buildWhereClause($this->_qualifyColumn($columnName), $value, $operator, 'OR');
-            }
-
-            return $this;
-        } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e;
-        }
-    }
-
-    /**
-     * Add a where clause comparing two columns
-     *
-     * @param string $column1 First column
-     * @param string $operator Comparison operator
-     * @param string|null $column2 Second column (if null, operator becomes '=' and column2 becomes operator)
-     * @return $this
-     */
-    public function whereColumn($column1, $operator = null, $column2 = null)
-    {
-        // Handle two-parameter usage: whereColumn('col1', 'col2')
-        if ($column2 === null) {
-            $column2 = $operator;
-            $operator = '=';
-        }
-
-        $this->validateColumn($column1);
-        $this->validateColumn($column2);
-        $this->validateOperator($operator);
-        $this->_forbidRawQuery($column1, 'Full/Sub SQL statements are not allowed in whereColumn().');
-        $this->_forbidRawQuery($column2, 'Full/Sub SQL statements are not allowed in whereColumn().');
-
-        // Strip any backticks and re-wrap to prevent injection
-        $col1 = '`' . str_replace('`', '``', $column1) . '`';
-        $col2 = '`' . str_replace('`', '``', $column2) . '`';
-
-        return $this->whereRaw("$col1 $operator $col2", [], 'AND');
-    }
-
-    /**
-     * Add an or where clause comparing two columns
-     *
-     * @param string $column1 First column
-     * @param string $operator Comparison operator
-     * @param string|null $column2 Second column
-     * @return $this
-     */
-    public function orWhereColumn($column1, $operator = null, $column2 = null)
-    {
-        if ($column2 === null) {
-            $column2 = $operator;
-            $operator = '=';
-        }
-
-        $this->validateColumn($column1);
-        $this->validateColumn($column2);
-        $this->validateOperator($operator);
-        $this->_forbidRawQuery($column1, 'Full/Sub SQL statements are not allowed in orWhereColumn().');
-        $this->_forbidRawQuery($column2, 'Full/Sub SQL statements are not allowed in orWhereColumn().');
-
-        $col1 = '`' . str_replace('`', '``', $column1) . '`';
-        $col2 = '`' . str_replace('`', '``', $column2) . '`';
-
-        return $this->whereRaw("$col1 $operator $col2", [], 'OR');
-    }
-
-    /**
-     * Add an IN condition to the query.
-     *
-     * @param string $column
-     * @param array $value
-     * @return $this
-     */
-    public function whereIn($column, $value = [])
-    {
-        if (!is_array($value)) {
-            throw new \InvalidArgumentException("Value for 'IN' operator must be an array");
-        }
-        return $this->where($column, 'IN', $value);
-    }
-
-    /**
-     * Add an OR IN condition to the query.
-     *
-     * @param string $column
-     * @param array $value
-     * @return $this
-     */
-    public function orWhereIn($column, $value = [])
-    {
-        if (!is_array($value)) {
-            throw new \InvalidArgumentException("Value for 'IN' operator must be an array");
-        }
-        return $this->orWhere($column, 'IN', $value);
-    }
-
-    /**
-     * Add a NOT IN condition to the query.
-     *
-     * @param string $column
-     * @param array $value
-     * @return $this
-     */
-    public function whereNotIn($column, $value = [])
-    {
-        if (!is_array($value)) {
-            throw new \InvalidArgumentException("Value for 'NOT IN' operator must be an array");
-        }
-        return $this->where($column, 'NOT IN', $value);
-    }
-
-    /**
-     * Add an OR NOT IN condition to the query.
-     *
-     * @param string $column
-     * @param array $value
-     * @return $this
-     */
-    public function orWhereNotIn($column, $value = [])
-    {
-        if (!is_array($value)) {
-            throw new \InvalidArgumentException("Value for 'NOT IN' operator must be an array");
-        }
-        return $this->orWhere($column, 'NOT IN', $value);
-    }
-
-    /**
-     * Add a BETWEEN condition after validating the range bounds.
-     *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
-     * @return $this
-     */
-    public function whereBetween($columnName, $start, $end)
-    {
-        // Validate and format start and end values
-        $formattedValues = [];
-        foreach ([$start, $end] as $value) {
-            if (
-                is_int($value) 
-                || is_float($value) 
-                || preg_match('/^\d{1,4}-\d{2}-\d{2}$/', $value) 
-                || preg_match('/^\d{2}:\d{2}:\d{2}$/', $value)
-            ) {
-                $formattedValues[] = trim($value);
-            } else {
-                throw new \InvalidArgumentException('Invalid start or end value for BETWEEN. Must be numeric, date (YYYY-MM-DD), or time (HH:MM:SS).');
-            }
-        }
-
-        // Ensure start is less than or equal to end for valid range
-        if (!($formattedValues[0] <= $formattedValues[1])) {
-            throw new \InvalidArgumentException('Start value must be less than or equal to end value for BETWEEN.');
-        }
-
-        return $this->where($columnName, 'BETWEEN', $formattedValues);
-    }
-
-    /**
-     * Add an OR BETWEEN condition after validating the range bounds.
-     *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
-     * @return $this
-     */
-    public function orWhereBetween($columnName, $start, $end)
-    {
-        // Validate and format start and end values
-        $formattedValues = [];
-        foreach ([$start, $end] as $value) {
-            if (
-                is_int($value) 
-                || is_float($value) 
-                || preg_match('/^\d{1,4}-\d{2}-\d{2}$/', $value) 
-                || preg_match('/^\d{2}:\d{2}:\d{2}$/', $value)
-            ) {
-                $formattedValues[] = trim($value);
-            } else {
-                throw new \InvalidArgumentException('Invalid start or end value for BETWEEN. Must be numeric, date (YYYY-MM-DD), or time (HH:MM:SS).');
-            }
-        }
-
-        // Ensure start is less than or equal to end for valid range
-        if (!($formattedValues[0] <= $formattedValues[1])) {
-            throw new \InvalidArgumentException('Start value must be less than or equal to end value for BETWEEN.');
-        }
-
-        return $this->orWhere($columnName, 'BETWEEN', $formattedValues);
-    }
-
-    /**
-     * Add a NOT BETWEEN condition after validating the range bounds.
-     *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
-     * @return $this
-     */
-    public function whereNotBetween($columnName, $start, $end)
-    {
-        // Validate and format start and end values
-        $formattedValues = [];
-        foreach ([$start, $end] as $value) {
-            if (
-                is_int($value) 
-                || is_float($value) 
-                || preg_match('/^\d{1,4}-\d{2}-\d{2}$/', $value) 
-                || preg_match('/^\d{2}:\d{2}:\d{2}$/', $value)
-            ) {
-                $formattedValues[] = trim($value);
-            } else {
-                throw new \InvalidArgumentException('Invalid start or end value for NOT BETWEEN. Must be numeric, date (YYYY-MM-DD), or time (HH:MM:SS).');
-            }
-        }
-
-        // Ensure start is less than or equal to end for valid range
-        if (!($formattedValues[0] <= $formattedValues[1])) {
-            throw new \InvalidArgumentException('Start value must be less than or equal to end value for NOT BETWEEN.');
-        }
-
-        return $this->where($columnName, 'NOT BETWEEN', $formattedValues);
-    }
-
-    /**
-     * Add an OR NOT BETWEEN condition after validating the range bounds.
-     *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
-     * @return $this
-     */
-    public function orWhereNotBetween($columnName, $start, $end)
-    {
-        // Validate and format start and end values
-        $formattedValues = [];
-        foreach ([$start, $end] as $value) {
-            if (
-                is_int($value) 
-                || is_float($value) 
-                || preg_match('/^\d{1,4}-\d{2}-\d{2}$/', $value) 
-                || preg_match('/^\d{2}:\d{2}:\d{2}$/', $value)
-            ) {
-                $formattedValues[] = trim($value);
-            } else {
-                throw new \InvalidArgumentException('Invalid start or end value for NOT BETWEEN. Must be numeric, date (YYYY-MM-DD), or time (HH:MM:SS).');
-            }
-        }
-
-        // Ensure start is less than or equal to end for valid range
-        if (!($formattedValues[0] <= $formattedValues[1])) {
-            throw new \InvalidArgumentException('Start value must be less than or equal to end value for NOT BETWEEN.');
-        }
-
-        return $this->orWhere($columnName, 'NOT BETWEEN', $formattedValues);
-    }
-
-    /**
-     * Add an IS NULL condition to the query.
-     *
-     * @param string $column
-     * @return $this
-     */
-    public function whereNull($column)
-    {
-        return $this->where($column, 'IS NULL', null);
-    }
-
-    /**
-     * Add an OR IS NULL condition to the query.
-     *
-     * @param string $column
-     * @return $this
-     */
-    public function orWhereNull($column)
-    {
-        return $this->orWhere($column, 'IS NULL', null);
-    }
-
-    /**
-     * Add an IS NOT NULL condition to the query.
-     *
-     * @param string $column
-     * @return $this
-     */
-    public function whereNotNull($column)
-    {
-        return $this->where($column, 'IS NOT NULL', null);
-    }
-
-    /**
-     * Add an OR IS NOT NULL condition to the query.
-     *
-     * @param string $column
-     * @return $this
-     */
-    public function orWhereNotNull($column)
-    {
-        return $this->orWhere($column, 'IS NOT NULL', null);
-    }
-
-    /**
-     * Add a "where not" clause to the query (negated condition).
-     * Laravel equivalent: whereNot('column', value) or whereNot('column', '>', value)
-     *
-     * @param string|\Closure $column Column name or closure for grouped conditions
-     * @param mixed $operator Operator or value
-     * @param mixed $value Value (if operator provided)
-     * @return $this
-     */
-    /**
-     * Add a negated where clause or negated grouped closure.
-     *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
-     * @return $this
-     */
-    public function whereNot($column, $operator = null, $value = null)
-    {
-        if ($column instanceof \Closure) {
-            // Wrap closure conditions in NOT (...)
-            $db = $this->createSubQueryBuilder();
-            $db->table = $this->table;
-            $column($db);
-
-            if (!empty($db->where) && is_string($db->where)) {
-                $this->whereRaw("NOT ({$db->where})", $db->_binds, 'AND');
-            }
-            unset($db);
-            return $this;
-        }
-
-        // If only two parameters given, assume '!=' operator
-        if ($value === null && $operator !== null) {
-            $value = $operator;
-            $operator = '!=';
-        }
-
-        return $this->where($column, $operator ?? '!=', $value);
-    }
-
-    /**
-     * Add an "or where not" clause to the query.
-     *
-     * @param string|\Closure $column Column name or closure
-     * @param mixed $operator Operator or value
-     * @param mixed $value Value
-     * @return $this
-     */
-    public function orWhereNot($column, $operator = null, $value = null)
-    {
-        if ($column instanceof \Closure) {
-            $db = $this->createSubQueryBuilder();
-            $db->table = $this->table;
-            $column($db);
-
-            if (!empty($db->where) && is_string($db->where)) {
-                $this->whereRaw("NOT ({$db->where})", $db->_binds, 'OR');
-            }
-            unset($db);
-            return $this;
-        }
-
-        if ($value === null && $operator !== null) {
-            $value = $operator;
-            $operator = '!=';
-        }
-
-        return $this->orWhere($column, $operator ?? '!=', $value);
-    }
-
-    /**
-     * Add a "where like" clause to the query.
-     * Convenience wrapper around where($column, 'LIKE', $value)
-     *
-     * @param string $column Column name
-     * @param string $value LIKE pattern (e.g., '%search%')
-     * @return $this
-     */
-    public function whereLike($column, $value)
-    {
-        return $this->where($column, 'LIKE', $value);
-    }
-
-    /**
-     * Add an "or where like" clause to the query.
-     *
-     * @param string $column Column name
-     * @param string $value LIKE pattern
-     * @return $this
-     */
-    public function orWhereLike($column, $value)
-    {
-        return $this->orWhere($column, 'LIKE', $value);
-    }
-
-    /**
-     * Add a "where not like" clause to the query.
-     *
-     * @param string $column Column name
-     * @param string $value LIKE pattern
-     * @return $this
-     */
-    public function whereNotLike($column, $value)
-    {
-        return $this->where($column, 'NOT LIKE', $value);
-    }
-
-    /**
-     * Add an "or where not like" clause to the query.
-     *
-     * @param string $column Column name
-     * @param string $value LIKE pattern
-     * @return $this
-     */
-    public function orWhereNotLike($column, $value)
-    {
-        return $this->orWhere($column, 'NOT LIKE', $value);
-    }
-
-    /**
-     * Add a WHERE clause matching any of the given columns against a value.
-     * Laravel equivalent: whereAny(['name', 'email'], 'LIKE', '%search%')
-     * Generates: (name LIKE ? OR email LIKE ?)
-     *
-     * @param array $columns Array of column names
-     * @param string $operator Operator
-     * @param mixed $value Value to compare
-     * @return $this
-     */
-    /**
-     * Add a grouped OR predicate across multiple columns.
-     *
-     * @param array $columns
-     * @param string $operator
-     * @param mixed $value
-     * @return $this
-     */
-    public function whereAny(array $columns, $operator, $value)
-    {
-        if (empty($columns)) {
-            throw new \InvalidArgumentException('whereAny requires at least one column.');
-        }
-
-        $this->validateOperator($operator);
-
-        return $this->where(function ($query) use ($columns, $operator, $value) {
-            foreach ($columns as $i => $column) {
-                if ($i === 0) {
-                    $query->where($column, $operator, $value);
-                } else {
-                    $query->orWhere($column, $operator, $value);
-                }
-            }
-        });
-    }
-
-    /**
-     * Add a WHERE clause matching all of the given columns against a value.
-     * Laravel equivalent: whereAll(['name', 'bio'], 'LIKE', '%search%')
-     * Generates: (name LIKE ? AND bio LIKE ?)
-     *
-     * @param array $columns Array of column names
-     * @param string $operator Operator
-     * @param mixed $value Value to compare
-     * @return $this
-     */
-    /**
-     * Add a grouped AND predicate across multiple columns.
-     *
-     * @param array $columns
-     * @param string $operator
-     * @param mixed $value
-     * @return $this
-     */
-    public function whereAll(array $columns, $operator, $value)
-    {
-        if (empty($columns)) {
-            throw new \InvalidArgumentException('whereAll requires at least one column.');
-        }
-
-        $this->validateOperator($operator);
-
-        return $this->where(function ($query) use ($columns, $operator, $value) {
-            foreach ($columns as $column) {
-                $query->where($column, $operator, $value);
-            }
-        });
-    }
-
-    /**
-     * Add a WHERE clause matching none of the given columns against a value.
-     * Laravel equivalent: whereNone(['name', 'email'], 'LIKE', '%spam%')
-     * Generates: NOT (name LIKE ? OR email LIKE ?)
-     *
-     * @param array $columns Array of column names
-     * @param string $operator Operator
-     * @param mixed $value Value to compare
-     * @return $this
-     */
-    /**
-     * Add a grouped predicate asserting none of the columns match.
-     *
-     * @param array $columns
-     * @param string $operator
-     * @param mixed $value
-     * @return $this
-     */
-    public function whereNone(array $columns, $operator, $value)
-    {
-        if (empty($columns)) {
-            throw new \InvalidArgumentException('whereNone requires at least one column.');
-        }
-
-        $this->validateOperator($operator);
-
-        return $this->whereNot(function ($query) use ($columns, $operator, $value) {
-            foreach ($columns as $i => $column) {
-                if ($i === 0) {
-                    $query->where($column, $operator, $value);
-                } else {
-                    $query->orWhere($column, $operator, $value);
-                }
-            }
-        });
-    }
-
-    /**
-     * Add a "where between columns" clause comparing a value to two column values.
-     * Generates: column BETWEEN column_start AND column_end
-     *
-     * @param string $column Column to check
-     * @param array $columns Array of two column names [start_column, end_column]
-     * @return $this
-     */
-    public function whereBetweenColumns($column, array $columns)
-    {
-        if (count($columns) !== 2) {
-            throw new \InvalidArgumentException('whereBetweenColumns requires exactly two column names.');
-        }
-
-        $this->validateColumn($column);
-        $this->validateColumn($columns[0]);
-        $this->validateColumn($columns[1]);
-
-        $col = str_replace('`', '``', $column);
-        $col1 = str_replace('`', '``', $columns[0]);
-        $col2 = str_replace('`', '``', $columns[1]);
-
-        return $this->whereRaw("`$col` BETWEEN `$col1` AND `$col2`");
-    }
-
-    /**
-     * Add a FULLTEXT search WHERE clause.
-     * Generates: MATCH(columns) AGAINST(? IN NATURAL LANGUAGE MODE)
-     *
-     * @param string|array $columns Column(s) to search
-     * @param string $value Search value
-     * @param array $options Options: ['mode' => 'boolean'|'natural'|'expansion']
-     * @return $this
-     */
-    /**
-     * Add a FULLTEXT MATCH ... AGAINST predicate.
-     *
-     * @param array|string $columns
-     * @param string $value
-     * @param array $options
-     * @return $this
-     */
-    public function whereFullText($columns, $value, array $options = [])
-    {
-        $columns = is_array($columns) ? $columns : [$columns];
-
-        foreach ($columns as $column) {
-            $this->validateColumn($column);
-        }
-
-        $columnList = implode(', ', array_map(function ($col) {
-            return '`' . str_replace('`', '``', $col) . '`';
-        }, $columns));
-
-        $mode = strtolower($options['mode'] ?? 'natural');
-        switch ($mode) {
-            case 'boolean':
-                $modeStr = 'IN BOOLEAN MODE';
-                break;
-            case 'expansion':
-                $modeStr = 'WITH QUERY EXPANSION';
-                break;
-            default:
-                $modeStr = 'IN NATURAL LANGUAGE MODE';
-                break;
-        }
-
-        return $this->whereRaw("MATCH($columnList) AGAINST(? $modeStr)", [$value]);
-    }
-
-    /**
-     * Add a whereIn clause with raw integer values (faster than regular whereIn for large lists).
-     * Validates that all values are integers. No binding needed - safe for integers.
-     *
-     * @param string $column Column name
-     * @param array $values Array of integer values
-     * @return $this
-     * @throws \InvalidArgumentException If any value is not an integer
-     */
-    /**
-     * Add an integer-only IN predicate without PDO placeholders.
-     *
-     * @param string $column
-     * @param array $values
-     * @return $this
-     */
-    public function whereIntegerInRaw($column, array $values)
-    {
-        if (empty($values)) {
-            // If empty, add an always-false condition
-            return $this->whereRaw('0 = 1', [], 'AND');
-        }
-
-        $this->validateColumn($column);
-
-        // Filter and validate all values as integers
-        $safeValues = array_map(function ($v) {
-            if (is_int($v)) {
-                return $v;
-            }
-
-            if (is_string($v) && preg_match('/^-?\d+$/', $v) === 1) {
-                return (int) $v;
-            }
-
-            throw new \InvalidArgumentException('All values in whereIntegerInRaw must be integers');
-        }, $values);
-
-        $safeValues = array_unique($safeValues);
-        sort($safeValues);
-
-        $list = implode(',', $safeValues);
-        return $this->whereRaw("`{$this->table}`.`$column` IN ($list)", [], 'AND');
-    }
-
-    /**
-     * Add a whereNotIn clause with raw integer values.
-     *
-     * @param string $column Column name
-     * @param array $values Array of integer values
-     * @return $this
-     */
-    public function whereIntegerNotInRaw($column, array $values)
-    {
-        if (empty($values)) {
-            return $this; // No exclusion needed
-        }
-
-        $this->validateColumn($column);
-
-        $safeValues = array_map(function ($v) {
-            if (is_int($v)) {
-                return $v;
-            }
-
-            if (is_string($v) && preg_match('/^-?\d+$/', $v) === 1) {
-                return (int) $v;
-            }
-
-            throw new \InvalidArgumentException('All values in whereIntegerNotInRaw must be integers');
-        }, $values);
-
-        $safeValues = array_unique($safeValues);
-        sort($safeValues);
-
-        $list = implode(',', $safeValues);
-        return $this->whereRaw("`{$this->table}`.`$column` NOT IN ($list)", [], 'AND');
-    }
-
-    /**
-     * Build a driver-aware temporal where clause using the registered query grammar.
-     */
-    protected function applyTemporalWhereClause(string $type, $column, $operator = null, $value = null, string $whereType = 'AND')
-    {
-        $this->validateColumn($column);
-        $this->_forbidRawQuery($column, 'Full/Sub SQL statements are not allowed in temporal where clauses. Please use query() function.');
-
-        if ($value === null) {
-            $value = $operator;
-            $operator = '=';
-        }
-
-        $operator = is_string($operator) ? $operator : '=';
-        $this->validateOperator($operator);
-
-        $normalizedType = strtolower(trim($type));
-        $resolvedValue = match ($normalizedType) {
-            'date' => $this->validateDate($value),
-            'day' => (function ($candidate) {
-                $this->validateDay($candidate);
-                return (int) $candidate;
-            })($value),
-            'month' => (function ($candidate) {
-                $this->validateMonth($candidate);
-                return (int) $candidate;
-            })($value),
-            'year' => (function ($candidate) {
-                $this->validateYear($candidate);
-                return (int) $candidate;
-            })($value),
-            'time' => $this->validateTime($value),
-            default => throw new \InvalidArgumentException('Unsupported temporal where type: ' . $type),
-        };
-
-        $expression = DriverRegistry::queryGrammar((string) ($this->driver ?: 'mysql'))
-            ->compileTemporalExpression($normalizedType, (string) $column);
-
-        $this->_buildWhereClause($expression, $resolvedValue, $operator, $whereType);
-
-        return $this;
-    }
 
     /**
      * Add a driver-specific date predicate.
@@ -1672,716 +801,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     abstract public function whereJsonContains($columnName, $jsonPath, $value);
 
     /**
-     * Conditionally mutate the builder when the predicate is truthy.
-     *
-     * @param mixed $condition
-     * @param callable $callback
-     * @return $this
-     */
-    public function when($condition, $callback)
-    {
-        // If the condition is a closure, evaluate it
-        if (is_callable($condition) && !is_string($condition)) {
-            $condition = $condition($this);
-        }
-
-        // If the condition is truthy, execute the callback
-        if ($condition) {
-            // The callback receives the current builder instance
-            $callback($this);
-        }
-
-        return $this;
-    }
-
-    /**
-     * Execute callback unless condition is true
-     * Opposite of when()
-     *
-     * @param mixed $condition Condition to check
-     * @param callable $callback Callback to execute if condition is false
-     * @return $this
-     */
-    public function unless($condition, $callback)
-    {
-        if (is_callable($condition) && !is_string($condition)) {
-            $condition = $condition($this);
-        }
-
-        if (!$condition) {
-            $callback($this);
-        }
-
-        return $this;
-    }
-
-    /**
-     * Execute callback and return the builder for debugging
-     *
-     * @param callable $callback Callback receives the builder instance
-     * @return $this
-     */
-    public function tap($callback)
-    {
-        $callback($this);
-        return $this;
-    }
-
-    /**
-     * Add a generic join clause to the query.
-     *
-     * @param string $table
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param string $joinType
-     * @return $this
-     */
-    public function join($table, $foreignKey, $localKey, $joinType = 'LEFT')
-    {
-        if (empty($this->table)) {
-            throw new \Exception('No table selected', 400);
-        }
-
-        $this->validateTableName($table, 'Join table');
-        $this->validateColumn($foreignKey, 'Foreign Key');
-        $this->validateColumn($localKey, 'Local Key');
-
-        $validJoinTypes = ['INNER', 'LEFT', 'RIGHT', 'OUTER', 'LEFT OUTER', 'RIGHT OUTER'];
-        $joinType = strtoupper(trim($joinType));
-        if (!in_array($joinType, $validJoinTypes)) {
-            throw new \InvalidArgumentException('Invalid join type. Valid types are: ' . implode(', ', $validJoinTypes));
-        }
-
-        // Escape table name to prevent injection
-        $safeTable = '`' . str_replace('`', '``', $table) . '`';
-        $safeLocalKey = $this->_escapeJoinColumn($localKey);
-
-        // Build the join clause
-        $this->joins .= " $joinType JOIN $safeTable ON $safeTable.`$foreignKey` = $safeLocalKey";
-
-        return $this;
-    }
-
-    /**
-     * Add a LEFT JOIN clause to the query.
-     *
-     * @param string $table
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $conditions
-     * @return $this
-     */
-    public function leftJoin($table, $foreignKey, $localKey, $conditions = null)
-    {
-        if (empty($this->table)) {
-            throw new \Exception('No table selected', 400);
-        }
-
-        $this->validateTableName($table, 'Join table');
-        $this->validateColumn($foreignKey, 'Foreign Key');
-        $this->validateColumn($localKey, 'Local Key');
-
-        $safeTable = '`' . str_replace('`', '``', $table) . '`';
-        $safeLocalKey = $this->_escapeJoinColumn($localKey);
-
-        // Build the base join clause
-        $joinClause = " LEFT JOIN $safeTable ON $safeTable.`$foreignKey` = $safeLocalKey";
-
-        // Handle additional conditions
-        $joinClause .= $this->_buildJoinConditions($conditions, $table);
-
-        $this->joins .= $joinClause;
-        return $this;
-    }
-
-    /**
-     * Add a RIGHT JOIN clause to the query.
-     *
-     * @param string $table
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $conditions
-     * @return $this
-     */
-    public function rightJoin($table, $foreignKey, $localKey, $conditions = null)
-    {
-        if (empty($this->table)) {
-            throw new \Exception('No table selected', 400);
-        }
-
-        $this->validateTableName($table, 'Join table');
-        $this->validateColumn($foreignKey, 'Foreign Key');
-        $this->validateColumn($localKey, 'Local Key');
-
-        $safeTable = '`' . str_replace('`', '``', $table) . '`';
-        $safeLocalKey = $this->_escapeJoinColumn($localKey);
-
-        // Build the base join clause
-        $joinClause = " RIGHT JOIN $safeTable ON $safeTable.`$foreignKey` = $safeLocalKey";
-
-        // Handle additional conditions
-        $joinClause .= $this->_buildJoinConditions($conditions, $table);
-
-        $this->joins .= $joinClause;
-        return $this;
-    }
-
-    /**
-     * Add an INNER JOIN clause to the query.
-     *
-     * @param string $table
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $conditions
-     * @return $this
-     */
-    public function innerJoin($table, $foreignKey, $localKey, $conditions = null)
-    {
-        if (empty($this->table)) {
-            throw new \Exception('No table selected', 400);
-        }
-
-        $this->validateTableName($table, 'Join table');
-        $this->validateColumn($foreignKey, 'Foreign Key');
-        $this->validateColumn($localKey, 'Local Key');
-
-        $safeTable = '`' . str_replace('`', '``', $table) . '`';
-        $safeLocalKey = $this->_escapeJoinColumn($localKey);
-
-        // Build the base join clause
-        $joinClause = " INNER JOIN $safeTable ON $safeTable.`$foreignKey` = $safeLocalKey";
-
-        // Handle additional conditions
-        $joinClause .= $this->_buildJoinConditions($conditions, $table);
-
-        $this->joins .= $joinClause;
-        return $this;
-    }
-
-    /**
-     * Add a FULL OUTER JOIN clause to the query.
-     *
-     * @param string $table
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $conditions
-     * @return $this
-     */
-    public function outerJoin($table, $foreignKey, $localKey, $conditions = null)
-    {
-        if (empty($this->table)) {
-            throw new \Exception('No table selected', 400);
-        }
-
-        $this->validateTableName($table, 'Join table');
-        $this->validateColumn($foreignKey, 'Foreign Key');
-        $this->validateColumn($localKey, 'Local Key');
-
-        $safeTable = '`' . str_replace('`', '``', $table) . '`';
-        $safeLocalKey = $this->_escapeJoinColumn($localKey);
-
-        // Build the base join clause
-        $joinClause = " FULL OUTER JOIN $safeTable ON $safeTable.`$foreignKey` = $safeLocalKey";
-
-        // Handle additional conditions
-        $joinClause .= $this->_buildJoinConditions($conditions, $table);
-
-        $this->joins .= $joinClause;
-        return $this;
-    }
-
-    /**
-     * Escape a column reference used in JOIN ON clauses.
-     * Accepts plain column names, dot-notation (table.column), or already-backticked identifiers.
-     *
-     * @param string $column
-     * @return string Backtick-quoted identifier
-     */
-    protected function _escapeJoinColumn($column)
-    {
-        $column = trim($column);
-
-        // Already backticked — return as-is
-        if (strpos($column, '`') !== false) {
-            return $column;
-        }
-
-        // Dot notation: table.column
-        if (strpos($column, '.') !== false) {
-            $parts = explode('.', $column, 2);
-            return '`' . str_replace('`', '``', $parts[0]) . '`.`' . str_replace('`', '``', $parts[1]) . '`';
-        }
-
-        // Qualify with current table
-        if (!empty($this->table)) {
-            return '`' . str_replace('`', '``', $this->table) . '`.`' . str_replace('`', '``', $column) . '`';
-        }
-
-        return '`' . str_replace('`', '``', $column) . '`';
-    }
-
-    /**
-     * Build additional JOIN conditions from a Closure.
-     * Raw string conditions are rejected to prevent SQL injection.
-     *
-     * @param mixed $conditions Closure for additional ON conditions, or null.
-     * @param string $table The joined table name.
-     * @return string Additional ON clause fragment (may be empty)
-     */
-    protected function _buildJoinConditions($conditions, $table)
-    {
-        if ($conditions === null) {
-            return '';
-        }
-
-        if ($conditions instanceof \Closure) {
-            $db = $this->createSubQueryBuilder();
-            $db->table = $table;
-
-            $conditions($db);
-
-            if (!empty($db->where)) {
-                $clause = " AND " . ltrim($db->where, 'AND ');
-                if (!empty($db->_binds)) {
-                    $this->_binds = [...$this->_binds, ...$db->_binds];
-                }
-                unset($db);
-                return $clause;
-            }
-
-            unset($db);
-            return '';
-        }
-
-        throw new \InvalidArgumentException('Join conditions must be a Closure. Raw string conditions are not permitted for security reasons.');
-    }
-
-    /**
-     * Append one or more ORDER BY clauses to the query.
-     *
-     * @param array|string $columns
-     * @param string $direction
-     * @return $this
-     */
-    public function orderBy($columns, $direction = 'DESC')
-    {
-        // Check if direction is valid
-        if (!in_array(strtoupper($direction), ['ASC', 'DESC'])) {
-            throw new \InvalidArgumentException('Order direction must be "ASC" or "DESC".');
-        }
-
-        if (is_array($columns)) {
-            foreach ($columns as $column => $dir) {
-                $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir);
-                $safeCol = $this->_sanitizeColumnName($column);
-                $this->orderBy[] = "$safeCol $direction"; // Push to the order by array
-            }
-        } else {
-            $safeCol = $this->_sanitizeColumnName($columns);
-            $this->orderBy[] = "$safeCol $direction"; // Push a single order by clause
-        }
-
-        return $this;
-    }
-
-    /**
-     * Order by column in descending order (created_at by default)
-     *
-     * @param string $column Column to order by
-     * @return $this
-     */
-    public function latest($column = 'created_at')
-    {
-        return $this->orderBy($column, 'DESC');
-    }
-
-    /**
-     * Order by column in ascending order (created_at by default)
-     *
-     * @param string $column Column to order by
-     * @return $this
-     */
-    public function oldest($column = 'created_at')
-    {
-        return $this->orderBy($column, 'ASC');
-    }
-
-    /**
-     * Clear existing order by and optionally set new order
-     *
-     * @param string|null $column Optional column to order by
-     * @param string $direction Order direction
-     * @return $this
-     */
-    public function reorder($column = null, $direction = 'DESC')
-    {
-        $this->orderBy = null;
-        
-        if ($column !== null) {
-            return $this->orderBy($column, $direction);
-        }
-        
-        return $this;
-    }
-
-    /**
-     * Order results randomly
-     *
-     * @return $this
-     */
-    public function inRandomOrder()
-    {
-        $this->orderBy[] = "RAND()";
-        return $this;
-    }
-
-    /**
-     * Append a validated raw ORDER BY fragment.
-     *
-     * @param string $string
-     * @param mixed $bindParams
-     * @return $this
-     */
-    public function orderByRaw($string, $bindParams = null)
-    {
-        // Check if string is empty
-        if (empty($string)) {
-            throw new \InvalidArgumentException('Order by cannot be null in `orderByRaw`.');
-        }
-
-        // Check for DESC or ASC
-        if (!preg_match('/\b(DESC|ASC)\b/i', $string)) {
-            throw new \InvalidArgumentException('Order by clause must contain either DESC or ASC in `orderByRaw`.');
-        }
-
-        // Check if orderByRaw contains a full SQL statement
-        $this->_forbidRawQuery($string, 'Full SQL statements are not allowed in `orderByRaw`.');
-
-        // Store the raw order by string
-        $this->orderBy[] = $string;
-
-        if (!empty($bindParams)) {
-            if (is_array($bindParams)) {
-                $this->_binds = [...$this->_binds, ...$bindParams];
-            } else {
-                $this->_binds[] = $bindParams;
-            }
-        }
-
-        return $this;
-    }
-
-    /**
-     * Define the GROUP BY clause for the query.
-     *
-     * @param array|string $columns
-     * @return $this
-     */
-    public function groupBy($columns)
-    {
-        if (is_string($columns)) {
-            $segments = array_filter(array_map('trim', explode(',', $columns)), static fn($column) => $column !== '');
-            if (empty($segments)) {
-                throw new \InvalidArgumentException('Invalid column name(s) for groupBy.');
-            }
-
-            $groupBy = [];
-            foreach ($segments as $column) {
-                $this->validateColumn($column);
-                $this->_forbidRawQuery($column, 'Full SQL statements are not allowed in groupBy().');
-                $groupBy[] = $this->_qualifyColumn($column);
-            }
-
-            $this->groupBy = implode(', ', $groupBy);
-        } else if (is_array($columns)) {
-
-            $groupBy = [];
-            foreach ($columns as $column) {
-                $this->validateColumn($column);
-                $this->_forbidRawQuery($column, 'Full SQL statements are not allowed in groupBy().');
-                $groupBy[] = $this->_qualifyColumn(trim($column));
-            }
-
-            $this->groupBy = implode(', ', $groupBy);
-        } else {
-            throw new \InvalidArgumentException('groupBy expects a string or an array of column names.');
-        }
-
-        return $this;
-    }
-
-    /**
-     * Append a parameterized HAVING condition.
-     *
-     * @param string $column
-     * @param mixed $value
-     * @param string $operator
-     * @return $this
-     */
-    public function having($column, $value, $operator = '=')
-    {
-        // Check if string is empty
-        if (empty($column)) {
-            throw new \InvalidArgumentException('Column cannot be null in `having`.');
-        }
-
-        $this->validateColumn($column);
-        $this->validateOperator($operator);
-        $this->_forbidRawQuery($column, 'Full SQL statements are not allowed in `having`.');
-
-        $safeColumn = $this->_sanitizeColumnName($column);
-
-        // Use parameterized binding with separate _havingBinds for correct ordering
-        // (WHERE binds must come before HAVING binds in the final query)
-        $this->having[] = "$safeColumn $operator ?";
-        $this->_havingBinds[] = $value;
-        return $this;
-    }
-
-    /**
-     * Append a validated raw HAVING fragment.
-     *
-     * @param string $conditions
-     * @return $this
-     */
-    public function havingRaw($conditions)
-    {
-        // Check if string is empty
-        if (empty($conditions)) {
-            throw new \InvalidArgumentException('Conditions cannot be null in `havingRaw`.');
-        }
-
-        $this->_forbidRawQuery($conditions, 'Full SQL statements are not allowed in `havingRaw`.');
-        $this->having[] = $conditions;
-        return $this;
-    }
-
-    /**
-     * Add a "having between" clause to the query.
-     * Laravel equivalent: havingBetween('column', [1, 100])
-     *
-     * @param string $column Column name
-     * @param array $values Array with exactly two values [min, max]
-     * @return $this
-     * @throws \InvalidArgumentException
-     */
-    /**
-     * Add a HAVING BETWEEN predicate with bound min and max values.
-     *
-     * @param string $column
-     * @param array $values
-     * @return $this
-     */
-    public function havingBetween($column, array $values)
-    {
-        if (empty($column)) {
-            throw new \InvalidArgumentException('Column cannot be null in `havingBetween`.');
-        }
-
-        if (count($values) !== 2) {
-            throw new \InvalidArgumentException('havingBetween requires an array with exactly two values.');
-        }
-
-        $this->validateColumn($column);
-        $this->_forbidRawQuery($column, 'Full SQL statements are not allowed in `havingBetween`.');
-
-        $safeColumn = $this->_sanitizeColumnName($column);
-
-        $this->having[] = "$safeColumn BETWEEN ? AND ?";
-        $this->_havingBinds[] = $values[0];
-        $this->_havingBinds[] = $values[1];
-        return $this;
-    }
-
-    /**
-     * Add a raw GROUP BY clause.
-     * Laravel equivalent: groupByRaw('price > 100')
-     *
-     * @param string $expression Raw GROUP BY expression
-     * @param array $bindings Optional bindings
-     * @return $this
-     */
-    public function groupByRaw($expression, array $bindings = [])
-    {
-        if (empty($expression)) {
-            throw new \InvalidArgumentException('Expression cannot be empty in groupByRaw().');
-        }
-
-        $this->_forbidRawQuery($expression, 'Full SQL statements are not allowed in groupByRaw().');
-
-        $this->groupBy = $expression;
-
-        if (!empty($bindings)) {
-            $this->_binds = [...$this->_binds, ...$bindings];
-        }
-
-        return $this;
-    }
-
-    /**
-     * Shorthand for orderBy($column, 'DESC').
-     * Laravel equivalent: orderByDesc('created_at')
-     *
-     * @param string $column Column name
-     * @return $this
-     */
-    public function orderByDesc($column)
-    {
-        return $this->orderBy($column, 'DESC');
-    }
-
-    /**
-     * Shorthand for orderBy($column, 'ASC').
-     * Laravel equivalent: orderByAsc('created_at')
-     *
-     * @param string $column Column name
-     * @return $this
-     */
-    public function orderByAsc($column)
-    {
-        return $this->orderBy($column, 'ASC');
-    }
-
-    /**
-     * Add a cross join to the query.
-     * Laravel equivalent: crossJoin('table')
-     *
-     * @param string $table Table to cross join
-     * @return $this
-     */
-    public function crossJoin($table)
-    {
-        $table = trim($table);
-        $this->validateTableName($table, 'Cross join table name');
-
-        $safeTable = str_replace('`', '``', $table);
-        $this->joins .= " CROSS JOIN `{$safeTable}`";
-        return $this;
-    }
-
-    /**
-     * Add a subquery select expression.
-     * Laravel equivalent: selectSub(function($query) { ... }, 'alias')
-     *
-     * @param \Closure|string $query Closure receiving a sub-query builder, or a raw SQL string
-     * @param string $alias Column alias for the subquery
-     * @return $this
-     */
-    public function selectSub($query, $alias)
-    {
-        if (empty($alias) || !preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $alias)) {
-            throw new \InvalidArgumentException('selectSub alias must be a valid column name.');
-        }
-
-        if ($query instanceof \Closure) {
-            $sub = $this->createSubQueryBuilder();
-            $sub->table = $this->table;
-            $query($sub);
-
-            if (empty($sub->_query)) {
-                $sub->_buildSelectQuery();
-            }
-
-            $subSQL = $sub->_query;
-
-            if (!empty($sub->_binds)) {
-                $this->_binds = [...$this->_binds, ...$sub->_binds];
-            }
-
-            unset($sub);
-        } elseif (is_string($query)) {
-            $subSQL = $query;
-        } else {
-            throw new \InvalidArgumentException('selectSub expects a Closure or SQL string.');
-        }
-
-        $safeAlias = '`' . str_replace('`', '``', $alias) . '`';
-        $subExpression = "($subSQL) AS $safeAlias";
-
-        if ($this->column === '*') {
-            $this->column = $subExpression;
-        } else {
-            $this->column .= ", $subExpression";
-        }
-
-        return $this;
-    }
-
-    /**
-     * Get the aggregate value for a column.
-     * Base method used by sum(), avg(), min(), max().
-     *
-     * @param string $function Aggregate function (SUM, AVG, MIN, MAX)
-     * @param string $column Column name
-     * @return mixed
-     */
-    public function aggregate($function, $column = '*')
-    {
-        $allowedFunctions = ['SUM', 'AVG', 'MIN', 'MAX', 'COUNT'];
-        $function = strtoupper($function);
-
-        if (!in_array($function, $allowedFunctions, true)) {
-            throw new \InvalidArgumentException("Invalid aggregate function: $function");
-        }
-
-        if ($column !== '*') {
-            $this->validateColumn($column);
-        }
-
-        $result = $this->selectRaw("$function($column) as aggregate_value")->fetch();
-        return $result['aggregate_value'] ?? null;
-    }
-
-    /**
-     * Get the sum of a column.
-     * Laravel equivalent: sum('price')
-     *
-     * @param string $column Column name
-     * @return mixed
-     */
-    public function sum($column)
-    {
-        return $this->aggregate('SUM', $column);
-    }
-
-    /**
-     * Get the average of a column.
-     * Laravel equivalent: avg('price')
-     *
-     * @param string $column Column name
-     * @return mixed
-     */
-    public function avg($column)
-    {
-        return $this->aggregate('AVG', $column);
-    }
-
-    /**
-     * Get the minimum value of a column.
-     * Laravel equivalent: min('price')
-     *
-     * @param string $column Column name
-     * @return mixed
-     */
-    public function min($column)
-    {
-        return $this->aggregate('MIN', $column);
-    }
-
-    /**
-     * Get the maximum value of a column.
-     * Laravel equivalent: max('price')
-     *
-     * @param string $column Column name
-     * @return mixed
-     */
-    public function max($column)
-    {
-        return $this->aggregate('MAX', $column);
-    }
-
-    /**
-     * Alias for insertOrUpdate() — matches Laravel's updateOrInsert() naming.
+     * Alias for insertOrUpdate() - matches Laravel's updateOrInsert() naming.
      *
      * @param array $conditions The conditions to check for existence
      * @param array $data Data to update or insert
@@ -2443,316 +863,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->skip(($page - 1) * $perPage)->take($perPage);
     }
 
-    /**
-     * Append a UNION or UNION ALL query to the current SELECT statement.
-     *
-     * @param self|\Closure $query
-     * @param bool $all
-     * @return $this
-     */
-    public function union($query, $all = false)
-    {
-        if ($query instanceof \Closure) {
-            $callback = $query;
-            $query = clone $this;
-            $query->reset();
-            $callback($query);
-        }
-
-        if (!($query instanceof self)) {
-            throw new \InvalidArgumentException('Union query must be an instance of BaseDatabase or a Closure that builds a query.');
-        }
-
-        // Build the query to get the SQL string
-        $query->_buildSelectQuery();
-        
-        $this->unions[] = [
-            'query' => $query->_query,
-            'bindings' => $query->_binds,
-            'all' => $all
-        ];
-
-        return $this;
-    }
-
-    /**
-     * Append a UNION ALL query to the current SELECT statement.
-     *
-     * @param self|\Closure $query
-     * @return $this
-     */
-    public function unionAll($query)
-    {
-        return $this->union($query, true);
-    }
-
-    /**
-     * Register a to-many eager-loaded relation.
-     *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param \Closure|null $callback
-     * @return $this
-     */
-    public function with($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
-    {
-        if (empty($alias) || empty($table) || empty($foreign_key) || empty($local_key)) {
-            throw new \InvalidArgumentException('Missing required parameters for with()');
-        }
-
-        if (!is_string($alias)) {
-            throw new \InvalidArgumentException('Alias must be a string');
-        }
-
-        $this->relations[$alias] = ['type' => 'get', 'details' => compact('table', 'foreign_key', 'local_key', 'callback')];
-        return $this;
-    }
-
-    /**
-     * Register a to-one eager-loaded relation.
-     *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param \Closure|null $callback
-     * @return $this
-     */
-    public function withOne($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
-    {
-        if (empty($alias) || empty($table) || empty($foreign_key) || empty($local_key)) {
-            throw new \InvalidArgumentException('Missing required parameters for withOne()');
-        }
-
-        if (!is_string($alias)) {
-            throw new \InvalidArgumentException('Alias must be a string');
-        }
-
-        $this->relations[$alias] = ['type' => 'fetch', 'details' => compact('table', 'foreign_key', 'local_key', 'callback')];
-        return $this;
-    }
-
-    /**
-     * Add a count subquery to the main query
-     */
-    public function withCount($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
-    {
-        return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'COUNT', null, $callback, ['count']);
-    }
-
-    /**
-     * Add a sum subquery to the main query
-     */
-    public function withSum($alias, $table, $foreign_key, $local_key, $sum_column, ?\Closure $callback = null)
-    {
-        return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'SUM', $sum_column, $callback, ['sum']);
-    }
-
-    /**
-     * Add an average subquery to the main query
-     */
-    public function withAvg($alias, $table, $foreign_key, $local_key, $avg_column, ?\Closure $callback = null)
-    {
-        return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'AVG', $avg_column, $callback, ['avg', 'average']);
-    }
-
-    /**
-     * Add a minimum value subquery to the main query
-     */
-    public function withMin($alias, $table, $foreign_key, $local_key, $min_column, ?\Closure $callback = null)
-    {
-        return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'MIN', $min_column, $callback, ['min', 'minimum']);
-    }
-
-    /**
-     * Add a maximum value subquery to the main query
-     */
-    public function withMax($alias, $table, $foreign_key, $local_key, $max_column, ?\Closure $callback = null)
-    {
-        return $this->withAggregate($alias, $table, $foreign_key, $local_key, 'MAX', $max_column, $callback, ['max', 'maximum']);
-    }
-
-    /**
-     * Add USE INDEX hint to query for better performance
-     * 
-     * @param string|array $indexes Index name(s) to use
-     * @return $this
-     */
-    public function useIndex($indexes)
-    {
-        $indexes = is_array($indexes) ? $indexes : [$indexes];
-        $this->indexHints['USE'] = $indexes;
-        return $this;
-    }
-
-    /**
-     * Add FORCE INDEX hint to query - stronger than USE INDEX
-     * 
-     * @param string|array $indexes Index name(s) to force
-     * @return $this
-     */
-    public function forceIndex($indexes)
-    {
-        $indexes = is_array($indexes) ? $indexes : [$indexes];
-        $this->indexHints['FORCE'] = $indexes;
-        return $this;
-    }
-
-    /**
-     * Add IGNORE INDEX hint to query
-     * 
-     * @param string|array $indexes Index name(s) to ignore
-     * @return $this
-     */
-    public function ignoreIndex($indexes)
-    {
-        $indexes = is_array($indexes) ? $indexes : [$indexes];
-        $this->indexHints['IGNORE'] = $indexes;
-        return $this;
-    }
-
-    /**
-     * Enable dry-run mode - build query without executing
-     * Returns array with 'query' and 'binds' instead of executing
-     * 
-     * @param bool $enable Enable/disable dry-run mode
-     * @return $this
-     */
-    public function dryRun($enable = true)
-    {
-        $this->dryRun = $enable;
-        return $this;
-    }
-
-    /**
-     * Sanitize a column name to prevent SQL injection.
-     *
-     * Allows: alphanumeric, underscores, dots (table.column), backtick-quoted identifiers,
-     * and common SQL expressions (e.g., COALESCE, COUNT, etc.).
-     *
-     * @param string $column The column name to sanitize.
-     * @return string The sanitized column name.
-     * @throws \InvalidArgumentException If column name contains invalid characters.
-     */
-    /**
-     * Validate a column or expression used in ORDER BY, HAVING, or similar clauses.
-     *
-     * @param string $column
-     * @return string
-     */
-    protected function _sanitizeColumnName(string $column): string
-    {
-        $col = trim($column);
-
-        // Allow expressions that are already backtick-quoted or contain SQL functions
-        if (preg_match('/^[`a-zA-Z0-9_.(), *]+$/', $col)) {
-            return $col;
-        }
-
-        throw new \InvalidArgumentException("Invalid column name: {$column}");
-    }
-
-    /**
-     * Builds a WHERE clause fragment based on provided conditions.
-     *
-     * This function is used internally to construct WHERE clause parts based on
-     * column name, operator, value(s), and WHERE type (AND or OR). It handles
-     * different operators like `=`, `IN`, `NOT IN`, `BETWEEN`, and `NOT BETWEEN`.
-     * It uses placeholders (`?`) for values and builds the appropriate clause structure.
-     * This function also merges the provided values into the internal `_binds` array
-     * for later binding to the prepared statement.
-     *
-     * @param string $columnName The name of the column to compare.
-     * @param mixed $value The value or an array of values for the comparison.
-     * @param string $operator (optional) The comparison operator (e.g., =, IN, BETWEEN). Defaults to =.
-     * @param string $whereType (optional) The type of WHERE clause (AND or OR). Defaults to AND.
-     * @throws \InvalidArgumentException If invalid operator or value format is provided.
-     */
-    /**
-     * Append a normalized WHERE fragment and merge any required bindings.
-     *
-     * @param string $columnName
-     * @param mixed $value
-     * @param string $operator
-     * @param string $whereType
-     * @return void
-     */
-    protected function _buildWhereClause($columnName, $value = null, $operator = '=', $whereType = 'AND')
-    {
-        if ($this->where === null || $this->where === '') {
-            $this->where = "";
-        } else {
-            $this->where .= " $whereType ";
-        }
-
-        $this->validateColumn($columnName);
-
-        $placeholder = '?'; // Use a single placeholder for all conditions
-
-        // if (
-        //     in_array($operator, ['=', '!=', '<>', 'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL'])
-        //     && !empty($this->table)
-        //     && strpos($columnName, '.') === false
-        // ) {
-        //     $columnName = "`{$this->table}`.`$columnName`";
-        // }
-
-        switch ($operator) {
-            case 'IN':
-            case 'NOT IN':
-                if (!is_array($value)) {
-                    throw new \InvalidArgumentException('Value for IN or NOT IN operator must be an array');
-                }
-                $this->where .= "$columnName $operator (" . implode(',', array_fill(0, count($value), $placeholder)) . ")";
-                break;
-            case 'BETWEEN':
-            case 'NOT BETWEEN':
-                if (!is_array($value) || count($value) !== 2) {
-                    throw new \InvalidArgumentException("Value for 'BETWEEN' or 'NOT BETWEEN' operator must be an array with two elements (start and end)");
-                }
-                $this->where .= "($columnName $operator $placeholder AND $placeholder)";
-                break;
-            case 'JSON':
-                $this->where .= "$columnName";
-                break;
-            case 'IS NULL':
-            case 'IS NOT NULL':
-                $this->where .= "$columnName $operator";
-                break;
-            case 'RAW':
-                $this->where .= "($columnName)";
-                break;
-            default:
-                if ($value === '' && ($operator == '=' || $operator == '!=')) {
-                    $this->where .= "$columnName $operator ''";
-                } else {
-                    $this->where .= "$columnName $operator $placeholder";
-                }
-                break;
-        }
-
-        if ($value !== null && !($value === '' && ($operator === '=' || $operator === '!='))) {
-            if (is_array($value)) {
-                // Use spread operator instead of array_merge for better performance
-                $this->_binds = [...$this->_binds, ...$value];
-            } else {
-                $this->_binds[] = $value;
-            }
-        }
-    }
-
-    /**
-     * Builds the final SELECT query string based on the configured options.
-     *
-     * This function combines all the query components like selected fields, table,
-     * joins, WHERE clause, GROUP BY, ORDER BY, and LIMIT into a single SQL query string.
-     *
-     * @return $this This object for method chaining.
-     * @throws \InvalidArgumentException If an asterisk (*) is used in the select clause
-     *                                   and no table is specified.
-     */
     /**
      * Compile the current builder state into a SELECT SQL string.
      *
@@ -3327,7 +1437,85 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function value($column)
     {
         $result = $this->select($column)->fetch();
-        return $result[$column] ?? null;
+
+        if (!is_array($result) || $result === []) {
+            return null;
+        }
+
+        if (array_key_exists($column, $result)) {
+            return $result[$column];
+        }
+
+        $unqualifiedColumn = str_contains((string) $column, '.')
+            ? (string) substr((string) $column, strrpos((string) $column, '.') + 1)
+            : (string) $column;
+
+        if (array_key_exists($unqualifiedColumn, $result)) {
+            return $result[$unqualifiedColumn];
+        }
+
+        $firstKey = array_key_first($result);
+        return $firstKey !== null ? $result[$firstKey] : null;
+    }
+
+    /**
+     * Find a single record by its primary key.
+     *
+     * @param mixed $id
+     * @param array|string $columns
+     * @return mixed
+     */
+    public function find($id, $columns = ['*'])
+    {
+        if (is_array($id)) {
+            return $this->findMany($id, $columns);
+        }
+
+        if ($columns !== ['*'] && $columns !== '*') {
+            $this->select($columns);
+        }
+
+        return $this->where('id', $id)->fetch();
+    }
+
+    /**
+     * Find multiple records by their primary keys.
+     *
+     * @param array $ids
+     * @param array|string $columns
+     * @return mixed
+     */
+    public function findMany(array $ids, $columns = ['*'])
+    {
+        $ids = array_values(array_unique($ids, SORT_REGULAR));
+        if ($ids === []) {
+            return [];
+        }
+
+        if ($columns !== ['*'] && $columns !== '*') {
+            $this->select($columns);
+        }
+
+        return $this->whereIn('id', $ids)->get();
+    }
+
+    /**
+     * Find a single record by its primary key or throw an exception.
+     *
+     * @param mixed $id
+     * @param array|string $columns
+     * @return mixed
+     * @throws \Exception
+     */
+    public function findOrFail($id, $columns = ['*'])
+    {
+        $result = $this->find($id, $columns);
+
+        if (empty($result)) {
+            throw new \Exception('No records found matching the query');
+        }
+
+        return $result;
     }
 
     /**
@@ -3382,7 +1570,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             return false;
         }
 
-        if (empty($state['table']) || !empty($state['offset']) || !empty($state['orderBy']) || !empty($state['groupBy']) || !empty($state['joins']) || !empty($state['having'])) {
+        if (empty($state['table']) || !empty($state['offset']) || !empty($state['groupBy']) || !empty($state['joins']) || !empty($state['having'])) {
             return false;
         }
 
@@ -3390,8 +1578,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             return false;
         }
 
+        if (!$this->hasCompatibleKeysetOrder($state['orderBy'] ?? null, $column, (string) ($state['table'] ?? ''))) {
+            return false;
+        }
+
         $selectedColumns = trim((string) ($state['column'] ?? '*'));
-        if ($selectedColumns !== '*' && stripos($selectedColumns, '.*') === false) {
+        if (!$this->selectedColumnsSupportKeyset($selectedColumns, $column, (string) ($state['table'] ?? ''))) {
             return false;
         }
 
@@ -3399,394 +1591,61 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Iterate through the result set in batches and invoke a callback per chunk.
+     * Determine whether the selected column list still exposes the keyset column.
      *
-     * @param int $size
-     * @param callable $callback
-     * @return $this
-     */
-    public function chunk($size, callable $callback)
-    {
-        $originalState = $this->_saveQueryState();
-        if ($this->canAutoUseChunkById($originalState)) {
-            return $this->chunkById((int) $size, $callback);
-        }
-
-        $previousSuppressQueryCache = $this->suppressQueryCache;
-        $this->suppressQueryCache = true;
-
-        try {
-            $offset = 0;
-
-            // Store the original query state
-            // Check if a limit was set before chunking
-            $maxLimit = null;
-            if (!empty($originalState['limit'])) {
-                // Extract the numeric limit value from the limit string
-                preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
-                $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
-            }
-
-            $totalFetched = 0;
-
-            while (true) {
-                // Restore the original query state
-                $this->_restoreQueryState($originalState);
-
-                $this->_setProfilerIdentifier('chunk_size' . $size . '_offset' . $offset);
-
-                // Calculate the chunk size based on max limit if set
-                $currentChunkSize = $size;
-                if ($maxLimit !== null) {
-                    $remaining = $maxLimit - $totalFetched;
-                    if ($remaining <= 0) {
-                        break; // Reached the limit
-                    }
-                    $currentChunkSize = min($size, $remaining);
-                }
-
-                // Apply limit and offset
-                $this->limit($currentChunkSize)->offset($offset);
-
-                // Get results
-                $results = $this->get();
-
-                if (empty($results)) {
-                    break;
-                }
-
-                $totalFetched += count($results);
-
-                if (call_user_func($callback, $results) === false) {
-                    break;
-                }
-
-                // If we've fetched less than the chunk size or reached max limit, we're done
-                if (count($results) < $currentChunkSize || ($maxLimit !== null && $totalFetched >= $maxLimit)) {
-                    unset($results);
-                    break;
-                }
-
-                $offset += $currentChunkSize;
-
-                // Clear the results to free memory
-                unset($results);
-
-                // Suggest garbage collection on large chunks
-                if ($size >= 1000 && function_exists('gc_collect_cycles')) {
-                    gc_collect_cycles();
-                }
-            }
-
-            // Unset the variables to free memory
-            unset($originalState, $maxLimit, $totalFetched, $currentChunkSize, $offset);
-
-            // Reset internal properties for next query
-            $this->reset();
-
-            return $this;
-        } finally {
-            $this->suppressQueryCache = $previousSuppressQueryCache;
-        }
-    }
-
-    /**
-     * Lazily yield rows using chunked queries to keep memory usage bounded.
-     *
-     * @param int $chunkSize
-     * @return \Generator
-     */
-    public function cursor($chunkSize = 1000)
-    {
-        $originalState = $this->_saveQueryState();
-        if ($this->canAutoUseChunkById($originalState)) {
-            yield from $this->lazyById((int) $chunkSize);
-            return;
-        }
-
-        $previousSuppressQueryCache = $this->suppressQueryCache;
-        $this->suppressQueryCache = true;
-
-        try {
-            $offset = 0;
-
-            // Store the original query state
-            // Check if a limit was set before chunking
-            $maxLimit = null;
-            if (!empty($originalState['limit'])) {
-                // Extract the numeric limit value from the limit string
-                preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
-                $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
-            }
-
-            $totalFetched = 0;
-
-            while (true) {
-                // Restore the original query state
-                $this->_restoreQueryState($originalState);
-
-                $this->_setProfilerIdentifier('cursor_size' . $chunkSize . '_offset' . $offset);
-
-                // Calculate the chunk size based on max limit if set
-                $currentChunkSize = $chunkSize;
-                if ($maxLimit !== null) {
-                    $remaining = $maxLimit - $totalFetched;
-                    if ($remaining <= 0) {
-                        break; // Reached the limit
-                    }
-                    $currentChunkSize = min($chunkSize, $remaining);
-                }
-
-                // Apply limit and offset
-                $this->limit($currentChunkSize)->offset($offset);
-
-                // Get results
-                $results = $this->get();
-
-                if (empty($results)) {
-                    break;
-                }
-
-                foreach ($results as $row) {
-                    yield $row;
-                    $totalFetched++;
-
-                    // Stop yielding if we've reached the max limit
-                    if ($maxLimit !== null && $totalFetched >= $maxLimit) {
-                        break 2; // Break out of both foreach and while
-                    }
-                }
-
-                // If we've fetched less than the chunk size, we're done
-                if (count($results) < $currentChunkSize) {
-                    break;
-                }
-
-                $offset += $currentChunkSize;
-
-                // Clear the results to free memory
-                unset($results);
-                if (function_exists('gc_collect_cycles')) {
-                    gc_collect_cycles();
-                }
-            }
-
-            // Unset the variables to free memory
-            unset($originalState);
-
-            // Reset internal properties for next query
-            $this->reset();
-        } finally {
-            $this->suppressQueryCache = $previousSuppressQueryCache;
-        }
-    }
-
-    /**
-     * Return a LazyCollection backed by chunked reads.
-     *
-     * @param int $chunkSize
-     * @return LazyCollection
-     */
-    public function lazy($chunkSize = 1000)
-    {
-        try {
-            // Store the original query state before lazy loading
-            $originalState = $this->_saveQueryState();
-
-            if ($this->canAutoUseChunkById($originalState)) {
-                return $this->lazyById((int) $chunkSize);
-            }
-
-            // Store the original limit if set
-            $maxLimit = null;
-            if (!empty($originalState['limit'])) {
-                // Extract the numeric limit value from the limit string
-                preg_match('/LIMIT\s+(\d+)/i', $originalState['limit'], $matches);
-                $maxLimit = isset($matches[1]) ? (int)$matches[1] : null;
-            }
-
-            $totalFetched = 0;
-
-            // Data source function
-            $source = function ($size, $offset) use ($originalState, $maxLimit, &$totalFetched) {
-                $previousSuppressQueryCache = $this->suppressQueryCache;
-                $this->suppressQueryCache = true;
-
-                try {
-                    // Restore the original query state
-                    $this->_restoreQueryState($originalState);
-
-                    // Calculate the chunk size based on max limit if set
-                    $currentChunkSize = $size;
-                    if ($maxLimit !== null) {
-                        $remaining = $maxLimit - $totalFetched;
-                        if ($remaining <= 0) {
-                            return []; // No more data to fetch
-                        }
-                        $currentChunkSize = min($size, $remaining);
-                    }
-
-                    // Apply limit and offset
-                    $this->limit($currentChunkSize)->offset($offset);
-
-                    // Execute the query
-                    $results = $this->get();
-
-                    if (empty($results)) {
-                        return [];
-                    }
-
-                    $totalFetched += count($results);
-
-                    return is_array($results) ? $results : [$results];
-                } finally {
-                    $this->suppressQueryCache = $previousSuppressQueryCache;
-                }
-            };
-
-            // Create LazyCollection
-            $collection = new LazyCollection($source);
-            $collection->setChunkSize($chunkSize);
-
-            if (function_exists('gc_collect_cycles')) gc_collect_cycles();
-
-            return $collection;
-        } catch (\Exception $e) {
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e; // Re-throw the exception
-        }
-    }
-
-    /**
-     * Chunk the results using ID-based pagination (keyset pagination).
-     * Significantly more efficient than chunk() for large datasets because it
-     * avoids large OFFSETs. Requires an indexed, unique, monotonic $column.
-     *
-     * @param int $size Chunk size
-     * @param callable $callback Invoked with each chunk; return false to stop
-     * @param string $column ID column (must be unique and indexed)
-     * @param string|null $alias Optional alias for the column in results
-     * @return $this
-     */
-    public function chunkById(int $size, callable $callback, string $column = 'id', ?string $alias = null)
-    {
-        $previousSuppressQueryCache = $this->suppressQueryCache;
-        $this->suppressQueryCache = true;
-
-        try {
-            $alias = $alias ?: $column;
-            $lastId = null;
-            $originalState = $this->_saveQueryState();
-
-            while (true) {
-                $this->_restoreQueryState($originalState);
-                $this->_setProfilerIdentifier('chunkById_size' . $size . '_lastId' . ($lastId ?? '0'));
-
-                if ($lastId !== null) {
-                    $this->where($column, '>', $lastId);
-                }
-
-                $this->orderBy($column, 'ASC')->limit($size);
-
-                $results = $this->get();
-
-                if (empty($results)) {
-                    break;
-                }
-
-                $count = count($results);
-                $last = $results[$count - 1];
-                $lastId = is_array($last) ? ($last[$alias] ?? null) : ($last->{$alias} ?? null);
-
-                if ($lastId === null) {
-                    throw new \RuntimeException("chunkById: column '{$alias}' not present in result set.");
-                }
-
-                if (call_user_func($callback, $results) === false) {
-                    unset($results);
-                    break;
-                }
-
-                if ($count < $size) {
-                    unset($results);
-                    break;
-                }
-
-                unset($results);
-
-                if ($size >= 1000 && function_exists('gc_collect_cycles')) {
-                    gc_collect_cycles();
-                }
-            }
-
-            unset($originalState);
-            $this->reset();
-            return $this;
-        } finally {
-            $this->suppressQueryCache = $previousSuppressQueryCache;
-        }
-    }
-
-    /**
-     * Return a LazyCollection that iterates using ID-based pagination.
-     * See chunkById() for requirements on the $column.
-     *
-     * @param int $chunkSize
+     * @param string $selectedColumns
      * @param string $column
-     * @param string|null $alias
-     * @return \Traversable
+     * @param string $table
+     * @return bool
      */
-    public function lazyById(int $chunkSize = 1000, string $column = 'id', ?string $alias = null)
+    protected function selectedColumnsSupportKeyset(string $selectedColumns, string $column, string $table = ''): bool
     {
-        try {
-            $alias = $alias ?: $column;
-            $originalState = $this->_saveQueryState();
-            $lastId = null;
-
-            $source = function ($size, $offset) use ($originalState, $column, $alias, &$lastId) {
-                // $offset is ignored for keyset pagination; kept for LazyCollection signature
-                $previousSuppressQueryCache = $this->suppressQueryCache;
-                $this->suppressQueryCache = true;
-
-                try {
-                    $this->_restoreQueryState($originalState);
-
-                    if ($lastId !== null) {
-                        $this->where($column, '>', $lastId);
-                    }
-
-                    $this->orderBy($column, 'ASC')->limit($size);
-                    $results = $this->get();
-
-                    if (empty($results)) {
-                        return [];
-                    }
-
-                    $results = is_array($results) ? $results : [$results];
-                    $last = end($results);
-                    reset($results);
-                    $lastId = is_array($last) ? ($last[$alias] ?? null) : ($last->{$alias} ?? null);
-
-                    if ($lastId === null) {
-                        throw new \RuntimeException("lazyById: column '{$alias}' not present in result set.");
-                    }
-
-                    return $results;
-                } finally {
-                    $this->suppressQueryCache = $previousSuppressQueryCache;
-                }
-            };
-
-            $collection = new LazyCollection($source);
-            $collection->setChunkSize($chunkSize);
-
-            if (function_exists('gc_collect_cycles')) gc_collect_cycles();
-
-            return $collection;
-        } catch (\Exception $e) {
-            $this->db_error_log($e, __FUNCTION__);
-            throw $e;
+        $selectedColumns = trim($selectedColumns);
+        if ($selectedColumns === '*' || stripos($selectedColumns, '.*') !== false) {
+            return true;
         }
+
+        $normalized = strtolower(str_replace('`', '', $selectedColumns));
+        $tokens = array_map('trim', explode(',', $normalized));
+        $candidates = [strtolower($column)];
+        if ($table !== '') {
+            $candidates[] = strtolower($table . '.' . $column);
+        }
+
+        foreach ($tokens as $token) {
+            if (in_array($token, $candidates, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine whether an explicit ORDER BY remains compatible with ascending keyset scans.
+     *
+     * @param mixed $orderBy
+     * @param string $column
+     * @param string $table
+     * @return bool
+     */
+    protected function hasCompatibleKeysetOrder($orderBy, string $column, string $table = ''): bool
+    {
+        if (empty($orderBy)) {
+            return true;
+        }
+
+        if (!is_array($orderBy) || count($orderBy) !== 1) {
+            return false;
+        }
+
+        $normalized = strtolower(trim(preg_replace('/\s+/', ' ', str_replace('`', '', (string) $orderBy[0]))));
+        $candidates = [strtolower($column . ' asc')];
+        if ($table !== '') {
+            $candidates[] = strtolower($table . '.' . $column . ' asc');
+        }
+
+        return in_array($normalized, $candidates, true);
     }
 
     /**
@@ -4162,91 +2021,27 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Extract a single column's values from the query results.
-     * Supports dot notation for nested relationships and array access.
-     * 
-     * @param string $column The column to pluck (supports dot notation)
-     * @param string|null $keyColumn Optional column to use as keys (supports dot notation)
-     * @return array An array of values, optionally keyed by $keyColumn
+     *
+     * Supports dot notation for nested relationship payloads returned by eager
+     * loading. Large result sets are processed in chunks to keep memory usage
+     * bounded.
+     *
+     * @param string $column Column path to extract.
+     * @param string|null $keyColumn Optional key path for the returned array.
+     * @return array
      */
     public function pluck($column, $keyColumn = null)
     {
         $result = [];
-
-        // Check if dot notation is used
         $hasDotNotation = strpos($column, '.') !== false || ($keyColumn && strpos($keyColumn, '.') !== false);
 
         if ($hasDotNotation) {
-            // Process with eager loading support
             $this->chunk(1000, function ($rows) use (&$result, $column, $keyColumn) {
                 foreach ($rows as $row) {
-                    // Get nested value inline
-                    $value = $row;
-                    if (strpos($column, '.') !== false) {
-                        $segments = explode('.', $column);
-                        foreach ($segments as $segmentIndex => $segment) {
-                            if (is_array($value)) {
-                                if (array_key_exists($segment, $value)) {
-                                    $value = $value[$segment];
-                                    
-                                    // If this is an array of items (from with() relationship) and not the last segment
-                                    // Get the first item to continue traversal
-                                    if (is_array($value) && !empty($value) && $segmentIndex < count($segments) - 1) {
-                                        $firstKey = array_key_first($value);
-                                        // Check if it's a numeric array (list of items)
-                                        if (is_numeric($firstKey)) {
-                                            $value = $value[$firstKey] ?? null;
-                                        }
-                                    }
-                                } else {
-                                    $value = null;
-                                    break;
-                                }
-                            } elseif (is_object($value)) {
-                                $value = $value->$segment ?? null;
-                            } else {
-                                $value = null;
-                                break;
-                            }
-                        }
-                    } else {
-                        $value = is_array($value) && array_key_exists($column, $value) 
-                            ? $value[$column] 
-                            : (is_object($value) && isset($value->$column) ? $value->$column : null);
-                    }
+                    $value = $this->_resolvePluckValue($row, $column);
 
                     if ($keyColumn !== null) {
-                        // Get nested key inline
-                        $key = $row;
-                        if (strpos($keyColumn, '.') !== false) {
-                            $segments = explode('.', $keyColumn);
-                            foreach ($segments as $segmentIndex => $segment) {
-                                if (is_array($key)) {
-                                    if (array_key_exists($segment, $key)) {
-                                        $key = $key[$segment];
-                                        
-                                        // If this is an array of items and not the last segment
-                                        if (is_array($key) && !empty($key) && $segmentIndex < count($segments) - 1) {
-                                            $firstKey = array_key_first($key);
-                                            if (is_numeric($firstKey)) {
-                                                $key = $key[$firstKey] ?? null;
-                                            }
-                                        }
-                                    } else {
-                                        $key = null;
-                                        break;
-                                    }
-                                } elseif (is_object($key)) {
-                                    $key = $key->$segment ?? null;
-                                } else {
-                                    $key = null;
-                                    break;
-                                }
-                            }
-                        } else {
-                            $key = is_array($key) && array_key_exists($keyColumn, $key) 
-                                ? $key[$keyColumn] 
-                                : (is_object($key) && isset($key->$keyColumn) ? $key->$keyColumn : null);
-                        }
+                        $key = $this->_resolvePluckValue($row, $keyColumn);
                         
                         if ($key !== null) {
                             $result[$key] = $value;
@@ -4274,121 +2069,67 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
+     * Resolve a scalar or nested value from a row for pluck()-style extraction.
+     *
+     * When traversal encounters a numerically indexed relation array before the
+     * final segment, the first item is used so `relation.name` can resolve from
+     * eager-loaded `with()` results.
+     *
+     * @param mixed $source Row array/object or nested payload.
+     * @param string $path Column name or dot-notated path.
+     * @return mixed
+     */
+    protected function _resolvePluckValue($source, string $path)
+    {
+        if (strpos($path, '.') === false) {
+            if (is_array($source)) {
+                return array_key_exists($path, $source) ? $source[$path] : null;
+            }
+
+            if (is_object($source)) {
+                return $source->$path ?? null;
+            }
+
+            return null;
+        }
+
+        $value = $source;
+        $segments = explode('.', $path);
+        $lastIndex = count($segments) - 1;
+
+        foreach ($segments as $segmentIndex => $segment) {
+            if (is_array($value)) {
+                if (!array_key_exists($segment, $value)) {
+                    return null;
+                }
+
+                $value = $value[$segment];
+
+                if (is_array($value) && !empty($value) && $segmentIndex < $lastIndex) {
+                    $firstKey = array_key_first($value);
+                    if (is_numeric($firstKey)) {
+                        $value = $value[$firstKey] ?? null;
+                    }
+                }
+
+                continue;
+            }
+
+            if (is_object($value)) {
+                $value = $value->$segment ?? null;
+                continue;
+            }
+
+            return null;
+        }
+
+        return $value;
+    }
+
+    /**
      * Driver-specific LIMIT/OFFSET SQL formatter for paginated statements.
      */
     abstract public function _getLimitOffsetPaginate($query, $limit, $offset);
-
-    /**
-     * Get the SQL query that would be executed (with bindings)
-     * 
-     * @return array ['query' => string, 'binds' => array]
-     */
-    public function toSql()
-    {
-        $this->_buildSelectQuery();
-        $bindings = $this->getSelectQueryBindings();
-        $fullQuery = $this->_generateFullQuery($this->_query, $bindings, false);
-        return [
-            'query' => $this->_query,
-            'binds' => $bindings,
-            'full_query' => $fullQuery
-        ];
-    }
-
-    /**
-     * Get the raw SQL query with bindings substituted.
-     * Laravel equivalent: toRawSql()
-     *
-     * @return string The full SQL query string with values substituted in
-     */
-    public function toRawSql()
-    {
-        $result = $this->toSql();
-        return $result['full_query'] ?? $result['query'];
-    }
-
-    /**
-     * Dump the current SQL query and bindings for debugging.
-     * Laravel equivalent: dump()
-     *
-     * @return $this
-     */
-    public function dump()
-    {
-        $sql = $this->toSql();
-        echo '<pre>';
-        echo "Query: " . htmlspecialchars($sql['query']) . "\n";
-        echo "Binds: " . htmlspecialchars(json_encode($sql['binds'])) . "\n";
-        if (isset($sql['full_query'])) {
-            echo "Full:  " . htmlspecialchars(is_string($sql['full_query']) ? $sql['full_query'] : '') . "\n";
-        }
-        echo '</pre>';
-        return $this;
-    }
-
-    /**
-     * Dump the current SQL query and stop execution.
-     * Laravel equivalent: dd()
-     *
-     * @return never
-     */
-    public function dd()
-    {
-        $this->dump();
-        exit(1);
-    }
-
-    /**
-     * Return the main SQL and any eager-load SQL for debugging complex builders.
-     *
-     * @return array
-     */
-    public function toDebugSql()
-    {
-        // Build the final SELECT query string
-        $this->_buildSelectQuery();
-
-        // Generate the full query string with bound values
-        $fullQuery = $this->_generateFullQuery($this->_query, $this->getSelectQueryBindings(), false);
-
-        // Add a main query
-        $queryList['main_query'] = $this->_query;
-        $queryList['main_full_query'] = $fullQuery;
-
-        // Save connection name, relations & caching info temporarily
-        $_temp_connection = $this->connectionName;
-        $_temp_relations = $this->relations;
-
-        // Reset internal properties for next query
-        $this->reset();
-
-        if (!empty($_temp_relations)) {
-            foreach ($_temp_relations as $alias => $relation) {
-
-                $table = $relation['details']['table'];
-                $fk_id = $relation['details']['foreign_key'];
-                $callback = $relation['details']['callback'];
-
-                $connectionObj = $this->getInstance()->connect($_temp_connection);
-
-                $chunk = ['example1'];
-                $relatedRecordsQuery = $connectionObj->table($table)->whereIn($fk_id, $chunk);
-
-                // Apply callback if provided for customization
-                if ($callback instanceof \Closure) {
-                    $callback($relatedRecordsQuery);
-                }
-
-                // Build the query on the related records builder, not $this
-                $queryList['with_' . $alias] = $relatedRecordsQuery->toDebugSql();
-            }
-        }
-
-        unset($_temp_connection, $_temp_relations);
-
-        return $queryList;
-    }
-
     // Implement BuilderCrudInterface logic
 
     # CREATE NEW DATA OPERATION
@@ -4410,7 +2151,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Check if string is empty
         if (empty($data) || !is_array($data)) {
-            throw new \InvalidArgumentException('Invalid column data. Must be a associative array.');
+            throw new \InvalidArgumentException('Invalid column data. Must be an associative array.');
         }
 
         if (empty($this->table)) {
@@ -4468,17 +2209,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Builds the SQL INSERT query string based on provided data.
-     *
-     * This internal function is used by the `insert` function to construct the SQL statement for inserting data into a database table. 
-     * It takes the data array as input and builds the INSERT query with column names, placeholders for values, and the table name.
-     *
-     * @param array $data The associative array containing the data to be inserted. Keys represent column names, and values represent the data for those columns.
-     *
-     *
-     * @return $this This object instance (used for method chaining).
-     */
-    /**
      * Compile an INSERT statement for the provided associative row payload.
      *
      * @param array $data
@@ -4492,7 +2222,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         // Construct column names string
-        $columns = implode(', ', array_keys($data));
+        $columns = implode(', ', array_map(
+            static fn ($column): string => '`' . str_replace('`', '``', (string) $column) . '`',
+            array_keys($data)
+        ));
 
         // Construct placeholders for values
         $placeholders = implode(', ', array_fill(0, count($data), '?'));
@@ -4638,6 +2371,52 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
     }
 
+    /**
+     * Get the first record matching conditions or return an unsaved attribute array.
+     *
+     * @param array $conditions
+     * @param array $data
+     * @return array
+     */
+    public function firstOrNew(array $conditions, array $data = [])
+    {
+        if (empty($conditions)) {
+            throw new \InvalidArgumentException('Conditions must be a non-empty associative array.');
+        }
+
+        $query = $this->createSubQueryBuilder();
+        $query->table = $this->table;
+        $existing = $query->where($conditions)->fetch();
+        unset($query);
+
+        return !empty($existing) ? $existing : array_merge($conditions, $data);
+    }
+
+    /**
+     * Update a matching record or create a new one, then return the persisted row.
+     *
+     * @param array $conditions
+     * @param array $data
+     * @param string $primaryKey
+     * @return mixed
+     */
+    public function updateOrCreate(array $conditions, array $data = [], string $primaryKey = 'id')
+    {
+        if (empty($conditions)) {
+            throw new \InvalidArgumentException('Conditions must be a non-empty associative array.');
+        }
+
+        $table = $this->table;
+        $this->insertOrUpdate($conditions, $data, $primaryKey);
+
+        $query = $this->createSubQueryBuilder();
+        $query->table = $table;
+        $record = $query->where($conditions)->fetch();
+        unset($query);
+
+        return $record;
+    }
+
     # UPDATE DATA OPERATION
 
     /**
@@ -4669,7 +2448,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $set = ["$safeCol = $safeCol + ?"];
         $bindValues = [$amount];
         foreach ($sanitizedExtra as $col => $val) {
-            $set[] = "`$col` = ?";
+            $set[] = '`' . str_replace('`', '``', $col) . '` = ?';
             $bindValues[] = $val;
         }
         
@@ -4743,7 +2522,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $set = ["$safeCol = $safeCol - ?"];
         $bindValues = [$amount];
         foreach ($sanitizedExtra as $col => $val) {
-            $set[] = "`$col` = ?";
+            $set[] = '`' . str_replace('`', '``', $col) . '` = ?';
             $bindValues[] = $val;
         }
         
@@ -4789,12 +2568,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Updates a record in the database based on the provided data.
+     * Update matching rows in the current table.
      *
-     * @param array $data An associative array containing column names as keys and new values as values.
-     * @throws InvalidArgumentException If the provided data is empty, not an array, or not an associative array with column names as keys.
-     * @throws InvalidArgumentException If the table name is not specified.
-     * @return array An associative array containing information about the update operation, including code, affected rows, message, and data.
+     * @param array $data Associative column/value payload.
+     * @return mixed
+     * @throws \InvalidArgumentException
      */
     public function update($data)
     {
@@ -4807,7 +2585,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Check if string is empty
         if (empty($data) || !is_array($data)) {
-            throw new \InvalidArgumentException('Invalid column data. Must be a associative array.');
+            throw new \InvalidArgumentException('Invalid column data. Must be an associative array.');
         }
 
         if (empty($this->table)) {
@@ -4820,7 +2598,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // sanitize column to ensure column is exists.
         $sanitizeData = $this->sanitizeColumn($data);
 
-        // Build the final INSERT query string
+        // Build the final UPDATE query string
         $this->_buildUpdateQuery($sanitizeData);
 
         // Prepare the query statement
@@ -4838,7 +2616,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             // Get the number of affected rows
             $affectedRows = $stmt->rowCount();
 
-            // Return information about the insertion operation
+            // Return information about the update operation
             $response = [
                 'code' => $success ? 200 : 422,
                 'affected_rows' => $affectedRows,
@@ -4865,8 +2643,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Builds the SQL UPDATE query string based on the provided data.
      *
      * @param array $data An associative array containing column names as keys and new values as values.
-     * @throws InvalidArgumentException If the provided data is empty, not an array, or not an associative array with column names as keys.
-     * @return object $this The current object instance for chaining methods.
+    * @throws InvalidArgumentException If the provided data is empty, not an array, or not an associative array with column names as keys.
+    * @return $this
      */
     protected function _buildUpdateQuery($data)
     {
@@ -4878,7 +2656,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Construct a comma-separated list of SET clauses
         $set = [];
         foreach ($data as $column => $value) {
-            $set[] = "`$column` = ?";
+            $set[] = '`' . str_replace('`', '``', (string) $column) . '` = ?';
         }
         $set = implode(', ', $set);
 
@@ -4903,15 +2681,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     # SOFT DELETE / DELETE / TRUNCATE DATA OPERATION
 
-    /**
-     * Soft deletes or updates a record by setting the specified column(s) to a value.
-     * If no value is provided, defaults to current timestamp for 'deleted_at'.
-     * Can update any column (e.g., status) by passing an associative array.
-     *
-     * @param string|array $column The column name or an associative array of columns and values to update.
-     * @param mixed $value The value to set for the column (ignored if $column is array).
-     * @return array|false The result of the update operation, or error array on failure.
-     */
     /**
      * Soft-delete by updating one or more columns instead of removing the row.
      *
@@ -4956,15 +2725,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
     }
 
-    /**
-     * Deletes records from the database based on the previously configured criteria.
-     * Optimized: no longer fetches all data before delete unless explicitly needed.
-     * Automatically uses soft delete when deleted_at column exists.
-     *
-     * @param bool $returnData Whether to fetch and return the deleted data (default: false)
-     * @throws \PDOException If a database error occurs during the deletion process.
-     * @return array
-     */
     /**
      * Delete matching rows or route through softDelete() when supported.
      *
@@ -5047,11 +2807,83 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Build an SQL DELETE statement with PDO binding.
+     * Force a hard delete even when the table supports soft deletes.
      *
-     * @param string $table The name of the table to delete from.
-     * @param string|array $conditions Optional. The condition(s) to specify which rows to delete.
-     * @return string|null The generated SQL DELETE statement or null if $condition is not valid.
+     * @param bool $returnData
+     * @return mixed
+     */
+    public function forceDelete(bool $returnData = false)
+    {
+        $response = ['code' => 400, 'message' => 'Failed to delete data', 'action' => 'forceDelete'];
+        $deletedData = null;
+
+        if (!$this->_isRawQuery && $returnData) {
+            $newDb = clone $this;
+            $deletedData = $newDb->get();
+            unset($newDb);
+        }
+
+        $this->_startProfiler(__FUNCTION__);
+
+        if (!$this->_isRawQuery) {
+            if (empty($this->table)) {
+                throw new \InvalidArgumentException('Please specify the table.');
+            }
+
+            $this->_buildDeleteQuery();
+        }
+
+        $stmt = $this->_prepareStatement($this->_query);
+        if (!empty($this->_binds)) {
+            $this->_bindParams($stmt, $this->_binds);
+        }
+
+        try {
+            $this->_captureExecutedQuery($this->_binds);
+            $success = $stmt->execute();
+            $affectedRows = $stmt->rowCount();
+
+            $response = [
+                'code' => $success ? 200 : 422,
+                'affected_rows' => $affectedRows,
+                'message' => $success ? 'Data deleted' : 'Failed to delete data',
+                'action' => 'forceDelete'
+            ];
+
+            if (!$this->_isRawQuery && $deletedData !== null) {
+                $response['data'] = $deletedData;
+            }
+        } catch (\PDOException $e) {
+            $this->db_error_log($e, __FUNCTION__);
+            throw $e;
+        }
+
+        $this->_stopProfiler();
+        $this->reset();
+
+        return $this->_returnResult($response) ?? false;
+    }
+
+    /**
+     * Restore a soft-deleted row by clearing the soft-delete marker column.
+     *
+     * @param string $column
+     * @return mixed
+     */
+    public function restore(string $column = 'deleted_at')
+    {
+        $columns = $this->getTableColumns();
+        if (!in_array($column, $columns, true)) {
+            throw new \InvalidArgumentException("Column '{$column}' does not exist in the table.");
+        }
+
+        return $this->update([$column => null]);
+    }
+
+    /**
+     * Build the current DELETE SQL statement.
+     *
+     * @return $this
      */
     protected function _buildDeleteQuery()
     {
@@ -5244,7 +3076,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Enable or disable secure input.
      *
-     * @param bool $secure Whether to enable or disable secure input.
      * @return $this
      */
     public function safeInput()
@@ -5254,9 +3085,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Enable or disable secure output.
+     * Enable or disable secure output sanitization.
      *
-     * @param bool $secure Whether to enable or disable secure output.
+     * @param bool $enable Whether to enable secure output filtering.
      * @return $this
      */
     public function safeOutput($enable = true)
@@ -5285,7 +3116,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Sanitize column data to ensure that only valid columns are used.
      *
-     * @param string $table The table name.
      * @param array $data An associative array where keys represent column names and values represent corresponding data.
      * @return array The sanitized column data.
      * @throws \Exception If there's an error accessing the database or if the table does not exist.
@@ -5315,644 +3145,20 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     # EAGER LOADER SECTION
 
-    /**
-     * Load relations and attach them to the main data efficiently.
-     *
-     * @param array $data The result for the main query/subquery.
-     * @param array $relations The relations to be loaded.
-     * @param string $connectionName The database connection name.
-     * @param string $typeFetch The fetch type ('fetch' or 'get').
-     */
-    protected function _processEagerLoading(&$data, $relations, $connectionName, $typeFetch)
-    {
-        $data = $typeFetch == 'fetch' ? [$data] : $data;
-        $connectionObj = $this->getInstance()->connect($connectionName);
-
-        $temp_secure_output = $this->_secureOutput;
-
-        foreach ($relations as $alias => $eager) {
-
-            $method = $eager['type']; // Get the type (get or fetch)
-            $config = $eager['details']; // Get the configuration details
-
-            $table = $config['table']; // Table name of the related data
-            $fk_id = $config['foreign_key']; // Foreign key column in the related table
-            $pk_id = $config['local_key']; // Local key column in the current table
-            $callback = $config['callback']; // Optional callback for customizing the query
-
-            // Extract all primary keys from the main result set
-            $primaryKeys = array_values(array_unique(array_column($data, $pk_id), SORT_REGULAR));
-
-            // Check if batch processing is needed using optimizer
-            if (EagerLoadOptimizer::shouldUseBatching(count($primaryKeys))) {
-                $this->_processEagerLoadingInBatches($data, $primaryKeys, $table, $fk_id, $pk_id, $connectionName, $method, $alias, $callback);
-            } else {
-                // Set profiler
-                $this->_setProfilerIdentifier('with_' . $alias);
-
-                // Process directly without parallelism
-                $relatedRecords = $this->_processEagerByChunk($primaryKeys, $callback, $connectionObj, $table, $fk_id);
-
-                // Logic to process and attach data to main/subquery data
-                $this->attachEagerLoadedData($method, $data, $relatedRecords, $alias, $fk_id, $pk_id);
-            }
-
-            $this->safeOutput($temp_secure_output);
-        }
-
-        // Unset the variables to free memory
-        unset($temp_secure_output);
-
-        return $typeFetch == 'fetch' ? $data[0] : $data;
-    }
-
-    /**
-     * Eager-load related rows in chunks so large parent result sets stay memory-stable.
-     *
-     * @param array $data
-     * @param array $primaryKeys
-     * @param string $table
-     * @param string $fk_id
-     * @param string $pk_id
-     * @param string $connectionName
-     * @param string $method
-     * @param string $alias
-     * @param \Closure|null $callback
-     * @return void
-     */
-    protected function _processEagerLoadingInBatches(&$data, $primaryKeys, $table, $fk_id, $pk_id, $connectionName, $method, $alias, ?\Closure $callback = null)
-    {
-        // Optimize primary keys - remove duplicates and sort for better performance
-        $primaryKeys = EagerLoadOptimizer::optimizeInClause($primaryKeys);
-        $preferIntegerRawIn = $this->allChunkValuesAreIntegers($primaryKeys);
-        $monitoringEnabled = PerformanceMonitor::isEnabled();
-        
-        // Get connection from pool for better reuse
-        $connectionObj = $this->getInstance()->connect($connectionName);
-
-        // Build row index once so chunk attachment stays linear even for large datasets.
-        $rowIndexByPk = $this->buildEagerRowIndex($data, $pk_id, $alias, $method);
-
-        // Use adaptive chunk sizing for optimal performance (lazy chunks to reduce memory pressure).
-        $chunkNumber = 0;
-        foreach (EagerLoadOptimizer::yieldOptimalChunks($primaryKeys, $table) as $chunk) {
-            $chunkNumber++;
-
-            // Set profiler
-            $this->_setProfilerIdentifier('with_' . $alias . '_' . $chunkNumber);
-
-            $queryId = null;
-            $chunkSize = count($chunk);
-            if ($monitoringEnabled) {
-                // Avoid storing large chunk key arrays in profiler binds to keep memory stable.
-                $queryId = uniqid('eager_', true);
-                PerformanceMonitor::startQuery($queryId, "Eager load: {$table}.{$fk_id} (chunk={$chunkSize})", []);
-            }
-
-            $startTime = microtime(true);
-
-            // Process chunk directly without parallelism
-            $chunkRelatedRecords = $this->_processEagerByChunk($chunk, $callback, $connectionObj, $table, $fk_id, $preferIntegerRawIn);
-
-            $executionTime = microtime(true) - $startTime;
-            if ($monitoringEnabled && $queryId !== null) {
-                PerformanceMonitor::endQuery($queryId, count($chunkRelatedRecords));
-            }
-            
-            // Record performance for adaptive optimization
-            EagerLoadOptimizer::recordPerformance($table, $chunkSize, $executionTime);
-
-            // Attach chunk result immediately so large relations do not accumulate in memory.
-            foreach ($chunkRelatedRecords as $relatedRow) {
-                $fkValue = $relatedRow[$fk_id] ?? null;
-                if ($fkValue === null || !isset($rowIndexByPk[$fkValue])) {
-                    continue;
-                }
-
-                foreach ($rowIndexByPk[$fkValue] as $rowIndex) {
-                    if ($method === 'fetch') {
-                        if ($data[$rowIndex][$alias] === null) {
-                            $data[$rowIndex][$alias] = $relatedRow;
-                        }
-                        continue;
-                    }
-                    $data[$rowIndex][$alias][] = $relatedRow;
-                }
-            }
-
-            unset($chunkRelatedRecords);
-        }
-    }
-
-    /**
-     * Build a lookup from parent key to row indexes for eager-load attachment.
-     *
-     * @param array $data
-     * @param string $pk_id
-     * @param string $alias
-     * @param string $method
-     * @return array
-     */
-    protected function buildEagerRowIndex(array &$data, string $pk_id, string $alias, string $method): array
-    {
-        $rowIndexByPk = [];
-
-        foreach ($data as $rowIndex => $row) {
-            $rowKey = $row[$pk_id] ?? null;
-            if ($rowKey === null) {
-                continue;
-            }
-
-            $rowIndexByPk[$rowKey][] = $rowIndex;
-            if (!isset($data[$rowIndex][$alias])) {
-                $data[$rowIndex][$alias] = $method === 'fetch' ? null : [];
-            }
-        }
-
-        return $rowIndexByPk;
-    }
-
-    /**
-     * Fetch one eager-load chunk from the related table.
-     *
-     * @param array $chunk
-     * @param \Closure|null $callback
-     * @param mixed $connectionObj
-     * @param string $table
-     * @param string $fk_id
-     * @param bool|null $preferIntegerRawIn
-     * @return array
-     */
-    protected function _processEagerByChunk($chunk, ?\Closure $callback, $connectionObj, $table, $fk_id, ?bool $preferIntegerRawIn = null)
-    {
-        $relatedRecordsQuery = $connectionObj->table($table);
-
-        // Prefer integer raw IN for large numeric key sets to reduce PDO binding overhead.
-        $useIntegerRawIn = $preferIntegerRawIn ?? $this->allChunkValuesAreIntegers($chunk);
-        if ($useIntegerRawIn) {
-            $relatedRecordsQuery->whereIntegerInRaw($fk_id, $chunk);
-        } else {
-            $relatedRecordsQuery->whereIn($fk_id, $chunk);
-        }
-
-        // Apply callback if provided for customization
-        if (!empty($callback) && $callback instanceof \Closure) {
-            $callback($relatedRecordsQuery);
-        }
-
-        // Pass safe output setting to the eager query so sanitization happens once inside get()
-        if ($this->_secureOutput) {
-            $relatedRecordsQuery->safeOutput(true);
-            if (!empty($this->_secureOutputExeception)) {
-                $relatedRecordsQuery->safeOutputWithException($this->_secureOutputExeception);
-            }
-        }
-
-        $data = $relatedRecordsQuery->get();
-
-        return $data;
-    }
-
-    /**
-     * Check whether all chunk values are integers (or integer strings).
-     */
-    protected function allChunkValuesAreIntegers(array $chunk): bool
-    {
-        if (empty($chunk)) {
-            return false;
-        }
-
-        foreach ($chunk as $value) {
-            if (is_int($value)) {
-                continue;
-            }
-
-            if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
-                continue;
-            }
-
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Attach already-fetched related rows onto the parent result set.
-     *
-     * @param string $method
-     * @param array $data
-     * @param array $relatedRecords
-     * @param string $alias
-     * @param string $fk_id
-     * @param string $pk_id
-     * @return void
-     */
-    protected function attachEagerLoadedData($method, &$data, &$relatedRecords, $alias, $fk_id, $pk_id)
-    {
-        $rowIndexByPk = $this->buildEagerRowIndex($data, $pk_id, $alias, $method);
-
-        foreach ($relatedRecords as $relatedRow) {
-            $fkValue = $relatedRow[$fk_id] ?? null;
-            if ($fkValue === null || !isset($rowIndexByPk[$fkValue])) {
-                continue;
-            }
-
-            foreach ($rowIndexByPk[$fkValue] as $rowIndex) {
-                if ($method === 'fetch') {
-                    if ($data[$rowIndex][$alias] === null) {
-                        $data[$rowIndex][$alias] = $relatedRow;
-                    }
-                    continue;
-                }
-
-                $data[$rowIndex][$alias][] = $relatedRow;
-            }
-        }
-    }
 
     # PROFILER SECTION
 
-    /**
-     * Return the collected profiler payload for the current connection.
-     *
-     * @return array
-     */
-    public function profiler()
-    {
-        return $this->_profiler;
-    }
 
-    /**
-     * Switch the active profiler bucket used for subsequent timing data.
-     *
-     * @param string $identifier
-     * @return $this
-     */
-    protected function _setProfilerIdentifier($identifier = 'main')
-    {
-        $this->_profilerActive = $identifier;
-        return $this;
-    }
 
-    /**
-     * Starts the profiler for a specific method.
-     * Optimized: skips heavy operations when profiling is disabled.
-     *
-     * @param string $method The name of the method that initiated profiling.
-     */
-    protected function _startProfiler($method)
-    {
-        if (!$this->enableProfiling) {
-            return;
-        }
 
-        $startTime = microtime(true);
 
-        // Detect query type from SQL
-        $queryType = 'other';
-        if (!empty($this->_query)) {
-            $firstWord = strtoupper(trim(explode(' ', trim($this->_query))[0]));
-            $queryType = match($firstWord) {
-                'SELECT' => 'select',
-                'INSERT' => 'insert',
-                'UPDATE' => 'update',
-                'DELETE' => 'delete',
-                default => 'other'
-            };
-        }
 
-        // Start performance monitoring
-        PerformanceMonitor::startQuery(
-            $this->_profilerActive,
-            $this->_query ?? '',
-            $this->_binds ?? [],
-            $queryType
-        );
 
-        // Get PHP version
-        $this->_profiler['php_ver'] = phpversion();  // Simpler approach for version string
 
-        // Get OS version
-        if (function_exists('php_uname')) {
-            $this->_profiler['os_ver'] = php_uname('s') . ' ' . php_uname('r');  // OS and release
-        } else {
-            // Handle cases where php_uname is not available
-            $this->_profiler['os_ver'] = 'Unknown';
-        }
 
-        // Get database driver
-        $this->_profiler['db_connection'] = $this->connectionName;
-        $this->_profiler['db_driver'] = $this->driver ?? 'mysql';
 
-        // Get database version 
-        if (isset($this->pdo[$this->connectionName]) && $this->pdo[$this->connectionName] instanceof \PDO) {
-            $this->_profiler['db_ver'] = $this->pdo[$this->connectionName]->getAttribute(\PDO::ATTR_SERVER_VERSION);
-        } else {
-            // Handle cases where no database connection exists
-            $this->_profiler['db_ver'] = 'Unknown';
-        }
 
-        // Get database schema
-        $this->_profiler['db_schema'] = $this->schema;
 
-        $this->_profiler['profiling'][$this->_profilerActive] = [
-            'method' => $method,
-            'start' => $startTime,
-            'end' => null,
-            'start_time' => date('Y-m-d h:i A', (int) $startTime),
-            'end_time' => null,
-            'query' => null,
-            'binds' => null,
-            'execution_time' => null,
-            'execution_status' => null,
-            'memory_usage' => memory_get_usage(),
-            'memory_usage_peak' => memory_get_peak_usage()
-        ];
-    }
-
-    /**
-     * Stops the profiler and calculates execution time and status.
-     *
-     * This function is called after query execution. It calculates the execution
-     * time, formats it, and sets the execution status based on predefined thresholds.
-     * It also updates the profiler data with end time, formatted end time, execution time, and status.
-     * 
-     */
-    protected function _stopProfiler()
-    {
-        if (!isset($this->_profiler['profiling'][$this->_profilerActive])) {
-            return;  // Profiler not started
-        }
-
-        // End performance monitoring (row count will be updated later if available)
-        PerformanceMonitor::endQuery($this->_profilerActive, 0);
-
-        $endTime = microtime(true);
-        $profilerEntry = &$this->_profiler['profiling'][$this->_profilerActive];
-        $executionTime = $endTime - $profilerEntry['start'];
-
-        $this->logSlowQueryIfNeeded($executionTime, $profilerEntry);
-
-        if (isset($profilerEntry['memory_usage'])) {
-            $memDelta = memory_get_usage() - $profilerEntry['memory_usage'];
-            $profilerEntry['memory_usage'] = $this->_formatBytes(max(0, $memDelta), 2);
-        }
-        if (isset($profilerEntry['memory_usage_peak'])) {
-            $peakDelta = memory_get_peak_usage() - $profilerEntry['memory_usage_peak'];
-            $profilerEntry['memory_usage_peak'] = $this->_formatBytes(max(0, $peakDelta), 4);
-        }
-
-        $profilerEntry['end'] = $endTime;
-        $profilerEntry['end_time'] = date('Y-m-d h:i A', (int) $endTime);
-
-        // Calculate and format execution time with milliseconds
-        $milliseconds = round(($executionTime - floor($executionTime)) * 1000, 2);
-        $totalSeconds = floor($executionTime);
-        $seconds = $totalSeconds % 60;
-        $minutes = floor(($totalSeconds % 3600) / 60);
-        $hours = floor($totalSeconds / 3600);
-
-        $formattedExecutionTime = '';
-        if ($totalSeconds == 0) {
-            $formattedExecutionTime = sprintf("%dms", $milliseconds);
-        } else if ($hours > 0) {
-            $formattedExecutionTime = sprintf("%dh %dm %ds %dms", $hours, $minutes, $seconds, $milliseconds);
-        } else if ($minutes > 0) {
-            $formattedExecutionTime = sprintf("%dm %ds %dms", $minutes, $seconds, $milliseconds);
-        } else {
-            $formattedExecutionTime = sprintf("%ds %dms", $seconds, $milliseconds);
-        }
-
-        $this->_profiler['profiling'][$this->_profilerActive]['execution_time'] = $formattedExecutionTime;
-        if (!empty($this->_profilerShowConf['stack_trace'])) {
-            $this->_profiler['stack_trace'] = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
-        }
-
-        // Set execution status based on predefined thresholds
-        $this->_profiler['profiling'][$this->_profilerActive]['execution_status'] = ($executionTime >= 3.5) ? 'very slow' : (($executionTime >= 1.5 && $executionTime < 3.5) ? 'slow' : (($executionTime > 0.5 && $executionTime < 1.49) ? 'fast' : 'very fast'));
-
-        // Removed unused profiler from being display & free resources
-        unset(
-            $milliseconds,
-            $totalSeconds,
-            $seconds,
-            $minutes,
-            $hours,
-            $endTime,
-            $executionTime,
-            $formattedExecutionTime,
-            $this->_profiler['profiling'][$this->_profilerActive]['start'],
-            $this->_profiler['profiling'][$this->_profilerActive]['end'],
-        );
-
-        // Get profiler config and removed to free resources
-        foreach ($this->_profilerShowConf as $config => $value) {
-            if (!$value) {
-                if (!in_array($config, ['php_ver', 'os_ver', 'db_driver', 'db_ver', 'stack_trace'])) {
-                    unset($this->_profiler['profiling'][$this->_profilerActive][$config]);
-                } else {
-                    unset($this->_profiler[$config]);
-                }
-            }
-        }
-    }
-
-    /**
-     * Capture query text for profiler output only when profiling is enabled.
-     *
-     * @param array|null $binds Bound values for debug SQL expansion.
-     * @return void
-     */
-    protected function _captureExecutedQuery(?array $binds = null): void
-    {
-        if (!$this->enableProfiling) {
-            return;
-        }
-
-        $this->_profiler['profiling'][$this->_profilerActive]['query'] = $this->_query;
-        $this->_generateFullQuery($this->_query, $binds, true);
-    }
-
-    /**
-     * Persist a slow-query log entry when runtime exceeds the configured threshold.
-     *
-     * @param float $executionTime
-     * @param array $profilerEntry
-     * @return void
-     */
-    protected function logSlowQueryIfNeeded(float $executionTime, array $profilerEntry): void
-    {
-        $configuration = $this->slowQueryConfiguration();
-        if (($configuration['enabled'] ?? false) !== true) {
-            return;
-        }
-
-        $thresholdMs = max(1, (int) ($configuration['threshold_ms'] ?? 750));
-        if (($executionTime * 1000) < $thresholdMs) {
-            return;
-        }
-
-        try {
-            $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR;
-            $logger = new Logger($rootDir . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'slow.log');
-            $logger->log_error(json_encode([
-                'event' => 'slow_query',
-                'connection' => $this->connectionName,
-                'table' => $this->table,
-                'duration_ms' => round($executionTime * 1000, 2),
-                'threshold_ms' => $thresholdMs,
-                'query' => $profilerEntry['query'] ?? null,
-                'binds' => $profilerEntry['binds'] ?? [],
-                'full_query' => $profilerEntry['full_query'] ?? null,
-                'request_uri' => $_SERVER['REQUEST_URI'] ?? 'CLI',
-            ], JSON_UNESCAPED_SLASHES));
-        } catch (\Throwable $e) {
-            // Slow-query logging must not break the query lifecycle.
-        }
-    }
-
-    /**
-     * Return normalized slow-query logging configuration.
-     *
-     * @return array
-     */
-    protected function slowQueryConfiguration(): array
-    {
-        $configuration = function_exists('config') ? (array) config('db.performance.slow_query', []) : [];
-
-        return [
-            'enabled' => ($configuration['enabled'] ?? false) === true,
-            'threshold_ms' => max(1, (int) ($configuration['threshold_ms'] ?? 750)),
-        ];
-    }
-
-    /**
-     * Return normalized retry configuration for transient database errors.
-     *
-     * @return array
-     */
-    protected function retryConfiguration(): array
-    {
-        $configuration = function_exists('config') ? (array) config('db.retry', []) : [];
-
-        return [
-            'enabled' => ($configuration['enabled'] ?? false) === true,
-            'attempts' => max(1, (int) ($configuration['attempts'] ?? 3)),
-            'delay_ms' => max(0, (int) ($configuration['delay_ms'] ?? 50)),
-        ];
-    }
-
-    /**
-     * Return normalized session timeout configuration for the current driver.
-     *
-     * @return array
-     */
-    protected function statementTimeoutConfiguration(): array
-    {
-        $configuration = function_exists('config') ? (array) config('db.performance.timeouts', []) : [];
-
-        return [
-            'enabled' => ($configuration['enabled'] ?? false) === true,
-            'statement_timeout_ms' => max(0, (int) ($configuration['statement_timeout_ms'] ?? 15000)),
-            'lock_wait_timeout_seconds' => max(1, (int) ($configuration['lock_wait_timeout_seconds'] ?? 15)),
-        ];
-    }
-
-    /**
-     * Apply best-effort per-session timeout and lock-wait settings.
-     *
-     * @return void
-     */
-    protected function applySessionPerformanceRules(): void
-    {
-        $configuration = $this->statementTimeoutConfiguration();
-        if (($configuration['enabled'] ?? false) !== true) {
-            return;
-        }
-
-        $pdo = $this->pdo[$this->connectionName] ?? null;
-        if (!$pdo instanceof \PDO) {
-            return;
-        }
-
-        try {
-            $lockWaitTimeout = (int) ($configuration['lock_wait_timeout_seconds'] ?? 15);
-            if ($lockWaitTimeout > 0) {
-                $pdo->exec('SET SESSION innodb_lock_wait_timeout = ' . $lockWaitTimeout);
-            }
-
-            $statementTimeoutMs = (int) ($configuration['statement_timeout_ms'] ?? 0);
-            if ($statementTimeoutMs > 0) {
-                $pdo->exec('SET SESSION MAX_EXECUTION_TIME = ' . $statementTimeoutMs);
-            }
-        } catch (\Throwable $e) {
-            // Session-level tuning is best effort and should not break connection establishment.
-        }
-    }
-
-    /**
-     * Decide whether a throwable qualifies for retry as a transient database failure.
-     *
-     * @param \Throwable $throwable
-     * @return bool
-     */
-    protected function shouldRetryThrowable(\Throwable $throwable): bool
-    {
-        if (!$throwable instanceof \PDOException) {
-            return false;
-        }
-
-        $sqlState = (string) ($throwable->errorInfo[0] ?? '');
-        $driverCode = (int) ($throwable->errorInfo[1] ?? 0);
-        $message = strtolower($throwable->getMessage());
-
-        if (in_array($sqlState, ['40001', '40P01'], true)) {
-            return true;
-        }
-
-        if (in_array($driverCode, [1205, 1213], true)) {
-            return true;
-        }
-
-        return str_contains($message, 'deadlock') || str_contains($message, 'lock wait timeout');
-    }
-
-    /**
-     * Execute an operation with retry semantics for transient lock and deadlock errors.
-     *
-     * @param callable $operation
-     * @return mixed
-     */
-    protected function executeWithRetry(callable $operation)
-    {
-        $configuration = $this->retryConfiguration();
-        $attempts = ($configuration['enabled'] ?? false) === true ? (int) $configuration['attempts'] : 1;
-        $delayMs = (int) ($configuration['delay_ms'] ?? 0);
-        $lastThrowable = null;
-
-        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
-            try {
-                return $operation();
-            } catch (\Throwable $throwable) {
-                $lastThrowable = $throwable;
-
-                if ($attempt >= $attempts || !$this->shouldRetryThrowable($throwable)) {
-                    throw $throwable;
-                }
-
-                if ($delayMs > 0) {
-                    usleep($delayMs * 1000);
-                }
-            }
-        }
-
-        if ($lastThrowable instanceof \Throwable) {
-            throw $lastThrowable;
-        }
-
-        return null;
-    }
 
     # HELPER SECTION
 
@@ -6140,24 +3346,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             // Construct new SELECT part with table.*
             $selectPart = implode(', ', array_map(fn($table) => "`$table`.*", $tables));
             $query = preg_replace('/SELECT\s+\*\s+FROM/i', "SELECT $selectPart FROM", $query, 1);
-        } else if (preg_match('/SELECT\s+(.*?)\s+FROM\s+([\w]+)/i', $query, $matches)) {
-            // Scenario 2: SELECT fields FROM table (non-greedy to match first FROM)
-            $selectFields = $matches[1];
-            $tables = [$matches[2]];
-
-            // Add JOINed tables if present
-            if (preg_match_all('/JOIN\s+([\w]+)\s+/i', $query, $joinMatches)) {
-                $tables = array_merge($tables, $joinMatches[1]);
-            }
-
-            // Add .* only for tables not in select fields
-            foreach ($tables as $table) {
-                if (!preg_match("/\b$table\.\*/", $selectFields)) {
-                    $selectFields .= ", $table.*";
-                }
-            }
-
-            $query = preg_replace('/SELECT\s+(.*?)\s+FROM/i', "SELECT $selectFields FROM", $query, 1);
+        } else {
+            return $query;
         }
 
         return $query;
@@ -6241,125 +3431,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return in_array($column, $columns, true);
     }
 
-    /**
-     * Register a correlated aggregate subquery on the current select list.
-     *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param string $aggregate_function
-     * @param string|null $column
-     * @param \Closure|null $callback
-     * @param array $alias_keywords
-     * @return $this
-     */
-    private function withAggregate($alias, $table, $foreign_key, $local_key, $aggregate_function, $column = null, ?\Closure $callback = null, array $alias_keywords = [])
-    {
-        // Validate required parameters
-        $required_params = [$alias, $table, $foreign_key, $local_key, $aggregate_function];
-        if (in_array($aggregate_function, ['SUM', 'AVG', 'MIN', 'MAX']) && empty($column)) {
-            $required_params[] = $column;
-        }
-
-        foreach ($required_params as $param) {
-            if (empty($param)) {
-                throw new \InvalidArgumentException("Missing required parameters for with{$aggregate_function}()");
-            }
-        }
-
-        if (!is_string($alias)) {
-            throw new \InvalidArgumentException('Alias must be a string');
-        }
-
-        if (!empty($column) && !is_string($column)) {
-            throw new \InvalidArgumentException('Column must be a string');
-        }
-
-        // Check if alias contains any of the keywords, if not append the first one
-        $alias_contains_keyword = false;
-        foreach ($alias_keywords as $keyword) {
-            if (stripos($alias, $keyword) !== false) {
-                $alias_contains_keyword = true;
-                break;
-            }
-        }
-
-        if (!$alias_contains_keyword && !empty($alias_keywords)) {
-            $alias .= '_' . strtolower($alias_keywords[0]);
-        }
-
-        // Build the aggregate subquery based on function type
-        switch ($aggregate_function) {
-            case 'COUNT':
-                $subquery = "SELECT COUNT(1) FROM `{$table}` WHERE `{$foreign_key}` = `{$this->table}`.`{$local_key}`";
-                break;
-            case 'SUM':
-                $subquery = "SELECT COALESCE(SUM(`{$column}`), 0) FROM `{$table}` WHERE `{$foreign_key}` = `{$this->table}`.`{$local_key}`";
-                break;
-            case 'AVG':
-                $subquery = "SELECT COALESCE(AVG(`{$column}`), 0) FROM `{$table}` WHERE `{$foreign_key}` = `{$this->table}`.`{$local_key}`";
-                break;
-            case 'MIN':
-                $subquery = "SELECT MIN(`{$column}`) FROM `{$table}` WHERE `{$foreign_key}` = `{$this->table}`.`{$local_key}`";
-                break;
-            case 'MAX':
-                $subquery = "SELECT MAX(`{$column}`) FROM `{$table}` WHERE `{$foreign_key}` = `{$this->table}`.`{$local_key}`";
-                break;
-            default:
-                throw new \InvalidArgumentException("Unsupported aggregate function: {$aggregate_function}");
-        }
-
-        // If a closure is provided, apply additional conditions
-        if ($callback !== null && is_callable($callback)) {
-            // Create a new query builder instance for the subquery (lightweight, avoids cloning full state/PDO)
-            $subQueryBuilder = $this->createSubQueryBuilder();
-            $subQueryBuilder->table = $table; // Set the subquery table
-
-            // Execute the closure with the subquery builder
-            $callback($subQueryBuilder);
-
-            // Extract the WHERE conditions from the subquery builder
-            if (!empty($subQueryBuilder->where)) {
-                // Remove the leading 'WHERE' if present and add to our subquery
-                $whereClause = $subQueryBuilder->where;
-                if (stripos($whereClause, 'WHERE') === 0) {
-                    $whereClause = substr($whereClause, 5); // Remove 'WHERE'
-                }
-                $subquery .= " AND " . trim($whereClause);
-            }
-
-            if (!empty($subQueryBuilder->_binds)) {
-                // Check if positional or named parameters are used
-                $hasPositional = strpos($subquery, '?') !== false;
-                $hasNamed = preg_match('/:\w+/', $subquery);
-
-                foreach ($subQueryBuilder->_binds as $key => $value) {
-                    $quotedValue = is_numeric($value) ? $value : (is_string($value) ? $this->pdo[$subQueryBuilder->connectionName]->quote($value, \PDO::PARAM_STR) : htmlspecialchars($value ?? ''));
-
-                    if ($hasPositional) {
-                        // Positional parameter: replace with quoted value
-                        if (is_numeric($key)) {
-                            $subquery = preg_replace('/\?/', $quotedValue, $subquery, 1);
-                        } else {
-                            throw new \PDOException('Positional parameters require numeric keys', 400);
-                        }
-                    } else if ($hasNamed) {
-                        // Named parameter: replace with quoted value
-                        $subquery = str_replace(':' . $key, $quotedValue, $subquery);
-                    } else {
-                        throw new \PDOException('Query must contain either positional (?) or named (:number, :param) placeholders', 400);
-                    }
-                }
-            }
-
-            // Clean up
-            unset($subQueryBuilder);
-        }
-
-        $this->selectRaw($this->column . ", ({$subquery}) as `$alias`");
-        return $this;
-    }
 
     /**
      * Analyzes the currently selected table.
@@ -6553,130 +3624,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
-     * Add a where exists clause for a related table with support for nested conditions
-     *
-     * @param string $relationTable The related table to query against
-     * @param string $foreignKey The foreign key on the related table
-     * @param string $localKey The local key on the main table
-     * @param \Closure|null $callback Optional callback for additional conditions
-     * @param string $operator The boolean operator (AND/OR)
-     * @param string $comparison The comparison operator (EXISTS/NOT EXISTS)
-     * @return $this
-     */
-    /**
-     * Build an EXISTS or NOT EXISTS subquery for relationship predicates.
-     *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
-     * @param string $operator
-     * @param string $comparison
-     * @return $this
-     */
-    private function _buildWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null, string $operator = 'AND', string $comparison = 'EXISTS')
-    {
-        // Validate table and column names
-        $this->validateTableName($relationTable, 'Relation table');
-        $this->validateColumn($foreignKey, 'Foreign key');
-        $this->validateColumn($localKey, 'Local key');
-
-        // Create a lightweight query builder for the subquery
-        $subQueryBuilder = $this->createSubQueryBuilder();
-        $subQueryBuilder->table = $relationTable;
-
-        $safeRelationTable = '`' . str_replace('`', '``', $relationTable) . '`';
-        $safeForeignKey = $safeRelationTable . '.`' . str_replace('`', '``', $foreignKey) . '`';
-        $safeLocalKey = $this->_escapeJoinColumn($localKey);
-
-        $subquery = "SELECT 1 FROM {$safeRelationTable}";
-
-        if (!empty($subQueryBuilder->joins)) {
-            $subquery .= ' ' . trim($subQueryBuilder->joins);
-        }
-
-        $subConditions = ["{$safeForeignKey} = {$safeLocalKey}"];
-
-        // If a callback is provided, apply additional conditions
-        if ($callback !== null && $callback instanceof \Closure) {
-            // Execute the callback with the subquery builder
-            $callback($subQueryBuilder);
-        }
-
-        if (!empty($subQueryBuilder->joins)) {
-            $subquery = "SELECT 1 FROM {$safeRelationTable} " . trim($subQueryBuilder->joins);
-        }
-
-        if (!empty($subQueryBuilder->where)) {
-            $subConditions[] = '(' . trim($subQueryBuilder->where) . ')';
-        }
-
-        $subquery .= ' WHERE ' . implode(' AND ', $subConditions);
-
-        // Close the EXISTS clause and add to the main query
-        $fullQuery = "{$comparison} ({$subquery})";
-        $this->whereRaw($fullQuery, $subQueryBuilder->_binds ?? [], $operator);
-
-        return $this;
-    }
-
-    /**
-     * Add an EXISTS predicate for a related table.
-     *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
-     * @return $this
-     */
-    public function whereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
-    {
-        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'AND', 'EXISTS');
-    }
-
-    /**
-     * Add an OR EXISTS predicate for a related table.
-     *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
-     * @return $this
-     */
-    public function orWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
-    {
-        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'OR', 'EXISTS');
-    }
-
-    /**
-     * Add a NOT EXISTS predicate for a related table.
-     *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
-     * @return $this
-     */
-    public function whereDoesntHave($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
-    {
-        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'AND', 'NOT EXISTS');
-    }
-
-    /**
-     * Add an OR NOT EXISTS predicate for a related table.
-     *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
-     * @return $this
-     */
-    public function orWhereDoesntHave($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
-    {
-        return $this->_buildWhereHas($relationTable, $foreignKey, $localKey, $callback, 'OR', 'NOT EXISTS');
-    }
-
-    /**
      * Prepare a statement using the statement cache for better performance
      *
      * @param string $query SQL query
@@ -6689,16 +3636,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $query,
             $this->connectionName
         );
-    }
-
-    /**
-     * Cleanup idle connections periodically
-     *
-     * @return void
-     */
-    public function cleanupConnections()
-    {
-        ConnectionPool::cleanupIdleConnections();
     }
 
     /**

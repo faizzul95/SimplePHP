@@ -112,6 +112,34 @@ interface QueryInterface
     public function value(string $column);
 
     /**
+     * Find a single record by its primary key.
+     *
+     * @param mixed $id Primary key value.
+     * @param array|string $columns Optional select list.
+     * @return mixed
+     */
+    public function find($id, $columns = ['*']);
+
+    /**
+     * Find multiple records by their primary keys.
+     *
+     * @param array $ids Primary key values.
+     * @param array|string $columns Optional select list.
+     * @return mixed
+     */
+    public function findMany(array $ids, $columns = ['*']);
+
+    /**
+     * Find a single record by its primary key or throw when it does not exist.
+     *
+     * @param mixed $id Primary key value.
+     * @param array|string $columns Optional select list.
+     * @return mixed
+     * @throws \Exception
+     */
+    public function findOrFail($id, $columns = ['*']);
+
+    /**
      * Get the first record or throw an exception
      *
      * @param string|null $table Optional table name
@@ -142,7 +170,7 @@ interface QueryInterface
     /**
      * Returns a generator that yields results one by one using a database cursor.
      *
-     * @param int $size The size of each chunk.
+        * @param int $chunkSize The size of each chunk.
      * @return \Generator
      */
     public function cursor(int $chunkSize);
@@ -150,7 +178,7 @@ interface QueryInterface
     /**
      * Returns a lazy collection for iterating over the results.
      *
-     * @param int $size The size of each chunk.
+        * @param int $chunkSize The size of each chunk.
      * @return \Traversable
      */
     public function lazy(int $chunkSize);

@@ -117,6 +117,32 @@ final class ChunkIterationOptimizationTest extends TestCase
         self::assertSame([[['name' => 'alpha']]], $chunks);
     }
 
+    public function testChunkUsesKeysetPaginationForExplicitSelectsThatIncludeTheKeyColumn(): void
+    {
+        $database = new ChunkIterationOptimizationProbe();
+        $database->select(['id', 'name']);
+
+        $database->chunk(100, static function (array $rows) {
+            return true;
+        });
+
+        self::assertTrue($database->chunkByIdCalled);
+        self::assertSame(0, $database->getCalls);
+    }
+
+    public function testChunkUsesKeysetPaginationForAscendingKeyOrder(): void
+    {
+        $database = new ChunkIterationOptimizationProbe();
+        $database->orderBy('id', 'ASC');
+
+        $database->chunk(100, static function (array $rows) {
+            return true;
+        });
+
+        self::assertTrue($database->chunkByIdCalled);
+        self::assertSame(0, $database->getCalls);
+    }
+
     public function testCursorUsesKeysetPaginationWhenQueryShapeIsEligible(): void
     {
         $database = new ChunkIterationOptimizationProbe();
@@ -194,5 +220,99 @@ final class ChunkIterationOptimizationTest extends TestCase
 
         self::assertSame(['user_id' => 10, 'title' => 'first'], $result[0]['post']);
         self::assertNull($result[1]['post']);
+    }
+}
+
+final class KeysetLimitPreservingProbe extends BaseDatabase
+{
+    /** @var array<int, array{id:int}> */
+    private array $records;
+
+    public function __construct()
+    {
+        $this->table = 'users';
+        $this->column = '*';
+        $this->records = array_map(static fn (int $id): array => ['id' => $id], range(1, 10));
+    }
+
+    public function connect($connectionID = null) { return $this; }
+    public function whereDate($column, $operator = null, $value = null) { return $this; }
+    public function orWhereDate($column, $operator = null, $value = null) { return $this; }
+    public function whereDay($column, $operator = null, $value = null) { return $this; }
+    public function orWhereDay($column, $operator = null, $value = null) { return $this; }
+    public function whereMonth($column, $operator = null, $value = null) { return $this; }
+    public function orWhereMonth($column, $operator = null, $value = null) { return $this; }
+    public function whereYear($column, $operator = null, $value = null) { return $this; }
+    public function orWhereYear($column, $operator = null, $value = null) { return $this; }
+    public function whereTime($column, $operator = null, $value = null) { return $this; }
+    public function orWhereTime($column, $operator = null, $value = null) { return $this; }
+    public function whereJsonContains($columnName, $jsonPath, $value) { return $this; }
+    public function count($table = null) { return count($this->records); }
+    public function exists($table = null) { return !empty($this->records); }
+    public function _getLimitOffsetPaginate($query, $limit, $offset) { return $query; }
+    public function batchInsert($data) { return []; }
+    public function batchUpdate($data) { return []; }
+    public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
+    protected function sanitizeColumn($data) { return $data; }
+
+    public function limit($limit)
+    {
+        $this->limit = 'LIMIT ' . (int) $limit;
+        return $this;
+    }
+
+    public function offset($offset)
+    {
+        $this->offset = 'OFFSET ' . (int) $offset;
+        return $this;
+    }
+
+    public function hasColumn($column)
+    {
+        return $column === 'id';
+    }
+
+    public function get($table = null)
+    {
+        preg_match('/LIMIT\s+(\d+)/i', (string) $this->limit, $limitMatches);
+        $limit = isset($limitMatches[1]) ? (int) $limitMatches[1] : count($this->records);
+
+        $lastId = null;
+        if (!empty($this->_binds)) {
+            $lastId = (int) end($this->_binds);
+            reset($this->_binds);
+        }
+
+        $rows = array_values(array_filter(
+            $this->records,
+            static fn (array $row): bool => $lastId === null || $row['id'] > $lastId
+        ));
+
+        return array_slice($rows, 0, $limit);
+    }
+}
+
+final class KeysetLimitPreservingTest extends TestCase
+{
+    public function testChunkByIdRespectsOriginalLimit(): void
+    {
+        $database = new KeysetLimitPreservingProbe();
+        $chunks = [];
+
+        $database->limit(3)->chunkById(2, function (array $rows) use (&$chunks) {
+            $chunks[] = array_column($rows, 'id');
+            return true;
+        });
+
+        self::assertSame([[1, 2], [3]], $chunks);
+    }
+
+    public function testLazyByIdRespectsOriginalLimit(): void
+    {
+        $database = new KeysetLimitPreservingProbe();
+
+        $rows = iterator_to_array($database->limit(3)->lazyById(2), false);
+
+        self::assertSame([1, 2, 3], array_column($rows, 'id'));
     }
 }

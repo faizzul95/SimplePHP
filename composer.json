@@ -19,7 +19,7 @@
         "process-timeout": 4000
     },
     "require": {
-        "php": ">=8.0",
+        "php": ">=8.2",
         "phpmailer/phpmailer": "^6.10",
         "google/apiclient": "^2.18"
     },
