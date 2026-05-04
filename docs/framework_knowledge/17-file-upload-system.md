@@ -1,12 +1,79 @@
 # 17. File Upload System
 
+## Upload Security Pipeline
+
+The upload pipeline enforces multiple independent layers of validation before any file touches disk:
+
+```
+Browser/API → ValidateUploadGuard middleware (entity type/folder/MIME policy)
+           → Files::upload() / uploadBase64Image()
+           → assertValidUploadArray()  — PHP error code, UPLOAD_ERR_INI_SIZE
+           → assertUploadedFile()      — is_uploaded_file() source verification (prevents tmp_name forgery)
+           → size check (PHP ini vs configured max)
+           → analyzeFile():
+               ├─ canReadPath() + is_link() check (no symlink traversal)
+               ├─ isSafeUploadFilename() — null bytes, path traversal, XSS, Windows reserved names, length
+               ├─ filesize() — empty file guard + second max-size check
+               ├─ detectMimeType()        — finfo (primary) → mime_content_type() (fallback)
+               │                           NEVER trusts $_FILES['type'] or Content-Type header
+               ├─ isBlockedUploadMimeType() — deny-list: text/html, application/x-php, etc.
+               ├─ assertMimeAllowed()     — positive allow-list from setAllowedMimeTypes()
+               ├─ extension from detected MIME (not filename!) → isBlockedUploadExtension()
+               ├─ assertValidImage()      — getimagesize() + dimension/pixel bomb guard
+               └─ inspectDocumentContent() — streaming CSV/JSON/XML/text scan (opt-in)
+           → storeAnalyzedFile():
+               ├─ reserveTargetPath()     — bin2hex(random_bytes(16)) filename
+               ├─ move_uploaded_file()    — PHP-level atomicity for browser uploads
+               └─ chmod(0644)             — deny execute on stored files
+```
+
+### Key Security Properties
+
+| Property | Implementation |
+|----------|---------------|
+| MIME detection | `finfo::file()` on actual bytes — `$_FILES['type']` is never trusted |
+| Extension from MIME | Extension is derived from detected MIME type, not the original filename — double-extension bypass (`file.php.jpg`) blocked |
+| Stored filename | `bin2hex(random_bytes(16))` — no original filename in storage path |
+| Source verification | `is_uploaded_file()` validates the temp path before any read |
+| Symlink traversal | `is_link()` check prevents attack via symlinked temp files |
+| Pixel bomb | `getimagesize()` + width/height/pixel cap (default: 6000×6000, 24M pixels) |
+| Base64 size | Decoded size estimated from base64 string length before decode — prevents memory exhaustion |
+| Document content | Optional streaming scanner: SQL injection, XSS, wrapper abuse per cell/line |
+| GD re-encoding | Images re-created through GD (`imagecreatefromjpeg/png/gif/webp`) — strips EXIF payloads and embedded PHP tags |
+| Execute bit | `chmod(0644)` on all stored files — web server cannot execute them |
+
+### Blocked Extensions (Default)
+
+```
+php, phtml, phar, php3, php4, php5, php7, phps, cgi, pl, asp, aspx, jsp,
+sh, bat, exe, dll, htaccess, htpasswd
+```
+
+### Blocked MIME Types (Default)
+
+```
+text/html, application/x-php, application/php, text/php, application/x-httpd-php,
+application/x-httpd-php-source, application/x-sh, application/x-csh
+```
+
+SVG (`image/svg+xml`) is intentionally **not** in the default MIME allow-list — SVG can embed JavaScript. Add it only when you have an SVG sanitization step in place.
+
 ## Files Component (`Components\Files`)
+
+### Extension Resolution
+
+Extension is always derived from the **detected MIME type**, not from the original filename.  
+The component uses a `$mimeToExtension` lookup table as the primary map. When the detected MIME type is not in that table (e.g. `application/vnd.openxmlformats-officedocument.wordprocessingml.document` for DOCX, video and audio types, etc.), it falls back to `extensionFromMimeType()` which parses the MIME subtype. This means DOCX, XLSX, PPTX, MP4, MP3, and similar types are accepted correctly instead of throwing "Unsupported file type."
+
+The extension derived from MIME — never from the user-supplied filename — is what gets checked against `isBlockedUploadExtension()`, closing the classic double-extension bypass (`file.php.docx`).
 
 ## Security Component (`Components\Security`)
 
 ## Legacy Upload Helper Compatibility (`app/helpers/custom_upload_helper.php`)
 
 The project still exposes legacy helper functions on top of the newer `Files` and `Security` components for controller/service compatibility.
+
+> ⚠️ **`compressImageonthego()` is deprecated.** Use `Files::uploadBase64Image()` or GD processing via the Files component instead. The legacy helper was rewritten to fix: null guard on `getimagesize()` return, GD resource memory leak (`imagedestroy()`), insecure `rand()` → `bin2hex(random_bytes(8))` for temp filenames, hardcoded `images/` path → `ROOT_DIR . 'public/upload/tmp/'`, and removal of `echo` output.
 
 Current helper behavior:
 

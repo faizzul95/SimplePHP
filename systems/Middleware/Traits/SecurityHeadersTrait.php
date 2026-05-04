@@ -4,6 +4,24 @@ namespace Middleware\Traits;
 
 trait SecurityHeadersTrait
 {
+	/**
+	 * Return the CSP nonce for the current request.
+	 * Delegates to \Core\Security\CspNonce so the same value is shared
+	 * between the security-headers middleware and the Blade view engine.
+	 */
+	public static function getNonce(): string
+	{
+		return \Core\Security\CspNonce::get();
+	}
+
+	/**
+	 * Reset the nonce. Useful in tests or long-running workers between requests.
+	 */
+	public static function resetNonce(): void
+	{
+		\Core\Security\CspNonce::reset();
+	}
+
 	public function set_security_headers()
 	{
 		$security = \config('security') ?? [];
@@ -44,6 +62,27 @@ trait SecurityHeadersTrait
 
 			$cspConfig = array_merge($cspDefaults, $csp);
 			unset($cspConfig['enabled']);
+
+			// Inject per-request nonce into script-src and style-src when CSP nonce
+			// is enabled via security.csp.nonce_enabled. The nonce replaces the need
+			// for 'unsafe-inline' on a per-element basis.
+			$nonceEnabled = ($csp['nonce_enabled'] ?? false) === true;
+			if ($nonceEnabled) {
+				$nonce       = \Core\Security\CspNonce::get();
+				$nonceSource = "'nonce-{$nonce}'";
+				foreach (['script-src', 'style-src'] as $nonceDirective) {
+					if (isset($cspConfig[$nonceDirective]) && is_array($cspConfig[$nonceDirective])) {
+						// Remove 'unsafe-inline' when nonce is active — nonce supersedes it
+						$cspConfig[$nonceDirective] = array_filter(
+							$cspConfig[$nonceDirective],
+							static fn($s) => $s !== "'unsafe-inline'"
+						);
+						$cspConfig[$nonceDirective][] = $nonceSource;
+						$cspConfig[$nonceDirective] = array_values($cspConfig[$nonceDirective]);
+					}
+				}
+			}
+			unset($cspConfig['nonce_enabled']);
 
 			foreach ($cspConfig as $directive => $sources) {
 				if (is_array($sources) && !empty($sources)) {

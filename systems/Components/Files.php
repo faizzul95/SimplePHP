@@ -692,7 +692,7 @@ class Files
 
         $this->assertMimeAllowed($mime);
 
-        $extension = $this->mimeToExtension[$mime] ?? null;
+        $extension = $this->mimeToExtension[$mime] ?? $this->extensionFromMimeType($mime);
         if ($extension === null) {
             throw new \RuntimeException('Unsupported file type.');
         }

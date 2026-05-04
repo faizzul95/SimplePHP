@@ -219,7 +219,7 @@ Redirect behavior:
 - CSP directives (configuration-driven).
 - Permissions-Policy (configuration-driven).
 - Trusted proxy IP list (controls forwarded-IP trust in `Request::ip()`).
-
+- **CSP Nonce** — when `csp.nonce_enabled = true` in `app/config/security.php`, `SetSecurityHeaders` removes `'unsafe-inline'` from `script-src`/`style-src` and injects a per-request `'nonce-{value}'` derived from `Core\Security\CspNonce::get()`. Blade templates access the same value via `$csp_nonce` or the `@nonce` directive. See [29-cursor-pagination-n1-csp.md](29-cursor-pagination-n1-csp.md#4-csp-nonce-coresecuritycspnonce) for full documentation.
 ## API Whitelist Notes
 
 - `api.url_whitelist` accepts either full API paths such as `/api/v1/auth/login` or normalized internal paths such as `v1/auth/login`.

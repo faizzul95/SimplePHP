@@ -30,6 +30,24 @@ class PerformanceMonitor
     protected static $slowQueries = [];
 
     /**
+     * @var array<string, array{sql: string, count: int}> Per-request SELECT fingerprints for N+1 detection.
+     * Key: md5 of normalized SQL. Value: array with SQL preview and execution count.
+     */
+    protected static array $queryFingerprints = [];
+
+    /**
+     * @var int Number of repeated identical query patterns that triggers an N+1 warning.
+     * Override via PerformanceMonitor::setN1WarnThreshold().
+     */
+    protected static int $n1WarnThreshold = 30;
+
+    /**
+     * @var bool Track query fingerprints for N+1 detection even when monitoring is disabled.
+     * Enabled automatically when APP_DEBUG is true.
+     */
+    protected static bool $n1DetectionEnabled = false;
+
+    /**
      * @var float Slow query threshold in seconds
      */
     protected static $slowQueryThreshold = 1.0;
@@ -150,8 +168,14 @@ class PerformanceMonitor
             $entry['backtrace'] = $timer['backtrace'];
         }
 
+        // Track query fingerprint for N+1 detection (full-profiling path)
+        self::trackQueryFingerprint($entry['sql']);
+
         // Add to query log
         self::addToLog($entry);
+
+        // Track query fingerprint for N+1 detection
+        self::trackQueryFingerprint($entry['sql']);
 
         // Update statistics
         self::updateStats($executionTime, $memoryUsed, $queryType);
@@ -184,6 +208,123 @@ class PerformanceMonitor
         if (count(self::$queryLog) > self::$maxLogSize) {
             array_shift(self::$queryLog);
         }
+    }
+
+    /**
+     * Lightweight N+1 tracking entry-point used when full profiling is OFF.
+     * Called from HasProfiling::_startProfiler() before the profiling guard.
+     * No-ops when both conditions are already handled elsewhere.
+     *
+     * @param string $sql Raw SQL string
+     * @return void
+     */
+    public static function trackSql(string $sql): void
+    {
+        // Only active in N+1-detection-only mode.
+        // When full profiling is on, endQuery() handles tracking to avoid double-counting.
+        if (!self::$n1DetectionEnabled || self::$enabled) {
+            return;
+        }
+        self::trackQueryFingerprint($sql);
+    }
+
+    /**
+     * Track the normalized SQL fingerprint and emit an N+1 warning when the
+     * same query pattern is executed more than $n1WarnThreshold times in one request.
+     *
+     * Only SELECT queries are inspected — repeated INSERTs/UPDATEs in loops
+     * are a separate concern (batching) and not flagged here.
+     *
+     * @param string $sql Raw SQL (may contain PDO ? placeholders)
+     * @return void
+     */
+    protected static function trackQueryFingerprint(string $sql): void
+    {
+        if (!self::$n1DetectionEnabled && !self::$enabled) {
+            return;
+        }
+
+        // Only watch SELECT statements — N+1 is specifically a read-loop issue
+        $firstWord = strtoupper(substr(ltrim($sql), 0, 6));
+        if ($firstWord !== 'SELECT') {
+            return;
+        }
+
+        // Normalize: collapse whitespace to produce a stable fingerprint
+        $normalized = preg_replace('/\s+/', ' ', strtolower(trim($sql))) ?? $sql;
+        $key        = md5($normalized);
+
+        $prev  = self::$queryFingerprints[$key] ?? ['sql' => $sql, 'count' => 0];
+        $count = $prev['count'] + 1;
+        self::$queryFingerprints[$key] = ['sql' => $prev['sql'], 'count' => $count];
+
+        // Warn once — exactly at the threshold to avoid log flooding
+        if ($count === self::$n1WarnThreshold) {
+            $preview = strlen($sql) > 120 ? substr($sql, 0, 120) . '...' : $sql;
+            $message = sprintf(
+                '[N+1 DETECTED] Query pattern executed %d times in one request. SQL: %s',
+                $count,
+                $preview
+            );
+
+            // Use the framework logger when available, fall back to error_log
+            if (function_exists('logger') && is_callable(['Components\Logger', 'log_warning'])) {
+                try {
+                    logger()->log_warning($message);
+                } catch (\Throwable) {
+                    error_log($message);
+                }
+            } else {
+                error_log($message);
+            }
+        }
+    }
+
+    /**
+     * Return all query patterns that exceeded the N+1 detection threshold
+     * during the current request, sorted by execution count descending.
+     *
+     * Reads from $queryFingerprints so it works correctly whether full
+     * profiling is enabled or only N+1 detection is active.
+     *
+     * Useful in debug bars, development dashboards, or integration tests:
+     *   $suspects = PerformanceMonitor::getN1Suspects();
+     *
+     * @return array{sql: string, count: int}[]
+     */
+    public static function getN1Suspects(): array
+    {
+        $suspects = array_values(
+            array_filter(
+                self::$queryFingerprints,
+                static fn($entry) => $entry['count'] >= self::$n1WarnThreshold
+            )
+        );
+        usort($suspects, static fn($a, $b) => $b['count'] <=> $a['count']);
+        return $suspects;
+    }
+
+    /**
+     * Set the repeated-query count that triggers an N+1 warning.
+     *
+     * @param int $threshold Minimum repeat count before warning is emitted (min 2)
+     * @return void
+     */
+    public static function setN1WarnThreshold(int $threshold): void
+    {
+        self::$n1WarnThreshold = max(2, $threshold);
+    }
+
+    /**
+     * Explicitly enable or disable N+1 fingerprint tracking independent of
+     * the main monitoring toggle. Set to true when APP_DEBUG is on.
+     *
+     * @param bool $enabled
+     * @return void
+     */
+    public static function setN1DetectionEnabled(bool $enabled): void
+    {
+        self::$n1DetectionEnabled = $enabled;
     }
 
     /**
@@ -443,25 +584,26 @@ class PerformanceMonitor
      */
     public static function reset()
     {
-        self::$queryLog = [];
-        self::$slowQueries = [];
-        self::$timers = [];
-        self::$captureBacktraces = false;
+        self::$queryLog           = [];
+        self::$slowQueries        = [];
+        self::$timers             = [];
+        self::$captureBacktraces  = false;
+        self::$queryFingerprints  = [];
         self::$stats = [
             'total_queries' => 0,
-            'slow_queries' => 0,
-            'total_time' => 0,
-            'avg_time' => 0,
-            'max_time' => 0,
-            'min_time' => PHP_FLOAT_MAX,
-            'memory_peak' => 0,
+            'slow_queries'  => 0,
+            'total_time'    => 0,
+            'avg_time'      => 0,
+            'max_time'      => 0,
+            'min_time'      => PHP_FLOAT_MAX,
+            'memory_peak'   => 0,
             'by_type' => [
                 'select' => ['count' => 0, 'time' => 0.0],
                 'insert' => ['count' => 0, 'time' => 0.0],
                 'update' => ['count' => 0, 'time' => 0.0],
                 'delete' => ['count' => 0, 'time' => 0.0],
-                'other' => ['count' => 0, 'time' => 0.0]
-            ]
+                'other'  => ['count' => 0, 'time' => 0.0],
+            ],
         ];
     }
 

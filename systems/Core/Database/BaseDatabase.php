@@ -438,8 +438,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         if ($this->enableProfiling) {
             PerformanceMonitor::enable();
+            PerformanceMonitor::setN1DetectionEnabled(true);
         } else {
             PerformanceMonitor::disable();
+            // Keep N+1 detection active in debug mode even when profiling is off
+            $debugMode = function_exists('env') && (bool) env('APP_DEBUG', false);
+            PerformanceMonitor::setN1DetectionEnabled($debugMode);
         }
 
         return $this;

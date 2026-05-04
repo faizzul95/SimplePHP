@@ -53,6 +53,11 @@ trait HasProfiling
      */
     protected function _startProfiler($method)
     {
+        // Always track SQL for N+1 detection — independent of full profiling toggle.
+        if (!empty($this->_query)) {
+            PerformanceMonitor::trackSql($this->_query);
+        }
+
         if (!$this->enableProfiling) {
             return;
         }

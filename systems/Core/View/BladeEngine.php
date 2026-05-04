@@ -177,6 +177,11 @@ class BladeEngine
             $shared['errors'] = validationErrors();
         }
 
+        // Expose the per-request CSP nonce to all views as $csp_nonce.
+        // Use in templates: <script nonce="{{ $csp_nonce }}">
+        // Or with the @nonce directive: <script @nonce src="app.js"></script>
+        $shared['csp_nonce'] = \Core\Security\CspNonce::get();
+
         $this->cachedSharedViewData = $shared;
         return $shared;
     }
@@ -454,6 +459,9 @@ class BladeEngine
             '@php'           => '<?php ',
             '@endphp'        => ' ?>',
             '@endsession'    => '<?php endif; ?>',
+            // Outputs nonce="{value}" attribute — use inside <script> or <style> tags:
+            // <script @nonce src="app.js"></script>
+            '@nonce'         => '<?php echo \'nonce="\' . htmlspecialchars((string)(\Core\Security\CspNonce::get()), ENT_QUOTES, \'UTF-8\') . \'"\'; ?>',
         ]);
 
         $content = $this->compileYieldDirectives($content);

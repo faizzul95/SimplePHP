@@ -36,7 +36,7 @@ class Request
 
     public static function capture(): self
     {
-        $request = new self($_GET, $_POST, $_SERVER, $_FILES);
+        $request = new self(self::stripNullBytes($_GET), self::stripNullBytes($_POST), $_SERVER, $_FILES);
 
         $rawBody = file_get_contents('php://input');
         $request->rawBody = is_string($rawBody) ? $rawBody : '';
@@ -44,12 +44,12 @@ class Request
         if ($request->isJson()) {
             $json = json_decode((string) $request->rawBody, true);
             if (is_array($json)) {
-                $request->request = array_merge($request->request, $json);
+                $request->request = array_merge($request->request, self::stripNullBytes($json));
             }
         } elseif (in_array($request->method(), ['PUT', 'PATCH', 'DELETE'], true) && $request->rawBody !== null) {
             parse_str($request->rawBody, $parsedBody);
             if (is_array($parsedBody) && !empty($parsedBody)) {
-                $request->request = array_merge($request->request, $parsedBody);
+                $request->request = array_merge($request->request, self::stripNullBytes($parsedBody));
             }
         }
 
@@ -645,5 +645,22 @@ class Request
         // Strip CR/LF/NUL from header values so upstream code that reflects
         // them into responses cannot be tricked into header/response splitting.
         return str_replace(["\r", "\n", "\0"], '', (string) $value);
+    }
+
+    /**
+     * Recursively strip null bytes (\x00) from all string values in an input array.
+     *
+     * Null bytes can truncate strings at the C level, bypass extension checks,
+     * and confuse filesystem operations. Stripping them globally at capture time
+     * ensures no downstream consumer needs to guard against them individually.
+     */
+    private static function stripNullBytes(array $input): array
+    {
+        array_walk_recursive($input, static function (&$value): void {
+            if (is_string($value)) {
+                $value = str_replace("\x00", '', $value);
+            }
+        });
+        return $input;
     }
 }

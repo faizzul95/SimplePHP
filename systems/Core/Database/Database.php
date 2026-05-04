@@ -4,6 +4,7 @@ namespace Core\Database;
 
 use Core\Database\Query\Grammars\QueryGrammar;
 use Core\Database\Schema\Grammars\SchemaGrammar;
+use Core\Database\PerformanceMonitor;
 
 /**
  * Database Class
@@ -34,6 +35,13 @@ class Database
         $driverClass = DriverRegistry::resolveClass($dbPlatform);
         $this->capabilities = DriverRegistry::capabilities($dbPlatform);
         $this->db = new $driverClass;
+
+        // Auto-enable N+1 detection when APP_DEBUG is on.
+        // This is cheap (array key increment) and produces actionable log warnings
+        // without requiring the developer to enable full profiling.
+        if (function_exists('env') && (bool) env('APP_DEBUG', false)) {
+            PerformanceMonitor::setN1DetectionEnabled(true);
+        }
     }
 
     public function capabilities(): DriverCapabilities

@@ -289,6 +289,8 @@
 | `paginate_ajax` | `paginate_ajax(array $dataPost)` | `array` | DataTables server-side compatible (reads `start`, `length`, `draw`, `search`, `order` from `$dataPost`) |
 | `setPaginateFilterColumn` | `setPaginateFilterColumn(array $cols): self` | `self` | Configure searchable columns for `paginate_ajax` |
 | `setAllowedSortColumns` | `setAllowedSortColumns(array $cols): self` | `self` | Configure the only columns `paginate_ajax` may order by |
+| `cursorPaginate` | `cursorPaginate(int $perPage, string $column, ?string $cursorToken): array` | `array` | **Keyset pagination** — O(1) at any depth. Returns `['data', 'per_page', 'has_more', 'next_cursor', 'prev_cursor']`. Cursor token is base64url JSON. |
+| `exportCsv` | `exportCsv(string $filename, array $columns = [], int $chunkSize = 500): void` | `void` | **Stream CSV to browser** — sends headers + UTF-8 BOM; uses `chunkById()` when eligible; O(1) peak memory per chunk. |
 | `chunk` | `chunk(int $size, callable $callback): void` | `void` | Process rows in fixed-size batches. Respects existing `limit()` if set. Callback receives `$rows` array per batch; return `false` to stop early. |
 | `cursor` | `cursor(int $chunkSize = 1000)` | `\Generator` | Yields rows one at a time from chunked reads |
 | `lazy` | `lazy(int $chunkSize = 1000)` | `LazyCollection` | Alternative to cursor. Returns `LazyCollection` |
@@ -300,6 +302,8 @@
 When `chunkById()` or `lazyById()` run against a builder that already had `LIMIT` applied, the original limit is preserved across keyset pages so iteration stops at the same row cap as the original query.
 
 `paginate_ajax()` now clamps unsafe client pagination input and can keep search columns separate from sortable columns. For DataTables-style endpoints, set both `setPaginateFilterColumn([...])` and `setAllowedSortColumns([...])` when the rendered table columns do not map 1:1 to searchable columns.
+
+For deep pagination (search results, API feeds, infinite scroll), use `cursorPaginate()` instead of `paginate()`. For bulk exports, use `exportCsv()` instead of buffering all rows in memory. See [29-cursor-pagination-n1-csp.md](29-cursor-pagination-n1-csp.md) for full documentation and examples.
 
 ### CRUD & Mutations
 

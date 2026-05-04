@@ -5,13 +5,13 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 ## Features
 
 - **Organized File Structure** - Clean separation of controllers, helpers, and core components
-- **Database Query Builder** - Fluent, expressive database interactions with Laravel-style eager loading — no models required
+- **Database Query Builder** - Fluent, expressive database interactions with Laravel-style eager loading — no models required; includes `cursorPaginate()` for keyset pagination and `exportCsv()` for memory-stable large-dataset exports
 - **Database Runtime Performance** - Persistent PDO connection reuse, in-request statement caching, APCu-backed cross-worker query warmth metadata, and focused query-builder concern traits
 - **Large Dataset Eager Loading** - Adaptive chunking plus incremental relation attach to keep memory usage stable on high-cardinality datasets
 - **Modern HTTP Router** - Fast indexed routing with middleware pipeline, named routes, route groups, multi-parameter routes, `where()` constraints, explicit `options()` support, and 405 Method Not Allowed detection
 - **Safer Redirect Helpers** - Convenience redirects are normalized to local app targets so route-level redirects do not silently become external redirects
 - **API Versioning** - Support for versioned (`/api/v1/users`) and non-versioned (`/api/users`) API routes via route group prefixing
-- **Blade-like Template Engine** - Template compilation with caching, includes `@forelse`, `@method`, `@error`, `@checked`, `@class`, and more
+- **Blade-like Template Engine** - Template compilation with caching, includes `@forelse`, `@method`, `@error`, `@checked`, `@class`, `@nonce` (CSP nonce attribute), and more
 - **Direct View Path Resolution** - Blade engine now accepts both dot notation (`errors.404`) and direct file paths (`app/views/errors/404.php`) safely
 - **Artisan-like Console** - CLI command system with argument parsing, scheduling (cron expressions), colored output, progress bars, and scaffolding generators
 - **Security Audit Command** - OWASP baseline checks with CI-friendly strict mode via `php myth security:audit --ci`
@@ -25,11 +25,13 @@ A lightweight PHP 8.0+ framework with modern features for rapid web application 
 - **Collection Class** - Fluent array wrapper with 60+ methods (map, filter, where, pluck, groupBy, reduce, etc.) inspired by Laravel Collection
 - **Cache System** - Unified cache API with file and array drivers, remember pattern, counters, and batch operations
 - **Job Queue** - Database-backed job queue with background workers, retries, failed job management, and delayed dispatch
-- **Configurable Security Headers** - CSP and Permissions-Policy built from config, not hardcoded — easily add CDN domains
+- **Configurable Security Headers** - CSP and Permissions-Policy built from config, not hardcoded — easily add CDN domains; **per-request CSP nonces** via `Core\Security\CspNonce` eliminate `'unsafe-inline'` in production
+- **Global Null Byte Stripping** - `Request::capture()` strips `\x00` from all GET, POST, JSON body, and PUT/PATCH/DELETE form inputs via `array_walk_recursive()`
+- **N+1 Query Detector** - `PerformanceMonitor` tracks SELECT fingerprints per request; warns via logger when same pattern fires ≥30 times; auto-enabled on `APP_DEBUG=true`
 - **Schema Builder** - Fluent, database-agnostic API for creating tables, indexes, procedures, functions, triggers, and views
 - **Migration System** - Versioned database schema changes with `up()`/`down()`, deploy.json tracking (no migration table needed), seeders, and `timestamps()`/`softDeletes()` shortcuts
 - **Backup System** - Spatie-like backup component for database and file backups with cron scheduling and automatic cleanup
-- **Request Handling** - Modern request/response utilities with FormRequest validation
+- **Request Handling** - Modern request/response utilities with FormRequest validation; global null byte stripping on all input vectors
 - **API Component** - Configurable multi-auth API authentication (session/token/JWT/API key/OAuth/Basic/Digest) with rate limiting, strict CORS preflight handling (`OPTIONS`), and SQL injection protection
 - **Middleware Traits** - Composable security traits (XSS protection, rate limiting, permissions) usable in custom middleware
 - **Environment Configuration** - Multi-environment support
@@ -150,6 +152,89 @@ Recent query-builder correctness hardening also includes:
 - grouped closure `where()` / `orWhere()` clauses reuse trusted builder-generated SQL instead of re-triggering raw-query guards
 - temporal `whereDate()` / `whereTime()` expressions now compile through quoted driver grammar expressions
 - explicit `SELECT col1, col2 ...` lists are no longer rewritten into wildcard table selects during query expansion
+
+### Cursor Pagination (Deep Pagination)
+
+Replace OFFSET-based pagination with keyset pagination for O(1) performance at any depth:
+
+```php
+// Controller or API handler
+$cursor = request()->input('cursor');  // null on first page
+
+$result = db()->table('users')
+    ->where('status', 1)
+    ->cursorPaginate(20, 'id', $cursor);
+
+// Response shape:
+// [
+//   'data'        => [...],               // page rows
+//   'per_page'    => 20,
+//   'has_more'    => true,
+//   'next_cursor' => 'eyJhZnRlciI6MTAwMH0',  // pass to next request
+//   'prev_cursor' => 'eyJiZWZvcmUiOjk4MX0',
+// ]
+```
+
+### Large-Dataset CSV Export
+
+Stream millions of rows directly to a browser download without a memory spike:
+
+```php
+// In a controller action — call before any output
+db()->table('orders')
+    ->where('status', 'completed')
+    ->whereBetween('created_at', [$from, $to])
+    ->exportCsv('orders-export.csv', ['id', 'customer_name', 'total', 'created_at'], 500);
+
+// Automatically uses chunkById() (keyset) when eligible, chunk() (OFFSET) otherwise.
+// Sends Content-Type: text/csv + Content-Disposition: attachment headers.
+// UTF-8 BOM included for correct Excel encoding.
+```
+
+### N+1 Query Detection
+
+Enable automatic N+1 detection in development (auto-active when `APP_DEBUG=true`):
+
+```php
+// Detect repeated SELECT patterns in the current request
+$suspects = \Core\Database\PerformanceMonitor::getN1Suspects();
+// [['sql' => 'SELECT * FROM orders WHERE user_id = ?', 'count' => 45], ...]
+
+// Tune the threshold (default: 30 identical SELECT patterns = warning)
+\Core\Database\PerformanceMonitor::setN1WarnThreshold(10);
+
+// Warning is emitted to the log automatically:
+// [N+1 DETECTED] Query pattern executed 30 times in one request. SQL: SELECT ...
+```
+
+### CSP Nonce Support
+
+Enable per-request Content Security Policy nonces for the strongest XSS defense:
+
+```php
+// app/config/security.php
+'csp' => [
+    'enabled'       => true,
+    'nonce_enabled' => true,   // removes 'unsafe-inline' automatically
+    'script-src'    => ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+    // ↑ 'unsafe-inline' is automatically stripped when nonce_enabled is true
+],
+```
+
+```html
+{{-- In Blade templates --}}
+<script @nonce src="/app.js"></script>
+{{-- renders: <script nonce="abc123base64"> --}}
+
+<style @nonce>
+    body { color: red; }
+</style>
+
+{{-- Or use the shared variable directly --}}
+<script nonce="{{ $csp_nonce }}">
+    // inline script
+</script>
+```
 
 ### Routing
 

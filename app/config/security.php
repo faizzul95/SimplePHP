@@ -83,7 +83,12 @@ $config['security'] = [
     | Set 'enabled' to false to disable CSP entirely.
     */
     'csp' => [
-        'enabled'     => true,
+        'enabled'      => true,
+        // Set to true to inject a per-request nonce into script-src and style-src.
+        // When active, 'unsafe-inline' is automatically removed from those directives
+        // so nonce-only inline scripts/styles are enforced. Use {{ $csp_nonce }} or
+        // @nonce in templates. Leave false until your CDN/inline scripts are nonce-aware.
+        'nonce_enabled' => false,
         'default-src' => ["'self'"],
         'script-src'  => [
             "'self'",

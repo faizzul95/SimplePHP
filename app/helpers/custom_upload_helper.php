@@ -234,6 +234,10 @@ function compress($source, $destination, $quality = '100')
     return $destination;
 }
 
+/**
+ * @deprecated Use files()->upload() with compress option, or a dedicated image processing service.
+ *             This function has no safe output channel and must not be called in HTTP context.
+ */
 function compressImageonthego($source, $quality)
 {
     if (!file_exists($source) || !is_readable($source)) {
@@ -241,18 +245,35 @@ function compressImageonthego($source, $quality)
     }
 
     $info = getimagesize($source);
-    $extension = explode(".", $source);
-    $newname = "temp" . rand(10, 100);
+    if ($info === false) {
+        throw new Exception("Unable to determine image type for: " . $source);
+    }
 
-    if ($info['mime'] == 'image/jpeg')
+    $image = null;
+    if ($info['mime'] === 'image/jpeg') {
         $image = imagecreatefromjpeg($source);
-    elseif ($info['mime'] == 'image/gif')
+    } elseif ($info['mime'] === 'image/gif') {
         $image = imagecreatefromgif($source);
-    elseif ($info['mime'] == 'image/png')
+    } elseif ($info['mime'] === 'image/png') {
         $image = imagecreatefrompng($source);
+    }
 
-    imagejpeg($image, "images/" . $newname . "." . $extension[1], $quality);
-    echo "<b>" . $newname . "." . $extension[1] . "</b>";
+    if ($image === false || $image === null) {
+        throw new Exception("Failed to create image resource from: " . $source);
+    }
+
+    $extension = pathinfo($source, PATHINFO_EXTENSION);
+    $uploadDir = defined('ROOT_DIR') ? ROOT_DIR . 'public/upload/tmp/' : sys_get_temp_dir() . '/';
+    if (!is_dir($uploadDir)) {
+        @mkdir($uploadDir, 0755, true);
+    }
+
+    $newname = bin2hex(random_bytes(8));
+    $dest = $uploadDir . $newname . '.' . $extension;
+    imagejpeg($image, $dest, (int) $quality);
+    imagedestroy($image);
+
+    return $dest;
 }
 
 function convertBase64String($base64String)

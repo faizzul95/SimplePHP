@@ -501,4 +501,188 @@ trait HasStreaming
             throw new \InvalidArgumentException("{$methodName}() alias must be a simple identifier.");
         }
     }
+
+    /**
+     * Keyset-based pagination suitable for UI page navigation.
+     *
+     * Unlike offset-based paginate(), this method uses a cursor token that encodes
+     * the last-seen key value so deep pages remain O(log n) regardless of page depth.
+     *
+     * Returns:
+     *   data        — rows for this page (up to $perPage)
+     *   per_page    — requested page size
+     *   has_more    — whether a next page exists
+     *   next_cursor — opaque token to pass as $cursorToken for the next page (null on last page)
+     *   prev_cursor — opaque token to navigate to the previous page (null on first page)
+     *
+     * Usage:
+     *   $page = db()->table('users')->where('status', 1)->cursorPaginate(20, 'id', request()->input('cursor'));
+     *   // Next page: ?cursor={$page['next_cursor']}
+     *
+     * @param int         $perPage     Rows per page (1–MAX_PAGINATE_LIMIT)
+     * @param string      $column      Unique, indexed, monotonic key column (default 'id')
+     * @param string|null $cursorToken Opaque cursor token from a previous response
+     * @return array{data: array, per_page: int, has_more: bool, next_cursor: string|null, prev_cursor: string|null}
+     */
+    public function cursorPaginate(int $perPage = 15, string $column = 'id', ?string $cursorToken = null): array
+    {
+        $perPage = max(1, min($perPage, static::MAX_PAGINATE_LIMIT));
+        $this->validateColumn($column, 'cursorPaginate column');
+        $this->_forbidRawQuery($column, 'Raw SQL is not allowed in cursorPaginate() column names.');
+
+        $afterId  = null;
+        $beforeId = null;
+
+        if ($cursorToken !== null && $cursorToken !== '') {
+            $padded  = strtr($cursorToken, '-_', '+/');
+            $padded .= str_repeat('=', (4 - strlen($padded) % 4) % 4);
+            $decoded = json_decode((string) base64_decode($padded), true);
+            if (is_array($decoded)) {
+                $afterId  = $decoded['after']  ?? null;
+                $beforeId = $decoded['before'] ?? null;
+            }
+        }
+
+        $originalState              = $this->_saveQueryState();
+        $previousSuppressQueryCache = $this->suppressQueryCache;
+        $this->suppressQueryCache   = true;
+
+        try {
+            $this->_restoreQueryState($originalState);
+
+            $direction = 'ASC';
+            if ($beforeId !== null) {
+                $this->where($column, '<', $beforeId);
+                $direction = 'DESC';
+            } elseif ($afterId !== null) {
+                $this->where($column, '>', $afterId);
+            }
+
+            $this->orderBy($column, $direction)->limit($perPage + 1);
+
+            $rows = $this->get();
+            $rows = is_array($rows) ? $rows : [];
+
+            // Reverse DESC results so rows are always returned in ASC order
+            if ($direction === 'DESC') {
+                $rows = array_reverse($rows);
+            }
+
+            $hasMore = count($rows) > $perPage;
+            if ($hasMore) {
+                array_pop($rows);
+            }
+
+            $nextCursor = null;
+            $prevCursor = null;
+
+            if (!empty($rows)) {
+                $firstRow = reset($rows);
+                $lastRow  = end($rows);
+
+                $firstId = is_array($firstRow) ? ($firstRow[$column] ?? null) : ($firstRow->{$column} ?? null);
+                $lastId  = is_array($lastRow)  ? ($lastRow[$column]  ?? null) : ($lastRow->{$column}  ?? null);
+
+                if ($hasMore && $lastId !== null) {
+                    $nextCursor = rtrim(strtr(base64_encode(json_encode(['after' => $lastId])), '+/', '-_'), '=');
+                }
+
+                if (($afterId !== null || $beforeId !== null) && $firstId !== null) {
+                    $prevCursor = rtrim(strtr(base64_encode(json_encode(['before' => $firstId])), '+/', '-_'), '=');
+                }
+            }
+
+            return [
+                'data'        => $rows,
+                'per_page'    => $perPage,
+                'has_more'    => $hasMore,
+                'next_cursor' => $nextCursor,
+                'prev_cursor' => $prevCursor,
+            ];
+        } finally {
+            $this->suppressQueryCache = $previousSuppressQueryCache;
+            $this->reset();
+        }
+    }
+
+    /**
+     * Stream query results directly to a CSV download without loading the full
+     * dataset into memory.
+     *
+     * Uses chunkById() when the query is keyset-eligible (recommended for large
+     * tables) and falls back to offset-based chunk() otherwise.
+     *
+     * Sends Content-Type, Content-Disposition, and a UTF-8 BOM so the file opens
+     * correctly in Excel. Call this method before any output has been sent.
+     *
+     * Usage:
+     *   db()->table('users')->where('status', 1)->exportCsv('active-users.csv', ['id', 'name', 'email']);
+     *   // or — let the first row define the columns:
+     *   db()->table('orders')->exportCsv('orders.csv');
+     *
+     * @param string   $filename  Download filename (sanitized; .csv appended if missing)
+     * @param string[] $columns   Ordered list of column keys to include. Empty = all columns from first row.
+     * @param int      $chunkSize Rows fetched per round-trip (default 500)
+     * @return void
+     */
+    public function exportCsv(string $filename, array $columns = [], int $chunkSize = 500): void
+    {
+        $chunkSize = max(1, $chunkSize);
+
+        // Sanitize filename — allow alphanumeric, dash, underscore, dot only
+        $safeFilename = preg_replace('/[^A-Za-z0-9_\-.]/', '_', $filename) ?? 'export';
+        if (!str_ends_with(strtolower($safeFilename), '.csv')) {
+            $safeFilename .= '.csv';
+        }
+
+        if (!headers_sent()) {
+            header('Content-Type: text/csv; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="' . $safeFilename . '"');
+            header('Pragma: no-cache');
+            header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+            header('Expires: 0');
+            // UTF-8 BOM — helps Excel auto-detect UTF-8 encoding
+            echo "\xEF\xBB\xBF";
+        }
+
+        $output = fopen('php://output', 'w');
+        if ($output === false) {
+            return;
+        }
+
+        $headersWritten = false;
+        $originalState  = $this->_saveQueryState();
+
+        $writeChunk = function (array $rows) use ($output, $columns, $chunkSize, &$headersWritten): void {
+            foreach ($rows as $row) {
+                $row = is_array($row) ? $row : (array) $row;
+
+                if (!$headersWritten) {
+                    $header = !empty($columns) ? $columns : array_keys($row);
+                    fputcsv($output, $header);
+                    $headersWritten = true;
+                }
+
+                $values = !empty($columns)
+                    ? array_map(static fn($col) => $row[$col] ?? '', $columns)
+                    : array_values($row);
+
+                fputcsv($output, $values);
+            }
+
+            if (function_exists('gc_collect_cycles') && $chunkSize >= 500) {
+                gc_collect_cycles();
+            }
+        };
+
+        try {
+            if ($this->canAutoUseChunkById($originalState)) {
+                $this->chunkById($chunkSize, $writeChunk);
+            } else {
+                $this->chunk($chunkSize, $writeChunk);
+            }
+        } finally {
+            fclose($output);
+        }
+    }
 }
