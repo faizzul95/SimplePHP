@@ -11,6 +11,182 @@ use Throwable;
 
 class Router
 {
+    /** @var static|null Singleton instance used by route caching. */
+    private static ?self $currentInstance = null;
+
+    /** Capture the router instance so RouteCacheCommand can retrieve it. */
+    public static function setInstance(self $router): void
+    {
+        self::$currentInstance = $router;
+    }
+
+    /** Return the last-registered router instance (set by RouteServiceProvider). */
+    public static function getInstance(): ?self
+    {
+        return self::$currentInstance;
+    }
+
+    /**
+     * Build the route index and return a serializable cache payload.
+     *
+     * Closure actions cannot be stored — routes using closures are skipped
+     * with a warning. All class-based routes (string "Class@method" or
+     * [ClassName::class, 'method'] arrays) are cached normally.
+     *
+     * @return array{static: array, dynamic: array, named: array, patterns: array, skipped: int}
+     */
+    public function getCompiledRoutes(): array
+    {
+        $this->buildRouteIndex();
+        $this->indexNamedRoutes();
+
+        $skipped = 0;
+
+        // Serialize static routes
+        $staticExport = [];
+        foreach ($this->staticRoutes as $key => $route) {
+            if ($route->action instanceof \Closure) {
+                $skipped++;
+                continue;
+            }
+            $staticExport[$key] = $this->routeToArray($route);
+        }
+
+        // Serialize dynamic routes (include compiled regex)
+        $dynamicExport = [];
+        foreach ($this->dynamicRoutes as $method => $routes) {
+            foreach ($routes as $index => $route) {
+                if ($route->action instanceof \Closure) {
+                    $skipped++;
+                    continue;
+                }
+                $dynamicExport[$method][] = array_merge(
+                    $this->routeToArray($route),
+                    ['regex' => $this->compiledRegex[$index] ?? '']
+                );
+            }
+        }
+
+        return [
+            'static'       => $staticExport,
+            'dynamic'      => $dynamicExport,
+            'named'        => self::$namedRoutes,
+            'patterns'     => self::$globalPatterns,
+            'skipped'      => $skipped,
+            'generated_at' => time(),
+        ];
+    }
+
+    /**
+     * Restore a pre-built route index from a cache file produced by getCompiledRoutes().
+     *
+     * Returns true on success, false if the cache is missing, unreadable, or malformed.
+     * When false is returned the caller MUST fall back to normal route registration.
+     *
+     * @param string $cacheFile Absolute path to the routes.cache.php file.
+     */
+    public function loadFromCache(string $cacheFile): bool
+    {
+        if (!is_file($cacheFile) || !is_readable($cacheFile)) {
+            return false;
+        }
+
+        try {
+            $data = include $cacheFile;
+        } catch (\Throwable) {
+            return false;
+        }
+
+        if (!is_array($data) || !isset($data['static'], $data['dynamic'], $data['named'])) {
+            return false;
+        }
+
+        // Reset all existing route state before restoring, so a double-call
+        // (e.g. during testing) never accumulates stale routes.
+        $this->routes            = [];
+        $this->staticRoutes      = [];
+        $this->dynamicRoutes     = [];
+        $this->compiledRegex     = [];
+        $this->registeredMethods = [];
+        $this->routeIndexBuilt   = false;
+
+        try {
+            // Restore static routes
+            foreach ((array) $data['static'] as $key => $row) {
+                $route = $this->arrayToRoute((array) $row);
+                $this->staticRoutes[$key]                = $route;
+                $this->registeredMethods[$route->method] = true;
+                $this->routes[]                          = $route;
+            }
+
+            // Restore dynamic routes + pre-compiled regex
+            foreach ((array) $data['dynamic'] as $method => $rows) {
+                foreach ((array) $rows as $row) {
+                    $route = $this->arrayToRoute((array) $row);
+                    $regex = isset($row['regex']) && is_string($row['regex']) ? $row['regex'] : '';
+                    $index = count($this->routes);
+                    $this->routes[]                       = $route;
+                    $this->compiledRegex[$index]          = $regex;
+                    $this->dynamicRoutes[$method][$index] = $route;
+                    $this->registeredMethods[$method]     = true;
+                }
+            }
+        } catch (\Throwable) {
+            // Cache is corrupt — reset everything and signal failure so route
+            // files are loaded normally on this request.
+            $this->routes            = [];
+            $this->staticRoutes      = [];
+            $this->dynamicRoutes     = [];
+            $this->compiledRegex     = [];
+            $this->registeredMethods = [];
+            return false;
+        }
+
+        // Restore named routes and global patterns
+        self::$namedRoutes    = is_array($data['named']) ? $data['named'] : [];
+        self::$globalPatterns = array_merge(
+            self::$globalPatterns,
+            is_array($data['patterns'] ?? null) ? $data['patterns'] : []
+        );
+
+        $this->routeIndexBuilt = true;
+
+        return true;
+    }
+
+    /** Convert a RouteDefinition to a plain array safe for var_export(). */
+    private function routeToArray(RouteDefinition $route): array
+    {
+        return [
+            'method'     => $route->method,
+            'uri'        => $route->uri,
+            'action'     => $route->action,   // must be string or array (no closures)
+            'middleware' => $route->middleware,
+            'name'       => $route->name,
+            'wheres'     => $route->wheres,
+        ];
+    }
+
+    /**
+     * Reconstruct a RouteDefinition from a cached plain array.
+     *
+     * @throws \UnexpectedValueException if required fields are absent.
+     */
+    private function arrayToRoute(array $row): RouteDefinition
+    {
+        if (!isset($row['method'], $row['uri'], $row['action'])) {
+            throw new \UnexpectedValueException(
+                'Malformed route cache entry: missing method, uri, or action.'
+            );
+        }
+
+        $route             = new RouteDefinition((string) $row['method'], (string) $row['uri'], $row['action']);
+        $route->middleware = is_array($row['middleware'] ?? null) ? $row['middleware'] : [];
+        $route->name       = isset($row['name']) ? (string) $row['name'] : null;
+        $route->wheres     = is_array($row['wheres'] ?? null) ? $row['wheres'] : [];
+        return $route;
+    }
+
     private array $routes = [];
     private array $groupStack = [];
     private array $middlewareAliases = [];
@@ -592,6 +768,25 @@ class Router
             }
 
             $name = $parameter->getName();
+
+            // Route model binding: auto-resolve Model subclasses from route params
+            if (
+                $typeName !== null
+                && class_exists($typeName)
+                && is_subclass_of($typeName, \Core\Database\Model::class)
+                && array_key_exists($name, $params)
+            ) {
+                $model = $typeName::findById($params[$name]);
+                if ($model === null) {
+                    http_response_code(404);
+                    header('Content-Type: application/json');
+                    echo json_encode(['code' => 404, 'message' => 'Resource not found.'], JSON_UNESCAPED_UNICODE);
+                    exit;
+                }
+                $arguments[] = $model;
+                continue;
+            }
+
             if (array_key_exists($name, $params)) {
                 $arguments[] = $params[$name];
                 continue;

@@ -30,11 +30,17 @@ class ApcuStore
     public function get(string $key, mixed $default = null): mixed
     {
         $fullKey = $this->prefix . $key;
-        if (!call_user_func('apcu_exists', $fullKey)) {
-            return $default;
-        }
-        $value = call_user_func('apcu_fetch', $fullKey);
-        return $value !== false ? $value : $default;
+
+        // apcu_fetch() with the $success out-param is a single atomic call.
+        // The old pattern (apcu_exists + apcu_fetch) had two races:
+        //   1. TOCTOU: key could expire/evict between exists and fetch.
+        //   2. False-value bug: if the cached value IS false, exists returns
+        //      true but the `$value !== false` guard incorrectly returns $default.
+        // Using the $success bool eliminates both problems.
+        $success = false;
+        $value   = call_user_func('apcu_fetch', $fullKey, $success);
+
+        return $success ? $value : $default;
     }
 
     /**
@@ -70,15 +76,30 @@ class ApcuStore
 
     /**
      * Atomically increment a numeric value.
-     * APCu's apcu_inc() is a single syscall — no read-compute-write race.
+     *
+     * Increment-first strategy — no existence check before the operation.
+     * apcu_inc() fails (returns false) only when the key doesn't exist yet.
+     * In that case we atomically create it with apcu_add() (NX semantics).
+     * If two threads race on creation, only one wins apcu_add(); the loser
+     * retries apcu_inc() which now succeeds. This eliminates the classic
+     * check-then-act (TOCTOU) race of apcu_exists() + apcu_store().
      */
     public function increment(string $key, int $amount = 1): int
     {
         $fullKey = $this->prefix . $key;
-        if (!call_user_func('apcu_exists', $fullKey)) {
-            call_user_func('apcu_store', $fullKey, $amount, 0);
+
+        // Fast path: key already exists — atomic single-syscall increment.
+        $result = call_user_func('apcu_inc', $fullKey, $amount);
+        if ($result !== false) {
+            return (int) $result;
+        }
+
+        // Slow path: key does not exist — atomically create with apcu_add (NX).
+        if (call_user_func('apcu_add', $fullKey, $amount, 0)) {
             return $amount;
         }
+
+        // Another thread won the creation race — retry the increment.
         $result = call_user_func('apcu_inc', $fullKey, $amount);
         return (int) ($result !== false ? $result : $amount);
     }
@@ -86,10 +107,19 @@ class ApcuStore
     public function decrement(string $key, int $amount = 1): int
     {
         $fullKey = $this->prefix . $key;
-        if (!call_user_func('apcu_exists', $fullKey)) {
-            call_user_func('apcu_store', $fullKey, -$amount, 0);
+
+        // Fast path: key already exists.
+        $result = call_user_func('apcu_dec', $fullKey, $amount);
+        if ($result !== false) {
+            return (int) $result;
+        }
+
+        // Slow path: atomically create with apcu_add (NX).
+        if (call_user_func('apcu_add', $fullKey, -$amount, 0)) {
             return -$amount;
         }
+
+        // Retry after losing the creation race.
         $result = call_user_func('apcu_dec', $fullKey, $amount);
         return (int) ($result !== false ? $result : -$amount);
     }
@@ -101,5 +131,25 @@ class ApcuStore
     public function add(string $key, mixed $value, int $seconds = 0): bool
     {
         return (bool) call_user_func('apcu_add', $this->prefix . $key, $value, $seconds);
+    }
+
+    /**
+     * Return metadata for a cache key, including TTL remaining.
+     * Used by RateLimiter::availableIn() to determine retry-after seconds.
+     */
+    public function getMetadata(string $key): array
+    {
+        $fullKey = $this->prefix . $key;
+        if (!function_exists('apcu_key_info')) {
+            return [];
+        }
+        $info = call_user_func('apcu_key_info', $fullKey);
+        if (!is_array($info)) {
+            return [];
+        }
+        $createdAt = (int) ($info['creation_time'] ?? time());
+        $ttlSetting = (int) ($info['ttl'] ?? 0);
+        $expiresIn = $ttlSetting === 0 ? 0 : max(0, $createdAt + $ttlSetting - time());
+        return ['expires_in' => $expiresIn];
     }
 }

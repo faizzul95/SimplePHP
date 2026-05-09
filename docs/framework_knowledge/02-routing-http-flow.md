@@ -235,6 +235,46 @@ This directly controls whether Router returns JSON errors or HTML/redirect behav
 4. For dynamic params, `{id}`, `{uuid}`, and `{slug}` are constrained automatically by global patterns — no `->where()` needed for those. For other param names, add explicit `->where()` or register via `Router::pattern()`.
 5. Test these cases: success, unauthorized, invalid method (405), unknown route (404/redirect).
 
+## Route Cache (Production Optimisation)
+
+The router supports pre-compiled route caching to skip parsing `web.php` and `api.php` on every request.
+
+### How it works
+
+1. `php myth route:cache` — builds the route index (static + dynamic + named) and writes it to `storage/cache/routes.cache.php` as a PHP `return` array.
+2. On the next request, `RouteServiceProvider::map()` detects the cache file and calls `Router::loadFromCache()` instead of requiring route files — the full route index is restored in a single `include`.
+3. `php myth route:clear` — deletes the cache file and restores normal route-file loading.
+
+### Important constraints
+
+- **Closure-based routes are skipped** — closures cannot be serialised. A warning is printed for each skipped route. Convert them to `[ControllerClass::class, 'method']` to include them.
+- **Always regenerate after route changes** — re-run `php myth route:cache` after adding, removing, or modifying routes. The cache is never auto-updated.
+- **Middleware groups are preserved** — the cache command uses `RouteServiceProvider::mapWeb()/mapApi()` internally, so `web`/`api` middleware groups are applied identically to a real request.
+- **405 detection works normally** — `$registeredMethods` is rebuilt from the cache, so wrong-method requests still return proper `405 Method Not Allowed` responses.
+- **OPcache is invalidated** — `opcache_invalidate()` is called after writing so all worker processes pick up the new file immediately.
+
+### Practical workflow
+
+```bash
+# After deploying updated routes:
+php myth route:clear          # (optional — cache:cache already clears stale file)
+php myth route:cache          # compile fresh cache from route files
+php myth route:list           # verify routes look correct
+```
+
+### Cache file internals
+
+`storage/cache/routes.cache.php` returns an array with keys:
+
+| Key | Content |
+|-----|---------|
+| `static` | Indexed `METHOD:/path` → route row (method, uri, action, middleware, name, wheres) |
+| `dynamic` | Indexed by HTTP method → array of route rows including pre-compiled `regex` |
+| `named` | Flat name → URI map |
+| `patterns` | Global `Router::pattern()` constraints |
+| `skipped` | Count of closure routes that could not be cached |
+| `generated_at` | Unix timestamp of cache creation |
+
 ## What To Avoid
 
 - Avoid adding API JSON endpoints in `web.php`.

@@ -2,46 +2,64 @@
 
 ## Cache (`Core\Cache\CacheManager`)
 
-Source: `systems/Core/Cache/CacheManager.php` (228 lines).  
+Source: `systems/Core/Cache/CacheManager.php`.  
 Config: `app/config/cache.php`.
 
 ### Drivers
 
-- `file` — File-based cache in `storage/cache/`. Default driver.
-- `array` — In-memory cache (request-scoped, no persistence). For testing.
+| Driver | Class | Storage | Atomic Ops | Notes |
+|--------|-------|---------|-----------|-------|
+| `file` | `FileStore` | `storage/cache/` | ✅ flock + temp+rename | Default; 0750 directory permissions |
+| `array` | `ArrayStore` | RAM (request-scoped) | N/A | Testing only |
+| `apcu` | `ApcuStore` | APCu shared memory | ✅ `apcu_inc()` / `apcu_fetch($k, $ok)` | Degrades to `file` if APCu unavailable |
+| `redis` | `RedisDriver` | Redis | ✅ `INCR`/`SET NX`/`SETEX` | Falls back to `file` if ext-redis not loaded |
+
+### Important: `get()` Correctness (Phase 10)
+
+`ApcuStore::get()` uses `apcu_fetch($key, $success)` with the out-param — a single atomic call that:
+1. Eliminates the TOCTOU race between `apcu_exists()` + `apcu_fetch()` (key could evict between the two calls)
+2. Correctly returns a cached `false` value instead of `$default` (the old `!== false` guard was wrong)
+
+### Important: `remember()` Concurrency (Phase 10)
+
+`CacheManager::remember()` uses `add()` (atomic SET NX) after computing the value — prevents two concurrent callers from both seeing a cache miss and both executing the expensive callback.
 
 ### Complete Cache API
 
 | Method | Signature | Return | Description |
 |--------|-----------|--------|-------------|
-| `store` | `store(?string $name = null): FileStore\|ArrayStore` | Store | Get or switch to a named store |
+| `store` | `store(?string $name = null): FileStore\|ArrayStore\|ApcuStore\|RedisDriver` | Store | Get or switch to a named store |
 | `get` | `get(string $key, mixed $default = null): mixed` | `mixed` | Retrieve cached value or return default |
 | `put` | `put(string $key, mixed $value, int $seconds = 0): bool` | `bool` | Store value with TTL (0 = forever) |
 | `forever` | `forever(string $key, mixed $value): bool` | `bool` | Store without expiry |
-| `remember` | `remember(string $key, int $seconds, \Closure $callback): mixed` | `mixed` | Get from cache; if missing, execute callback, store result, and return it |
+| `remember` | `remember(string $key, int $seconds, \Closure $callback): mixed` | `mixed` | Get from cache; if missing, execute callback atomically (add-then-put fallback), store result, return it |
 | `rememberForever` | `rememberForever(string $key, \Closure $callback): mixed` | `mixed` | Like `remember()` but without expiry |
 | `pull` | `pull(string $key, mixed $default = null): mixed` | `mixed` | Get value and delete it from cache |
 | `has` | `has(string $key): bool` | `bool` | Check if key exists and not expired |
 | `missing` | `missing(string $key): bool` | `bool` | Inverse of `has()` |
-| `add` | `add(string $key, mixed $value, int $seconds = 0): bool` | `bool` | Store only if key doesn't exist |
+| `add` | `add(string $key, mixed $value, int $seconds = 0): bool` | `bool` | Store only if key doesn't exist (atomic SET NX) |
 | `many` | `many(array $keys): array` | `array` | Retrieve multiple keys at once |
 | `putMany` | `putMany(array $values, int $seconds = 0): bool` | `bool` | Store multiple key-value pairs |
-| `increment` | `increment(string $key, int $amount = 1): int` | `int` | Increment numeric value |
-| `decrement` | `decrement(string $key, int $amount = 1): int` | `int` | Decrement numeric value |
+| `increment` | `increment(string $key, int $amount = 1): int` | `int` | Increment numeric value atomically |
+| `decrement` | `decrement(string $key, int $amount = 1): int` | `int` | Decrement numeric value atomically |
 | `forget` | `forget(string $key): bool` | `bool` | Remove a key |
 | `flush` | `flush(): bool` | `bool` | Remove all cached data |
+| `getMetadata` | `getMetadata(string $key): array` | `array{expires_in?: int}` | Return TTL remaining; used by `RateLimiter::availableIn()` |
 
 ---
 
 ## Queue (`Core\Queue`)
 
-Sources: `systems/Core/Queue/Dispatcher.php`, `systems/Core/Queue/Worker.php`, `systems/Core/Queue/Job.php`.  
+Sources: `systems/Core/Queue/Dispatcher.php`, `systems/Core/Queue/Worker.php`, `systems/Core/Queue/Job.php`, `systems/Core/Queue/RedisQueue.php`.  
 Config: `app/config/queue.php`.
 
 ### Drivers
 
-- `database` — Jobs stored in DB table (`jobs`, `failed_jobs`). Tables auto-created on first dispatch.
-- `sync` — Execute immediately (no background processing). For development/testing.
+| Driver | Backend | Notes |
+|--------|---------|-------|
+| `database` | MySQL/MariaDB `system_jobs` table | `SELECT … FOR UPDATE SKIP LOCKED`; auto-creates tables |
+| `redis` | Redis sorted-set (delayed) + list (ready) + list (reserved) | Atomic Lua migration; RPOPLPUSH reserve |
+| `sync` | Executes inline | For development/testing only |
 
 ### Job Base Class (`Core\Queue\Job`)
 
@@ -59,16 +77,23 @@ Config: `app/config/queue.php`.
 | `onQueue` | `public function onQueue(string $queue): static` | Set queue name fluently |
 | `delay` | `public function delay(int $seconds): static` | Set delay fluently |
 | `toPayload` | `public function toPayload(): array` | Serialize job for storage |
-| `fromPayload` | `public static function fromPayload(array $payload): static` | Restore job from serialized payload |
+| `fromPayload` | `public static function fromPayload(array $payload): static` | Restore job with `allowed_classes` guard + class-mismatch check |
 
 ### Worker Execution
 
 - Command: `php myth queue:work`
 - Options: `--queue=<name>`, `--sleep=<seconds>`, `--tries=<count>`, `--timeout=<seconds>`, `--once`
-- Reservation + retry mechanism with exponential backoff.
+- `pop()` uses `SELECT … FOR UPDATE SKIP LOCKED` — multi-worker safe.
+- **Signal-aware sleep** (Phase 10): idle workers sleep in 100 ms `usleep()` ticks with `pcntl_signal_dispatch()` — SIGTERM is processed within 100 ms, not after the full sleep interval.
 - Failed jobs stored in `failed_jobs` table with error snapshot.
-- Worker payloads now fail fast when the DB row contains invalid JSON or missing serialized `data`; the worker routes deserialization through `Job::fromPayload()` so malformed payloads are marked failed/retried instead of drifting into partial processing.
 - Failed job operations: list (`queue:failed`), retry one/all (`queue:retry`), flush (`queue:flush`), clear queue (`queue:clear`).
+
+### Redis Queue (`Core\Queue\RedisQueue`)
+
+- **Delayed jobs**: `ZADD {prefix}delayed:{queue}` score=`time()+delay`, value=`id|payload`
+- **Ready jobs**: `LPUSH {prefix}queue:{queue}`
+- **Reserved**: `RPOPL PUSH` atomically moves ready → reserved on `pop()`
+- **Migrate delayed**: Lua script runs `ZRANGEBYSCORE + ZREM + LPUSH` as a single atomic unit — no double-dispatch under concurrent workers; PHP fallback for servers without Lua
 
 ---
 

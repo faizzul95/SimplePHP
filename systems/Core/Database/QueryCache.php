@@ -75,7 +75,8 @@ class QueryCache
         self::$cacheDir = rtrim($dir, DIRECTORY_SEPARATOR);
 
         if (!is_dir(self::$cacheDir)) {
-            mkdir(self::$cacheDir, 0755, true);
+            // 0750: cache entries may contain query results with PII.
+            mkdir(self::$cacheDir, 0750, true);
         }
     }
 
@@ -200,7 +201,7 @@ class QueryCache
 
         // Tier 3: write to file cache with atomic rename to prevent partial reads
         $filePath = self::getCacheFilePath($key);
-        $tmpPath  = $filePath . '.' . getmypid() . '.tmp';
+        $tmpPath  = $filePath . '.' . bin2hex(random_bytes(4)) . '.tmp';
         $result   = file_put_contents($tmpPath, serialize($cached), LOCK_EX);
         if ($result !== false) {
             rename($tmpPath, $filePath);
@@ -232,6 +233,11 @@ class QueryCache
 
         // Remove from memory cache
         unset(self::$memoryCache[$key]);
+
+        // Remove from APCu when available
+        if (self::apcuAvailable()) {
+            call_user_func('apcu_delete', self::$apcuPrefix . $key);
+        }
 
         // Remove from file cache
         $filePath = self::getCacheFilePath($key);
@@ -295,16 +301,93 @@ class QueryCache
     }
 
     /**
-     * Generate cache key from query and parameters
+     * Retrieve the per-table version counter from APCu.
+     * Incremented by invalidateTable() on every write (INSERT/UPDATE/DELETE).
+     * When APCu is unavailable the version is always 1 (no cross-request busting).
      *
-     * @param string $query SQL query
-     * @param array  $binds Query parameters
-     * @param string $connection Connection name
-     * @return string Cache key
+     * @param string $table Lowercase table name
+     * @return int Current version (≥ 1)
      */
-    public static function generateKey($query, array $binds = [], $connection = 'default')
+    protected static function tableVersion(string $table): int
     {
-        return md5($connection . $query . serialize($binds));
+        if (!self::apcuAvailable()) {
+            return 1;
+        }
+        $v = call_user_func('apcu_fetch', self::$apcuPrefix . 'tv:' . $table);
+        return ($v !== false && is_int($v)) ? $v : 1;
+    }
+
+    /**
+     * Invalidate all cached queries that touch the given table(s).
+     *
+     * Strategy: bump a per-table version counter in APCu (shared across all
+     * workers).  Any subsequent generateKey() call that includes this table
+     * will produce a different hash — old cache entries become unreachable and
+     * expire naturally, while the hot path stays O(1).
+     *
+     * When APCu is unavailable the entire in-process memory cache is flushed
+     * as a best-effort fallback (file-tier entries expire by TTL).
+     *
+     * @param string|string[] $tables Table name(s) written to
+     * @return void
+     */
+    public static function invalidateTable(string|array $tables): void
+    {
+        self::initIfNeeded();
+
+        if (!self::apcuAvailable()) {
+            // Best-effort: drop in-process cache for this request
+            self::$memoryCache = [];
+            self::$stats['invalidations']++;
+            return;
+        }
+
+        foreach ((array) $tables as $table) {
+            $table = strtolower(trim($table));
+            if ($table === '') {
+                continue;
+            }
+
+            $apcuKey = self::$apcuPrefix . 'tv:' . $table;
+            // Atomic increment — apcu_inc() returns false when key does not yet exist
+            $result = call_user_func('apcu_inc', $apcuKey);
+            if ($result === false) {
+                // Key absent: seed version at 2 (1 is the implicit "never bumped" baseline)
+                call_user_func('apcu_store', $apcuKey, 2, 86400);
+            }
+
+            self::$stats['invalidations']++;
+        }
+
+        // Drop in-process memory cache — we cannot cheaply identify which entries
+        // belong to the affected table(s) without re-hashing every key.
+        self::$memoryCache = [];
+    }
+
+    /**
+     * Generate cache key from query and parameters.
+     *
+     * When $tables is supplied the key incorporates per-table version counters
+     * (stored in APCu by invalidateTable()).  After a write to any of those
+     * tables the counter increments, the key changes, and stale results are
+     * never served — automatic write-through invalidation with O(1) cost.
+     *
+     * @param string   $query      SQL query
+     * @param array    $binds      Query parameters
+     * @param string   $connection Connection name
+     * @param string[] $tables     Table names touched by this query (for version busting)
+     * @return string Cache key (MD5 hex)
+     */
+    public static function generateKey($query, array $binds = [], $connection = 'default', array $tables = []): string
+    {
+        $tableVersions = '';
+        foreach ($tables as $table) {
+            $table = strtolower(trim($table));
+            if ($table !== '') {
+                $tableVersions .= $table . ':' . self::tableVersion($table) . '|';
+            }
+        }
+        return md5($connection . $query . serialize($binds) . $tableVersions);
     }
 
     /**

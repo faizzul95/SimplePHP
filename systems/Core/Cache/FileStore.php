@@ -18,7 +18,8 @@ class FileStore
         $this->directory = rtrim($directory, '/\\');
 
         if (!is_dir($this->directory)) {
-            @mkdir($this->directory, 0755, true);
+            // 0750: owner r/w/x, group r/x, world none — cache may contain PII.
+            @mkdir($this->directory, 0750, true);
         }
     }
 
@@ -47,9 +48,9 @@ class FileStore
         }
 
         $data = substr($contents, 10);
-        $value = @unserialize($data, ['allowed_classes' => false]);
+        $value = json_decode($data, true);
 
-        return $value === false && $data !== serialize(false) ? $default : $value;
+        return ($value === null && $data !== 'null') ? $default : $value;
     }
 
     /**
@@ -69,15 +70,18 @@ class FileStore
         $dir  = dirname($path);
 
         if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
+            // 0750 — consistent with constructor; cache sub-dirs may hold PII.
+            @mkdir($dir, 0750, true);
         }
 
         $expire  = $seconds > 0 ? time() + $seconds : 0;
-        $payload = str_pad((string) $expire, 10, '0', STR_PAD_LEFT) . serialize($value);
+        $payload = str_pad((string) $expire, 10, '0', STR_PAD_LEFT) . json_encode($value, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
         // Atomic: write to a temp file then rename into place.
-        // This prevents concurrent readers from seeing a partial payload.
-        $tmp = $path . '.' . getmypid() . '.tmp';
+        // Use random bytes instead of PID — PIDs are reused by the OS after
+        // worker restarts; two processes can share the same PID and race on
+        // the same temp path on heavily-forked environments (e.g. PHP-FPM).
+        $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
         if (@file_put_contents($tmp, $payload, LOCK_EX) === false) {
             return false;
         }
@@ -110,7 +114,7 @@ class FileStore
         $dir  = dirname($path);
 
         if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
+            @mkdir($dir, 0750, true);
         }
 
         // If an unexpired entry already exists, short-circuit without racing.
@@ -135,7 +139,7 @@ class FileStore
 
         try {
             $expire = $seconds > 0 ? time() + $seconds : 0;
-            $payload = str_pad((string) $expire, 10, '0', STR_PAD_LEFT) . serialize($value);
+            $payload = str_pad((string) $expire, 10, '0', STR_PAD_LEFT) . json_encode($value, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
             fwrite($handle, $payload);
             fflush($handle);
             return true;
@@ -165,7 +169,7 @@ class FileStore
         $dir  = dirname($path);
 
         if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
+            @mkdir($dir, 0750, true);
         }
 
         $handle = @fopen($path, 'c+b');
@@ -194,15 +198,15 @@ class FileStore
                 $expire = (int) substr($contents, 0, 10);
                 if ($expire === 0 || time() < $expire) {
                     $data = substr($contents, 10);
-                    $value = @unserialize($data, ['allowed_classes' => false]);
-                    if ($value !== false || $data === serialize(false)) {
-                        $current = (int) $value;
+                    $decoded = json_decode($data, true);
+                    if ($decoded !== null || $data === 'null') {
+                        $current = (int) $decoded;
                     }
                 }
             }
 
             $new = $current + $amount;
-            $payload = str_pad((string) $expire, 10, '0', STR_PAD_LEFT) . serialize($new);
+            $payload = str_pad((string) $expire, 10, '0', STR_PAD_LEFT) . json_encode($new, JSON_THROW_ON_ERROR);
 
             ftruncate($handle, 0);
             rewind($handle);
@@ -274,5 +278,26 @@ class FileStore
         return $this->directory
             . DIRECTORY_SEPARATOR . substr($hash, 0, 2)
             . DIRECTORY_SEPARATOR . substr($hash, 2);
+    }
+
+    /**
+     * Return metadata for a cache key, including TTL remaining.
+     * Used by RateLimiter::availableIn() to determine retry-after seconds.
+     */
+    public function getMetadata(string $key): array
+    {
+        $path = $this->path($key);
+        if (!is_file($path)) {
+            return [];
+        }
+        $contents = @file_get_contents($path);
+        if ($contents === false) {
+            return [];
+        }
+        $expire = (int) substr($contents, 0, 10);
+        if ($expire === 0) {
+            return ['expires_in' => 0];
+        }
+        return ['expires_in' => max(0, $expire - time())];
     }
 }

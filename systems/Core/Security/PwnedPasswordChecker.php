@@ -82,6 +82,9 @@ final class PwnedPasswordChecker
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_TIMEOUT        => self::TIMEOUT_S,
+                // Separate connect timeout — prevents hanging on slow DNS or
+                // unreachable hosts for the full TIMEOUT_S duration.
+                CURLOPT_CONNECTTIMEOUT => 2,
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_SSL_VERIFYHOST => 2,
                 CURLOPT_USERAGENT      => 'MythPHP-Security/1.0',

@@ -7,15 +7,76 @@ use Throwable;
 class ExceptionHandler
 {
     /**
+     * Map exception class names to HTTP status codes.
+     *
+     * Checked before falling back to $e->getCode(). The most-derived class in
+     * the exception hierarchy wins (checked via instanceof in resolveStatusCode).
+     *
+     * Override or extend in a subclass to add application-specific mappings.
+     */
+    protected static array $httpExceptionMap = [
+        // 400 Bad Request
+        \InvalidArgumentException::class    => 400,
+        \LengthException::class             => 400,
+        \BadFunctionCallException::class    => 400,
+        \DomainException::class             => 400,
+        // 405 Method Not Allowed
+        \BadMethodCallException::class      => 405,
+        // 409 Conflict
+        \OverflowException::class           => 409,
+        // 422 Unprocessable Entity
+        \UnexpectedValueException::class    => 422,
+        \UnderflowException::class          => 422,
+        \RangeException::class              => 422,
+        // 500 Internal Server Error (defaults)
+        \LogicException::class              => 500,
+        \RuntimeException::class            => 500,
+    ];
+
+    /**
+     * Resolve the HTTP status code for an exception.
+     *
+     * Priority order:
+     *  1. Exact class match in $httpExceptionMap (most specific wins)
+     *  2. instanceof walk through $httpExceptionMap (inheritance)
+     *  3. $e->getCode() when it is a valid HTTP status code (100–599)
+     *  4. 500 fallback
+     *
+     * @param \Throwable $e
+     * @return int HTTP status code
+     */
+    protected static function resolveStatusCode(\Throwable $e): int
+    {
+        $class = get_class($e);
+
+        // 1. Exact class match — fastest path
+        if (isset(static::$httpExceptionMap[$class])) {
+            return static::$httpExceptionMap[$class];
+        }
+
+        // 2. Walk the map for instanceof matches (handles subclasses)
+        foreach (static::$httpExceptionMap as $mappedClass => $status) {
+            if ($e instanceof $mappedClass) {
+                return $status;
+            }
+        }
+
+        // 3. Honour a numeric code the exception was thrown with
+        $code = (int) $e->getCode();
+        if ($code >= 100 && $code < 600) {
+            return $code;
+        }
+
+        return 500;
+    }
+
+    /**
      * Handle the exception and render the appropriate error page.
      */
-    public static function handle(Throwable $e, ?bool $debug = null): void
+    public static function handle(\Throwable $e, ?bool $debug = null): void
     {
         error_log("Unhandled Exception: " . $e->getMessage());
-        $statusCode = $e->getCode();
-        if ($statusCode < 100 || $statusCode >= 600) {
-            $statusCode = 500;
-        }
+        $statusCode = static::resolveStatusCode($e);
         if (!headers_sent()) {
             http_response_code($statusCode);
         }

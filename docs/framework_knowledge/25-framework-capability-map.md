@@ -53,15 +53,17 @@
 - Raw PHP helper: `view()` for compiled, `view_raw()` for direct include
 
 ### Cache System
-- Drivers: `file` (persistent), `array` (request-scoped)
-- Operations: get, put, forever, remember, rememberForever, pull, add, many, putMany, increment, decrement, forget, flush, has, missing
+- Drivers: `file` (persistent, 0750 dirs), `array` (request-scoped), `apcu` (shared memory, degrades to file), `redis` (via ext-redis, degrades to file)
+- **Atomic operations** — APCu: `apcu_fetch($k, $success)` out-param eliminates TOCTOU + correctly stores `false` values; Redis: `INCRBY`/`SET NX`/`SETEX` (safe on TTL=0 via `SET`); File: flock + temp+rename
+- `remember()` uses atomic `add()` (SET NX) — two concurrent callers cannot both compute the expensive callback
+- Operations: get, put, forever, remember, rememberForever, pull, add, many, putMany, increment, decrement, forget, flush, has, missing, getMetadata
 - Store selection: `cache()->store('name')`
 
 ### Queue System
-- Drivers: `database`, `sync`
-- Job model with `handle()`, per-job queue name and delay
-- Worker with retry, backoff, timeout, failed job storage
-- Operations: work, retry, failed, flush, clear
+- Drivers: `database` (SELECT…FOR UPDATE SKIP LOCKED), `redis` (sorted-set delays + Lua atomic migration), `sync`
+- Job model with `handle()`, per-job queue name and delay; `fromPayload()` has `allowed_classes` guard + class-mismatch check
+- Worker: **signal-aware sleep** — `usleep(100 ms)` loop with `pcntl_signal_dispatch()` — SIGTERM handled within 100 ms
+- Operations: work, retry, failed, flush, clear; Redis: RPOPLPUSH reserve
 
 ### Scheduler (30+ frequency methods)
 - Fluent cron scheduling: every minute to yearly, with day/time/timezone constraints

@@ -27,6 +27,8 @@ final class WorkerState
         \Core\Security\AuditLogger::class,
         \Core\Database\ConnectionPool::class,
         \Core\Database\PerformanceMonitor::class,
+        \Core\Database\QueryCache::class,
+        \Core\View\BladeEngine::class,
     ];
 
     /** @var list<class-string> Additional classes registered at runtime */

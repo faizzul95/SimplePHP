@@ -158,7 +158,12 @@ final class FileUploadGuard
 
         $safeFilename = str_replace(["\r", "\n", "\0", '"'], '', basename($realPath));
         header('Content-Type: ' . $mimeType);
-        header('Content-Length: ' . filesize($realPath));
+        // filesize() returns int|false; guard against false to prevent a
+        // malformed Content-Length header (e.g. file deleted mid-serve).
+        $fileSize = filesize($realPath);
+        if ($fileSize !== false) {
+            header('Content-Length: ' . $fileSize);
+        }
         header('Content-Disposition: ' . $disposition . '; filename="' . $safeFilename . '"');
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: private, max-age=3600');

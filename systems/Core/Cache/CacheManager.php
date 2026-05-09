@@ -22,7 +22,7 @@ class CacheManager
     private array $config;
     private string $prefix;
 
-    /** @var array<string, FileStore|ArrayStore> Resolved store instances */
+    /** @var array<string, FileStore|ArrayStore|ApcuStore|RedisDriver> Resolved store instances */
     private array $stores = [];
 
     public function __construct(array $config)
@@ -36,7 +36,7 @@ class CacheManager
     /**
      * Get a cache store instance by name.
      */
-    public function store(?string $name = null): FileStore|ArrayStore|ApcuStore
+    public function store(?string $name = null): FileStore|ArrayStore|ApcuStore|RedisDriver
     {
         $name = $name ?? $this->config['default'] ?? 'file';
 
@@ -50,7 +50,7 @@ class CacheManager
     /**
      * Resolve a store by its configuration.
      */
-    private function resolve(string $name): FileStore|ArrayStore|ApcuStore
+    private function resolve(string $name): FileStore|ArrayStore|ApcuStore|RedisDriver
     {
         $storeConfig = $this->config['stores'][$name] ?? null;
 
@@ -76,6 +76,12 @@ class CacheManager
                 . ($storeConfig['path'] ?? 'storage/cache/app')
             ),
             'array' => new ArrayStore(),
+            'redis' => extension_loaded('redis')
+                ? new RedisDriver($storeConfig)
+                : new FileStore(
+                    (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR)
+                    . ($storeConfig['path'] ?? 'storage/cache/app')
+                ),
             default => throw new \InvalidArgumentException("Cache driver [{$driver}] is not supported."),
         };
     }
@@ -116,12 +122,20 @@ class CacheManager
      */
     public function remember(string $key, int $seconds, \Closure $callback): mixed
     {
-        if ($this->has($key)) {
-            return $this->get($key);
+        // Fast path: key already exists — no callback needed.
+        $cached = $this->get($key);
+        if ($cached !== null) {
+            return $cached;
         }
 
+        // Compute the value, then attempt an atomic add().
+        // add() is a SET NX operation — only the first caller wins.
+        // This eliminates the TOCTOU race where two concurrent requests
+        // both see a cache miss and both execute the expensive callback.
+        // NOTE: if the computed value IS null, we fall back to put() so
+        // that null results can still be cached (unusual but valid).
         $value = $callback();
-        $this->put($key, $value, $seconds);
+        $this->add($key, $value, $seconds) || $this->put($key, $value, $seconds);
 
         return $value;
     }
@@ -241,5 +255,20 @@ class CacheManager
             $ok = $this->put($key, $value, $seconds) && $ok;
         }
         return $ok;
+    }
+
+    /**
+     * Return metadata for a cache key (e.g. TTL remaining).
+     * Used by RateLimiter::availableIn() to determine retry-after seconds.
+     *
+     * @return array{expires_in?: int}
+     */
+    public function getMetadata(string $key): array
+    {
+        $store = $this->store();
+        if (method_exists($store, 'getMetadata')) {
+            return $store->getMetadata($this->prefix . $key);
+        }
+        return [];
     }
 }

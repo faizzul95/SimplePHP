@@ -29,7 +29,7 @@ class Dispatcher
      * Dispatch a job to the queue.
      *
      * @param Job $job The job instance to dispatch
-     * @return string|null The job ID (database driver) or null (sync driver)
+     * @return string|null The job ID (database/redis driver) or null (sync driver)
      */
     public function dispatch(Job $job): ?string
     {
@@ -37,7 +37,29 @@ class Dispatcher
             return $this->dispatchSync($job);
         }
 
+        if ($this->driver === 'redis') {
+            return $this->dispatchToRedis($job);
+        }
+
         return $this->dispatchToDatabase($job);
+    }
+
+    /**
+     * Push a job to the Redis queue.
+     */
+    private function dispatchToRedis(Job $job): ?string
+    {
+        $connConfig = $this->config['connections']['redis'] ?? [];
+        try {
+            $redisQueue = new RedisQueue($connConfig);
+            return $redisQueue->push($job, $job->queue, $job->delay);
+        } catch (\Throwable $e) {
+            if (function_exists('logger')) {
+                logger()->log_error('Redis queue dispatch failed [' . get_class($job) . ']: ' . $e->getMessage());
+            }
+            // Fallback to sync
+            return $this->dispatchSync($job);
+        }
     }
 
     /**

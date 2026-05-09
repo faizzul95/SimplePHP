@@ -33,6 +33,10 @@ final class RateLimiter
      * Increment counter and check against limit.
      * Returns true if the request is allowed, false if rate-limited.
      *
+     * Uses an increment-first strategy to eliminate the check-then-act (TOCTOU)
+     * race condition. The counter is atomically incremented before the comparison,
+     * so two concurrent requests near the limit cannot both slip through.
+     *
      * @param string $key          Key from resolveKey()
      * @param int    $maxAttempts  Maximum allowed attempts in the window
      * @param int    $decaySeconds Window duration in seconds
@@ -40,21 +44,18 @@ final class RateLimiter
     public static function attempt(string $key, int $maxAttempts, int $decaySeconds): bool
     {
         $cacheKey = self::CACHE_PREFIX . $key;
-        $current  = (int) cache()->get($cacheKey, 0);
 
-        if ($current >= $maxAttempts) {
-            return false;
-        }
-
-        // Atomic first-write using SET NX (add returns false if key already existed).
-        // This prevents a race where two concurrent requests both see $current === 0,
-        // both call put(), and the counter is stuck at 1 instead of 2.
+        // Increment-first: atomically create key at 1 (with TTL) on first request,
+        // or increment existing counter without touching TTL on subsequent requests.
+        // This means the comparison happens AFTER the counter is already committed,
+        // preventing two concurrent requests from both reading the same "below limit"
+        // value and both being permitted.
         if (!cache()->add($cacheKey, 1, $decaySeconds)) {
-            // Key existed (another request won the race) — increment atomically
             cache()->increment($cacheKey);
         }
 
-        return true;
+        $count = (int) cache()->get($cacheKey, 1);
+        return $count <= $maxAttempts;
     }
 
     /**

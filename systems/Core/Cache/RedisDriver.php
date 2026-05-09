@@ -49,7 +49,12 @@ final class RedisDriver
         }
 
         if (!empty($config['password'])) {
-            $this->redis->auth((string) $config['password']);
+            $authResult = $this->redis->auth((string) $config['password']);
+            if ($authResult === false) {
+                throw new \RuntimeException(
+                    'Redis authentication failed. Verify REDIS_PASSWORD in .env.'
+                );
+            }
         }
 
         if (isset($config['database'])) {
@@ -68,7 +73,13 @@ final class RedisDriver
 
     public function put(string $key, mixed $value, int $ttlSeconds = 3600): bool
     {
-        return $this->redis->setex($key, $ttlSeconds, $value);
+        // SETEX requires a strictly positive TTL — Redis rejects ttl=0 with an error.
+        // When $ttlSeconds <= 0 (the "forever" case used by CacheManager), use SET.
+        if ($ttlSeconds > 0) {
+            return $this->redis->setex($key, $ttlSeconds, $value);
+        }
+
+        return (bool) $this->redis->set($key, $value);
     }
 
     public function forever(string $key, mixed $value): bool
@@ -140,11 +151,14 @@ final class RedisDriver
      */
     public function add(string $key, mixed $value, int $ttlSeconds = 3600): bool
     {
-        return (bool) $this->redis->set(
-            $key,
-            $value,
-            ['nx', 'ex' => $ttlSeconds]
-        );
+        // SET NX without EX stores the key forever when ttlSeconds <= 0.
+        // Including 'ex' => 0 would cause a Redis ERR invalid expire time.
+        $options = ['nx'];
+        if ($ttlSeconds > 0) {
+            $options['ex'] = $ttlSeconds;
+        }
+
+        return (bool) $this->redis->set($key, $value, $options);
     }
 
     /**

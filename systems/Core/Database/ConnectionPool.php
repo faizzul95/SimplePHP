@@ -438,6 +438,57 @@ class ConnectionPool
     }
 
     /**
+     * Resolve a connection with automatic replica health-check and failover.
+     *
+     * Designed for read/write splitting: attempts the preferred $name first
+     * (typically the read replica); if the connection fails it falls back to
+     * $fallback (typically the primary) so the request succeeds even when the
+     * replica goes offline.
+     *
+     * A per-name health-failure timestamp is written to APCu so that other
+     * workers can optionally skip the unhealthy replica for up to 60 seconds
+     * without waiting for TCP timeouts on every request.
+     *
+     * @param string $name     Preferred connection name (e.g. 'slave').
+     * @param string $fallback Fallback connection name (e.g. 'default').
+     * @return \PDO
+     * @throws \Exception When both connections fail, or when $name === $fallback.
+     */
+    public static function getConnectionWithFallback(string $name, string $fallback = 'default'): \PDO
+    {
+        // If the caller requests the same connection as the fallback, skip the
+        // try/catch and let any exception propagate normally.
+        if ($name === $fallback) {
+            return self::getConnection($name);
+        }
+
+        // Honour a recent health-failure flag: skip the replica for 60 s after
+        // the last known failure so other workers do not pile up on TCP timeouts.
+        if (self::apcuAvailable()) {
+            $failedAt = self::apcuFetch(self::$apcu_prefix . 'health_fail:' . $name);
+            if ($failedAt !== false && (time() - $failedAt) < 60) {
+                return self::getConnection($fallback);
+            }
+        }
+
+        try {
+            return self::getConnection($name);
+        } catch (\Exception $e) {
+            // Replica unavailable — evict the broken handle from the pool so
+            // the next intra-request usage does not reuse a dead socket.
+            self::removeConnection($name);
+
+            // Publish the health event to APCu so sibling workers skip this
+            // replica for the next 60 seconds.
+            if (self::apcuAvailable()) {
+                self::apcuStore(self::$apcu_prefix . 'health_fail:' . $name, time(), 60);
+            }
+
+            return self::getConnection($fallback);
+        }
+    }
+
+    /**
      * Close all pooled connections in this process.
      *
      * Note: for persistent connections PHP will reclaim the socket on the next

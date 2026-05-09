@@ -1,14 +1,18 @@
 # 19. Console Built-in Commands
 
-## Complete Command List (35 commands)
+## Complete Command List (39 commands)
 
-### Cache (3)
+### Cache (7)
 
 | Command | Description |
 |---------|-------------|
 | `cache:clear` | Clear application cache (supports `--store` option) |
-| `view:clear` | Clear compiled view cache |
-| `config:clear` | Clear config cache |
+| `config:cache` | Compile all `app/config/*.php` into `storage/cache/config.cache.php` |
+| `config:clear` | Delete the compiled config cache file |
+| `route:cache` | Compile all routes into `storage/cache/routes.cache.php` (skips closures) |
+| `route:clear` | Delete the compiled route cache file |
+| `view:cache` | Pre-compile all view templates into `storage/cache/views/` |
+| `view:clear` | Delete compiled view cache files |
 
 ### Routes (1)
 
@@ -87,6 +91,12 @@ In addition to the above, the Console Kernel registers:
 
 ```bash
 php myth list                               # Show all commands
+php myth route:cache                        # Compile routes to cache
+php myth route:clear                        # Clear route cache
+php myth config:cache                       # Compile all config files
+php myth config:clear                       # Clear config cache
+php myth view:cache                         # Pre-compile all view templates
+php myth view:clear                         # Clear compiled views
 php myth route:list --method=POST           # Filter routes by method
 php myth down --secret=superadmin-bypass    # Maintenance mode with bypass URL
 php myth down --redirect=/status            # Redirect traffic while app is down
@@ -115,7 +125,7 @@ php myth cache:clear --store=file           # Clear specific store
 
 ## Benefits
 
-- 35 built-in commands covering development, security, performance, deployment, and operations.
+- 39 built-in commands covering development, security, performance, deployment, and operations.
 - Standardized developer workflow.
 - Faster setup for common tasks.
 - Reduced manual mistakes for repetitive operations.

@@ -621,7 +621,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $result = $callback($this);
             $this->commit();
             return $result;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->rollback();
             throw $e;
         }
@@ -2401,11 +2401,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                     $this->commit();
                     return $result;
                 }
-            } catch (\Exception $txException) {
+            } catch (\Throwable $txException) {
                 $this->rollback();
                 throw $txException;
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->db_error_log($e, __FUNCTION__);
             $response['message'] = $e->getMessage();
         }

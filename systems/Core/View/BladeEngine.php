@@ -4,7 +4,7 @@ namespace Core\View;
 
 class BladeEngine
 {
-    private const COMPILER_CACHE_VERSION = '2026-04-12-b';
+    private const COMPILER_CACHE_VERSION = '2026-05-09-a';
 
     private string $viewPath;
     private string $cachePath;
@@ -15,6 +15,10 @@ class BladeEngine
     private ?string $extendsView = null;
     private int $renderLevel = 0;
     private ?array $cachedSharedViewData = null;
+    // Component / slot system
+    private array $componentStack = [];
+    private array $componentSlots = [];
+    private array $slotStack     = [];
     // Bounded to avoid unbounded memory growth in long-running workers.
     private const COMPILED_PATH_CACHE_MAX = 256;
     private const RESOLVE_CACHE_MAX = 256;
@@ -26,7 +30,8 @@ class BladeEngine
         $this->cachePath = rtrim($cachePath, '/\\');
 
         if (!is_dir($this->cachePath)) {
-            @mkdir($this->cachePath, 0775, true);
+            // 0750: compiled views contain application logic; no world access.
+            @mkdir($this->cachePath, 0750, true);
         }
     }
 
@@ -165,6 +170,87 @@ class BladeEngine
         return $this->stacks[$stack] ?? $default;
     }
 
+    // -------------------------------------------------------------------------
+    // Component / slot system
+    // -------------------------------------------------------------------------
+
+    /**
+     * Begin a component render scope.
+     *
+     * Compiled from: @component('view.name', ['prop' => $value])
+     *
+     * The caller's compiled code is responsible for opening an output buffer
+     * immediately after this call (the directive compiles ob_start() separately
+     * so the buffer is visible in the compiled output for clarity).
+     *
+     * @param string $view Dot-notation view name (e.g. 'components.alert')
+     * @param array  $data Props passed into the component
+     */
+    public function startComponent(string $view, array $data = []): void
+    {
+        $this->componentStack[] = ['view' => $view, 'data' => $data];
+        $this->componentSlots[] = [];
+    }
+
+    /**
+     * Begin capturing a named slot.
+     *
+     * Compiled from: @slot('title')
+     * The compiled code opens ob_start() immediately after this call.
+     *
+     * @param string $name Slot name; becomes a variable inside the component view
+     */
+    public function startSlot(string $name): void
+    {
+        $this->slotStack[] = $name;
+    }
+
+    /**
+     * End the current named slot capture and store its content.
+     *
+     * Compiled from: @endslot
+     * ob_get_clean() is called inside this method to close the slot buffer.
+     */
+    public function stopSlot(): void
+    {
+        $name = array_pop($this->slotStack);
+        if ($name === null) {
+            throw new \RuntimeException('@endslot called without a matching @slot.');
+        }
+        $content = (string) ob_get_clean();
+        $last = count($this->componentSlots) - 1;
+        if ($last >= 0) {
+            $this->componentSlots[$last][$name] = $content;
+        }
+    }
+
+    /**
+     * Finalise the innermost component and return its rendered HTML.
+     *
+     * Compiled from: @endcomponent
+     * ob_get_clean() captures the default slot (everything written to the
+     * component buffer that was NOT in a named @slot block).
+     *
+     * Named slots become individual variables inside the component view
+     * (e.g., @slot('title') → $title). The default content is always $slot.
+     *
+     * @return string Rendered component HTML
+     */
+    public function renderComponent(): string
+    {
+        $component  = array_pop($this->componentStack);
+        $namedSlots = array_pop($this->componentSlots) ?? [];
+
+        // Default slot = everything written to the component ob buffer that
+        // was not captured by a named @slot / @endslot pair.
+        $defaultSlot = (string) ob_get_clean();
+
+        // Named slots are merged as individual variables; $slot is the default.
+        $data = array_merge($component['data'], $namedSlots, ['slot' => $defaultSlot]);
+
+        return $this->render($component['view'], $data);
+    }
+
     public function sharedViewData(): array
     {
         if ($this->cachedSharedViewData !== null) {
@@ -203,6 +289,61 @@ class BladeEngine
         }
     }
 
+    /**
+     * Pre-compile all Blade templates found under the configured view path.
+     *
+     * Walks the view directory recursively and compiles every *.php and
+     * *.blade.php file that does not already have an up-to-date cached version.
+     *
+     * @return array{compiled: int, skipped: int, errors: array<string>}
+     */
+    public function compileAll(): array
+    {
+        $result = ['compiled' => 0, 'skipped' => 0, 'errors' => []];
+
+        if (!is_dir($this->viewPath)) {
+            $result['errors'][] = "View path does not exist: {$this->viewPath}";
+            return $result;
+        }
+
+        if (!is_dir($this->cachePath) && !mkdir($this->cachePath, 0750, true) && !is_dir($this->cachePath)) {
+            $result['errors'][] = "Cannot create view cache directory: {$this->cachePath}";
+            return $result;
+        }
+
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($this->viewPath, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::LEAVES_ONLY
+        );
+
+        foreach ($iterator as $file) {
+            /** @var \SplFileInfo $file */
+            if (!$file->isFile()) {
+                continue;
+            }
+
+            $ext = $file->getExtension();
+            // Process both *.blade.php and plain *.php view files
+            if ($ext !== 'php') {
+                continue;
+            }
+
+            $filePath = $file->getRealPath();
+            if ($filePath === false) {
+                continue;
+            }
+
+            try {
+                $this->compileIfNeeded($filePath);
+                $result['compiled']++;
+            } catch (\Throwable $e) {
+                $result['errors'][] = $filePath . ': ' . $e->getMessage();
+            }
+        }
+
+        return $result;
+    }
+
     private function resetState(): void
     {
         $this->sections = [];
@@ -211,6 +352,9 @@ class BladeEngine
         $this->sectionStack = [];
         $this->pushStack = [];
         $this->cachedSharedViewData = null;
+        $this->componentStack = [];
+        $this->componentSlots = [];
+        $this->slotStack     = [];
     }
 
     private function resetRuntimeStacks(): void
@@ -219,6 +363,9 @@ class BladeEngine
         $this->pushStack = [];
         $this->extendsView = null;
         $this->cachedSharedViewData = null;
+        $this->componentStack = [];
+        $this->componentSlots = [];
+        $this->slotStack     = [];
     }
 
     private function isDebugEnabled(): bool
@@ -260,6 +407,16 @@ class BladeEngine
     }
 
     private static array $resolveCache = [];
+
+    /**
+     * Reset all static per-request caches for long-running worker mode.
+     * Called by WorkerState::flush() at the start of every request cycle.
+     */
+    public static function reset(): void
+    {
+        self::$compiledPathCache = [];
+        self::$resolveCache = [];
+    }
 
     private function resolveViewFile(string $view): ?string
     {
@@ -349,7 +506,16 @@ class BladeEngine
             if ($this->shouldCompactCompiledTemplate()) {
                 $compiledContent = $this->compactCompiledTemplate($compiledContent);
             }
-            file_put_contents($compiled, $compiledContent, LOCK_EX);
+
+            // Atomic write: two workers racing on the same view both compile it
+            // independently, but only one rename wins — readers never see a
+            // half-written file (unlike in-place file_put_contents).
+            $tmp = $compiled . '.' . bin2hex(random_bytes(4)) . '.tmp';
+            if (@file_put_contents($tmp, $compiledContent, LOCK_EX) !== false) {
+                if (!@rename($tmp, $compiled)) {
+                    @unlink($tmp); // Clean up on rename failure (e.g. cross-device)
+                }
+            }
 
             // Invalidate opcache for the compiled file
             if (function_exists('opcache_invalidate')) {
@@ -428,6 +594,7 @@ class BladeEngine
 
         $content = $this->compileIncludeDirectives($content);
         $content = $this->compileSectionDirectives($content);
+        $content = $this->compileComponentDirectives($content);
         $content = $this->compileForelseDirectives($content);
 
         // Batch all simple string replacements in one strtr() call for performance
@@ -438,6 +605,8 @@ class BladeEngine
             '@parent'        => '##__BLADE_PARENT__##',
             '@endpush'       => '<?php $__blade->stopPush(); ?>',
             '@endprepend'    => '<?php $__blade->stopPush(); ?>',
+            '@endcomponent'  => '<?php echo $__blade->renderComponent(); ?>',
+            '@endslot'       => '<?php $__blade->stopSlot(); ?>',
             '@csrf'          => '<?php echo csrf_field(); ?>',
             '@endauth'       => '<?php endif; ?>',
             '@endguest'      => '<?php endif; ?>',
@@ -646,6 +815,43 @@ class BladeEngine
 
             return "<?php echo \$__blade->yieldContent('{$name}'); ?>";
         });
+    }
+
+    /**
+     * Compile @component('view', [data]) / @slot('name') directives.
+     *
+     * @component('components.alert', ['type' => 'danger'])
+     *   @slot('title') Alert @endslot
+     *   Body text here — this becomes $slot inside the component.
+     * @endcomponent
+     *
+     * @endcomponent and @endslot are compiled in the strtr batch in compileString().
+     */
+    private function compileComponentDirectives(string $content): string
+    {
+        // @component('view', [...optional data...])
+        $content = $this->replaceDirectiveCalls($content, 'component', function (string $expression): string {
+            $args = $this->splitTopLevelArguments($expression, 2);
+            $view = $this->parseQuotedString($args[0] ?? '');
+            if ($view === null) {
+                return '@component(' . $expression . ')';
+            }
+            $data = isset($args[1]) ? trim($args[1]) : '[]';
+            $safeView = addslashes($view);
+            return "<?php \$__blade->startComponent('{$safeView}', {$data}); ob_start(); ?>";
+        });
+
+        // @slot('name')
+        $content = $this->replaceDirectiveCalls($content, 'slot', function (string $expression): string {
+            $name = $this->parseQuotedString(trim($expression));
+            if ($name === null) {
+                return '@slot(' . $expression . ')';
+            }
+            $safeName = addslashes($name);
+            return "<?php \$__blade->startSlot('{$safeName}'); ob_start(); ?>";
+        });
+
+        return $content;
     }
 
     private function compileEachDirectives(string $content): string

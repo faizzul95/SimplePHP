@@ -70,7 +70,16 @@ class Worker
                     return;
                 }
 
-                sleep($sleep);
+                // Sleep in 100 ms chunks so SIGTERM/SIGINT are processed promptly.
+                // A plain sleep($sleep) delays signal delivery by up to $sleep seconds,
+                // making graceful shutdown feel unresponsive for high $sleep values.
+                $ticks = $sleep * 10;
+                for ($i = 0; $i < $ticks && !$this->shouldQuit; $i++) {
+                    usleep(100_000); // 100 ms
+                    if (function_exists('pcntl_signal_dispatch')) {
+                        pcntl_signal_dispatch();
+                    }
+                }
                 continue;
             }
 

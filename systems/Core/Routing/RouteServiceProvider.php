@@ -15,6 +15,16 @@ class RouteServiceProvider
 
     public function map(Request $request, Router $router): void
     {
+        // Register this instance so RouteCacheCommand can retrieve it
+        Router::setInstance($router);
+
+        // Fast-path: if a route cache file exists, restore the pre-built index
+        // and skip parsing the route files entirely.
+        $cacheFile = defined('ROOT_DIR') ? ROOT_DIR . 'storage/cache/routes.cache.php' : null;
+        if ($cacheFile !== null && $router->loadFromCache($cacheFile)) {
+            return;
+        }
+
         // Always load both web and API routes so that:
         // 1. route('name') resolves names from both files regardless of request type
         // 2. API routes are available for web AJAX calls

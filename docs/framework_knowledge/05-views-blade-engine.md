@@ -10,13 +10,14 @@
 - Compiled cache path is configured (`framework.view_cache_path`).
 - Cache lookup reuses an in-memory source-to-compiled-path map during the request lifecycle.
 - Cache signature includes source file path + file stat metadata (`mtime`, `size`).
-- Compiled files are written with `LOCK_EX`.
+- **Compiled files are written atomically** (Phase 10): temp file + `rename()` — two workers racing on the same view both compile, but only one `rename()` wins; readers never observe a partially-written file.
 - Compiled cache source can be compacted through `framework.view_compact_compiled_cache` using PHP's own whitespace stripper before the file is stored.
 - OPcache invalidation runs when available.
 - Shared template helpers now render through Blade, so `.php` view files can be migrated in place to Blade syntax without renaming them.
 - Main app pages can use a shared layout with `@extends('_templates.layouts.app')`, `@section('content')`, and `@push('scripts')`.
 - Rendered HTML can be whitespace-minified through `framework.view_minify_output`.
 - Shared flash/error view data is cached once per top-level render to avoid repeated session reads across nested includes.
+- Cache directories created with `0750` permissions (owner+group only; compiled views contain application logic).
 
 ## Confirmed Directives
 
@@ -150,10 +151,26 @@ Shared layouts live under [app/views/_templates/layouts/](../../app/views/_templ
 - Efficient rendering due to compiled cache + mtime invalidation.
 - Smaller compiled cache files when compiled-cache compaction is enabled.
 - Optional response-size reduction from safe inter-tag whitespace minification.
+- `view:cache` command pre-compiles all templates at deploy time — zero compilation latency on first request.
+
+## View Cache Commands
+
+| Command | Description |
+|---------|-------------|
+| `php myth view:cache` | Pre-compile all `*.php` and `*.blade.php` templates into `storage/cache/views/` |
+| `php myth view:clear` | Delete all compiled view files (forces recompile on next request) |
+
+Run `view:cache` as part of your production deployment pipeline (after `view:clear`) to eliminate first-request compile latency.
+
+```bash
+php myth view:clear   # remove stale compiled files
+php myth view:cache   # pre-compile all templates
+```
 
 ## Evidence
 
-- `systems/Core/View/BladeEngine.php`
+- `systems/Core/View/BladeEngine.php` — `compileIfNeeded()`, `compileAll()`
+- `systems/Core/Console/Commands/ViewCacheCommand.php`
 - `app/config/framework.php`
 - `app/helpers/custom_template_helper.php`
 - `app/helpers/custom_project_helper.php`

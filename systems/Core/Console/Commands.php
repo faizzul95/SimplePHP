@@ -97,6 +97,14 @@ class Commands
             $console->newLine();
         }, 'Clear compiled view files');
 
+        $console->command('view:cache', function () use ($console) {
+            try {
+                (new \Core\Console\Commands\ViewCacheCommand())->handle();
+            } catch (\Throwable $e) {
+                $console->error('  ' . $e->getMessage());
+            }
+        }, 'Pre-compile all Blade templates into the view cache');
+
         $console->command('config:cache', function () use ($console) {
             try {
                 (new \Core\Console\Commands\ConfigCacheCommand())->handle();
