@@ -56,8 +56,12 @@ class QueryCache
      */
     protected static $tags = [];
 
+    /** @var string APCu key prefix to namespace query cache entries. */
+    protected static string $apcuPrefix = 'qc:';
+
     /**
-     * Initialize cache directory
+     * Initialize cache directory.
+     * APCu is used automatically when available (shared hosting friendly — no Redis needed).
      *
      * @param string $dir Cache directory path
      * @return void
@@ -76,6 +80,24 @@ class QueryCache
     }
 
     /**
+     * Whether APCu is available and enabled in the current SAPI.
+     * Memoised after first call.
+     *
+     * @return bool
+     */
+    protected static function apcuAvailable(): bool
+    {
+        static $available = null;
+        if ($available === null) {
+            $available = function_exists('apcu_store')
+                && function_exists('apcu_fetch')
+                && function_exists('apcu_enabled')
+                && (bool) call_user_func('apcu_enabled');
+        }
+        return $available;
+    }
+
+    /**
      * Get cached query result
      *
      * @param string $key Cache key
@@ -89,18 +111,31 @@ class QueryCache
 
         self::initIfNeeded();
 
-        // Check memory cache first
+        $now = time();
+
+        // Tier 1: in-process memory cache (fastest — no I/O)
         if (isset(self::$memoryCache[$key])) {
             $cached = self::$memoryCache[$key];
-            if ($cached['expires'] > time()) {
+            if ($cached['expires'] > $now) {
                 self::$stats['hits']++;
                 return $cached['data'];
-            } else {
-                unset(self::$memoryCache[$key]);
+            }
+            unset(self::$memoryCache[$key]);
+        }
+
+        // Tier 2: APCu (cross-worker shared memory — shared hosting friendly, no Redis needed)
+        if (self::apcuAvailable()) {
+            $apcuKey = self::$apcuPrefix . $key;
+            $success  = false;
+            $cached   = call_user_func('apcu_fetch', $apcuKey, $success);
+            if ($success && is_array($cached) && ($cached['expires'] ?? 0) > $now) {
+                self::addToMemoryCache($key, $cached['data'], $cached['expires']);
+                self::$stats['hits']++;
+                return $cached['data'];
             }
         }
 
-        // Check file cache
+        // Tier 3: file cache
         $filePath = self::getCacheFilePath($key);
         if (!file_exists($filePath)) {
             self::$stats['misses']++;
@@ -115,13 +150,13 @@ class QueryCache
             self::$stats['misses']++;
             return null;
         }
-        if ($cached['expires'] < time()) {
-            unlink($filePath);
+        if ($cached['expires'] < $now) {
+            @unlink($filePath);
             self::$stats['misses']++;
             return null;
         }
 
-        // Store in memory cache for quick access
+        // Promote to faster tiers
         self::addToMemoryCache($key, $cached['data'], $cached['expires']);
 
         self::$stats['hits']++;
@@ -155,12 +190,23 @@ class QueryCache
             'created' => time()
         ];
 
-        // Save to memory cache
+        // Tier 1: write to in-process memory cache
         self::addToMemoryCache($key, $data, $expires);
 
-        // Save to file cache
+        // Tier 2: write to APCu when available (avoids file I/O for hot queries)
+        if (self::apcuAvailable()) {
+            call_user_func('apcu_store', self::$apcuPrefix . $key, $cached, $ttl);
+        }
+
+        // Tier 3: write to file cache with atomic rename to prevent partial reads
         $filePath = self::getCacheFilePath($key);
-        $result = file_put_contents($filePath, serialize($cached), LOCK_EX);
+        $tmpPath  = $filePath . '.' . getmypid() . '.tmp';
+        $result   = file_put_contents($tmpPath, serialize($cached), LOCK_EX);
+        if ($result !== false) {
+            rename($tmpPath, $filePath);
+        } else {
+            @unlink($tmpPath);
+        }
 
         // Register tags
         foreach ($tags as $tag) {

@@ -2829,7 +2829,7 @@ class Validation
                 return false;
             }
 
-            return password_verify($value, $user['password']);
+            return \Core\Security\Hasher::verify((string) $value, (string) $user['password']);
         } catch (Exception $e) {
             return false;
         }

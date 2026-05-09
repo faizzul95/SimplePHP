@@ -154,6 +154,80 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $_error;
 
     /**
+     * Explicit column allowlist for mass-assignment (insert/update).
+     *
+     * When non-empty, only the declared columns are permitted to be written
+     * through insert() / update() — identical to Eloquent's $fillable.
+     * Columns absent from this list but present in the schema are silently
+     * dropped before the query is built, preventing privilege-escalation via
+     * crafted payloads (e.g. is_admin=1).
+     *
+     * Leave as an empty array (default) to fall back to the schema-based guard
+     * (any column that exists in the table is allowed).  For maximum security,
+     * always declare $fillable on subclasses that accept user input.
+     *
+     * Example (subclass or model-style usage):
+     *   protected array $fillable = ['name', 'email', 'bio'];
+     *
+     * @var string[]
+     */
+    protected array $fillable = [];
+
+    /**
+     * Columns that must NEVER be mass-assigned regardless of $fillable.
+     * Takes precedence over $fillable.  Use this to hard-block sensitive
+     * columns (e.g. is_admin, role_id) even if a subclass accidentally
+     * includes them in $fillable.
+     *
+     * @var string[]
+     */
+    protected array $guarded = [];
+
+    /**
+     * Set the fillable allowlist at runtime.
+     *
+     * @param string[] $columns
+     * @return $this
+     */
+    public function setFillable(array $columns): static
+    {
+        $this->fillable = $columns;
+        return $this;
+    }
+
+    /**
+     * Return the current fillable allowlist.
+     *
+     * @return string[]
+     */
+    public function getFillable(): array
+    {
+        return $this->fillable;
+    }
+
+    /**
+     * Set the guarded denylist at runtime.
+     *
+     * @param string[] $columns
+     * @return $this
+     */
+    public function setGuarded(array $columns): static
+    {
+        $this->guarded = $columns;
+        return $this;
+    }
+
+    /**
+     * Return the current guarded denylist.
+     *
+     * @return string[]
+     */
+    public function getGuarded(): array
+    {
+        return $this->guarded;
+    }
+
+    /**
      * @var bool The flag for sanitization for insert/update method.
      */
     protected $_secureInput = false;
@@ -3120,11 +3194,50 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Sanitize column data to ensure that only valid columns are used.
      *
+     * Applies a two-layer column guard before any INSERT / UPDATE reaches PDO:
+     *
+     * Layer 1 — Schema guard (always active):
+     *   Strip any key that does not exist in the actual table, preventing
+     *   phantom-column injection.
+     *
+     * Layer 2 — Application allowlist / denylist (opt-in):
+     *   When $fillable is non-empty, only declared columns survive — identical
+     *   to Eloquent's $fillable.  This blocks privilege-escalation payloads
+     *   (e.g. is_admin=1, role_id=1) even when those columns exist in the schema.
+     *   $guarded columns are always stripped, regardless of $fillable.
+     *
      * @param array $data An associative array where keys represent column names and values represent corresponding data.
      * @return array The sanitized column data.
      * @throws \Exception If there's an error accessing the database or if the table does not exist.
      */
-    abstract protected function sanitizeColumn($data);
+    protected function sanitizeColumn($data): array
+    {
+        $columns = $this->getTableColumns();
+
+        // Layer 1: schema guard — drop any key not in the real table
+        $data = array_intersect_key($data, array_flip($columns));
+
+        // Layer 2a: fillable allowlist — when declared, keep only whitelisted columns
+        if (!empty($this->fillable)) {
+            $data = array_intersect_key($data, array_flip($this->fillable));
+        }
+
+        // Layer 2b: guarded denylist — always remove these regardless of fillable
+        if (!empty($this->guarded)) {
+            $data = array_diff_key($data, array_flip($this->guarded));
+        }
+
+        if ($this->_secureInput) {
+            $data = array_map(function ($value) {
+                return $value === '' ? null : $this->normalizeDatabaseValue($value);
+            }, $data);
+        } else {
+            // Even without full sanitization, normalize empty string → null
+            $data = array_map(static fn($value) => $value === '' ? null : $value, $data);
+        }
+
+        return $data;
+    }
 
     /**
      * Sanitizes the output data to prevent XSS attacks by applying htmlspecialchars

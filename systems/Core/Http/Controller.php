@@ -23,6 +23,8 @@ use Core\View\BladeEngine;
  */
 abstract class Controller
 {
+    use SecureResourceAccess;
+
     protected const AUTH_METHODS = ['session', 'token', 'oauth2'];
 
     protected BladeEngine $blade;
@@ -154,17 +156,17 @@ abstract class Controller
     /**
      * Fetch a single record from a table or terminate with 404.
      *
-     * @param string      $table     Table name
-     * @param int|string  $id        Primary key value
-     * @param string|null $select    Columns to select (null = all)
+     * @param string      $table      Table name
+     * @param int|string  $id         Primary key value
+     * @param string|null $select     Columns to select (null = '*' = all)
      * @param bool        $softDelete Respect soft-delete (whereNull deleted_at)
-     * @param string      $label     Human-readable name for the error message
+     * @param string      $message    Error message on 404
      * @return array  The fetched record
      */
     protected function findOrFail(
         string $table,
         int|string $id,
-        string $select = '*',
+        ?string $select = null,
         bool $softDelete = true,
         string $message = 'Record not found'
     ): array {

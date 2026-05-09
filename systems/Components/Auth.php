@@ -483,7 +483,7 @@ class Auth
             }
         }
 
-        if (!password_verify((string) $password, (string) ($user[$passwordCol] ?? ''))) {
+        if (!\Core\Security\Hasher::verify((string) $password, (string) ($user[$passwordCol] ?? ''))) {
             $userId = (int) ($user[$uc['id'] ?? 'id'] ?? 0);
             $this->registerLoginFailure($credentials, $userId);
             $this->markAttemptStatus('invalid_credentials', 'Invalid username or password', 401, [], $credentials, $userId);
@@ -746,7 +746,7 @@ class Auth
         $idColumn = $this->safeColumn((string) ($uc['id'] ?? 'id'), 'id');
         $passwordColumn = $this->safeColumn((string) ($uc['password'] ?? 'password'), 'password');
         $user = $this->findConfiguredUserRecord($userId, implode(', ', [$idColumn, $passwordColumn]));
-        if (empty($user) || !password_verify($password, (string) ($user[$passwordColumn] ?? ''))) {
+        if (empty($user) || !\Core\Security\Hasher::verify($password, (string) ($user[$passwordColumn] ?? ''))) {
             return false;
         }
 
@@ -1886,7 +1886,7 @@ class Auth
             $uc['name']               => $name,
             $uc['email']              => $email,
             $uc['username']           => $email,
-            $uc['password']           => password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT),
+            $uc['password']           => \Core\Security\Hasher::make(bin2hex(random_bytes(16))),
             $uc['social_provider']    => $provider,
             $uc['social_provider_id'] => $providerId,
             'created_at'              => \timestamp(),

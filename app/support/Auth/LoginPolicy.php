@@ -132,7 +132,12 @@ class LoginPolicy
             return;
         }
 
-        $rehash = password_hash($plainPassword, $algorithm, $options);
+        // Use Hasher::make() (Argon2id) if the configured algorithm is the framework default;
+        // otherwise fall through to the configured algorithm for backward compatibility.
+        $rehash = (strtolower((string) $algorithm) === 'default' || $algorithm === PASSWORD_DEFAULT)
+            ? \Core\Security\Hasher::make($plainPassword)
+            : password_hash($plainPassword, $algorithm, $options);
+
         if (!is_string($rehash) || $rehash === '') {
             return;
         }

@@ -344,9 +344,26 @@ if (!function_exists('reset_framework_service')) {
 if (!function_exists('bootstrapRegisterServiceProviders')) {
     function bootstrapRegisterServiceProviders(array $config, array $runtimeState = []): void
     {
-        $providers = (array) ($config['framework']['providers'] ?? []);
-        if (empty($providers)) {
+        $providerConfig = (array) ($config['framework']['providers'] ?? []);
+        if (empty($providerConfig)) {
             return;
+        }
+
+        // Grouped format: providers split by runtime type
+        //   ['always' => [...], 'web' => [...], 'api' => [...], 'cli' => [...]]
+        // Flat format (legacy): a plain list of class strings
+        $isGrouped = array_key_exists('always', $providerConfig)
+            || array_key_exists('web', $providerConfig)
+            || array_key_exists('api', $providerConfig)
+            || array_key_exists('cli', $providerConfig);
+
+        if ($isGrouped) {
+            $runtime   = (string) ($runtimeState['runtime'] ?? 'web');
+            $always    = (array) ($providerConfig['always'] ?? []);
+            $specific  = (array) ($providerConfig[$runtime] ?? []);
+            $providers = array_values(array_unique(array_merge($always, $specific)));
+        } else {
+            $providers = $providerConfig;
         }
 
         dispatch_event('providers.registering', [

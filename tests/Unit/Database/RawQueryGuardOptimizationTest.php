@@ -70,7 +70,7 @@ final class RawQueryGuardOptimizationTest extends TestCase
             public function batchInsert($data) { return []; }
             public function batchUpdate($data) { return []; }
             public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-            protected function sanitizeColumn($data) { return $data; }
+            protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
         };
 
         $this->expectException(\InvalidArgumentException::class);
@@ -105,7 +105,7 @@ final class RawQueryGuardOptimizationTest extends TestCase
             public function batchInsert($data) { return []; }
             public function batchUpdate($data) { return []; }
             public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-            protected function sanitizeColumn($data) { return $data; }
+            protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
         };
 
         $database->select('id')->where('status', 1)->groupBy('status')->having('COUNT(*)', '1', '>');
@@ -145,7 +145,7 @@ final class RawQueryGuardOptimizationTest extends TestCase
             public function batchInsert($data) { return []; }
             public function batchUpdate($data) { return []; }
             public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-            protected function sanitizeColumn($data) { return $data; }
+            protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
         };
 
         $sql = $database->select('id')->groupBy(['users.status', 'name'])->toSql();
@@ -181,7 +181,7 @@ final class RawQueryGuardOptimizationTest extends TestCase
             public function batchInsert($data) { return []; }
             public function batchUpdate($data) { return []; }
             public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-            protected function sanitizeColumn($data) { return $data; }
+            protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
         };
 
         $sql = $database->select('id')->groupBy('users.status, name')->toSql();
@@ -217,7 +217,7 @@ final class RawQueryGuardOptimizationTest extends TestCase
             public function batchInsert($data) { return []; }
             public function batchUpdate($data) { return []; }
             public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-            protected function sanitizeColumn($data) { return $data; }
+            protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
         };
 
         $sql = $database
@@ -260,7 +260,7 @@ final class RawQueryGuardOptimizationTest extends TestCase
             public function batchInsert($data) { return []; }
             public function batchUpdate($data) { return []; }
             public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-            protected function sanitizeColumn($data) { return $data; }
+            protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
         };
 
         $sql = $database

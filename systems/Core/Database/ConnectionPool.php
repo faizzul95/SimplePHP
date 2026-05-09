@@ -221,8 +221,26 @@ class ConnectionPool
             \PDO::ATTR_TIMEOUT            => 5,
         ];
 
-        if ($pdoDriver === 'mysql' && isset($config['charset']) && $config['charset'] !== '') {
-            $options[\PDO::MYSQL_ATTR_INIT_COMMAND] = "SET NAMES " . preg_replace('/[^a-zA-Z0-9_]/', '', $config['charset']);
+        if ($pdoDriver === 'mysql') {
+            if (isset($config['charset']) && $config['charset'] !== '') {
+                $options[\PDO::MYSQL_ATTR_INIT_COMMAND] = "SET NAMES " . preg_replace('/[^a-zA-Z0-9_]/', '', $config['charset']);
+            }
+
+            // SSL/TLS support — enabled when ssl_enabled is true or ssl_ca is provided.
+            // Supported on shared hosting as long as the MySQL client libs include SSL.
+            if (!empty($config['ssl_enabled']) || !empty($config['ssl_ca'])) {
+                if (!empty($config['ssl_ca']) && is_readable((string) $config['ssl_ca'])) {
+                    $options[\PDO::MYSQL_ATTR_SSL_CA] = $config['ssl_ca'];
+                }
+                if (!empty($config['ssl_cert']) && is_readable((string) $config['ssl_cert'])) {
+                    $options[\PDO::MYSQL_ATTR_SSL_CERT] = $config['ssl_cert'];
+                }
+                if (!empty($config['ssl_key']) && is_readable((string) $config['ssl_key'])) {
+                    $options[\PDO::MYSQL_ATTR_SSL_KEY] = $config['ssl_key'];
+                }
+                // Verify the server certificate — set to false only for self-signed certs in dev
+                $options[\PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = (bool) ($config['ssl_verify'] ?? true);
+            }
         }
 
         try {
@@ -521,5 +539,30 @@ class ConnectionPool
     public static function setTimeout(int $seconds): void
     {
         self::$connectionTimeout = max(1, $seconds);
+    }
+
+    /**
+     * Flush the intra-request pool WITHOUT closing the underlying persistent sockets.
+     *
+     * Use this in Octane/RoadRunner/FrankenPHP worker mode to clear per-request
+     * static state so the next request starts with a clean handle reference,
+     * while still benefiting from persistent connection reuse.
+     *
+     * If $closeConnections is true the PDO handles are nulled (forces re-open
+     * on next request — safer for queue workers that run arbitrary DDL).
+     *
+     * @param bool $closeConnections Whether to also null the PDO handles (default: false)
+     * @return void
+     */
+    public static function reset(bool $closeConnections = false): void
+    {
+        if ($closeConnections) {
+            foreach (self::$pool as $name => $pdo) {
+                self::$pool[$name] = null;
+            }
+        }
+        self::$pool         = [];
+        self::$lastActivity = [];
+        self::resetStats();
     }
 }

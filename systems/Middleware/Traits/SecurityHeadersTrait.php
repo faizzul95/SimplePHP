@@ -121,7 +121,28 @@ trait SecurityHeadersTrait
 
 		$policies = [];
 		foreach ($permPolicy as $feature => $value) {
-			$policies[] = $feature . '=' . $value;
+			// Accept both legacy string format ('(self)', '()') and
+			// array format (['self'] or []) as shown in CLAUDE.md security config.
+			if (is_array($value)) {
+				if (empty($value)) {
+					// [] means deny-all
+					$policies[] = $feature . '=()';
+				} else {
+					// ['self'] → (self), ['self', 'https://cdn.example.com'] → (self "https://cdn.example.com")
+					$parts = array_map(static function (string $v): string {
+						// Wrap plain words like 'self' in parens syntax;
+						// full URLs are quoted.
+						if (in_array($v, ['self', 'src', 'none'], true)) {
+							return $v;
+						}
+						return '"' . $v . '"';
+					}, $value);
+					$policies[] = $feature . '=(' . implode(' ', $parts) . ')';
+				}
+			} else {
+				// Legacy string value passed directly (e.g. '(self)', '()')
+				$policies[] = $feature . '=' . $value;
+			}
 		}
 
 		if (!empty($policies)) {

@@ -13,6 +13,16 @@ This component handles framework-level protections such as path normalization, b
 
 ## Current Responsibilities
 
+### Database Mass-Assignment Guard (separate from this component)
+
+Although not part of `Components\Security`, the SQL injection defence includes a two-layer column filter built into `Core\Database\BaseDatabase::sanitizeColumn()`:
+
+1. **Schema guard** — always strips columns not present in the real table schema.
+2. **`$fillable` allowlist** — when declared, only listed columns survive `insert()`/`update()`.
+3. **`$guarded` denylist** — always blocks listed columns regardless of `$fillable`.
+
+See [12-database-query-builder.md](12-database-query-builder.md) for full documentation, subclass patterns, and runtime setter methods (`setFillable`, `setGuarded`, etc.).
+
 ### Filesystem Permission Checks
 
 - `canReadPath(string $path): bool`

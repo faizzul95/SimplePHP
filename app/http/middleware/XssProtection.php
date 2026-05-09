@@ -50,12 +50,14 @@ class XssProtection implements MiddlewareInterface
 
     public function handle(Request $request, callable $next)
     {
-        // Only inspect state-changing requests (POST, PUT, PATCH, DELETE)
+        // Skip non-content methods — nothing to scan
         $method = strtoupper($request->method());
-        if (!in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+        if (in_array($method, ['HEAD', 'OPTIONS'], true)) {
             return $next($request);
         }
 
+        // Scan all methods (GET included) — detectXss() merges $_GET + $_POST + input stream,
+        // so this closes the reflected-XSS-via-GET gap without any extra calls.
         if ($this->isXssAttack($this->ignoreFields)) {
             if ($request->expectsJson()) {
                 \Core\Http\Response::json([

@@ -62,32 +62,138 @@ class RateLimit implements MiddlewareInterface
     {
         $now = time();
         $signature = $this->buildSignature($request);
-        $state = $this->readState($signature);
 
-        if (($state['reset_at'] ?? 0) <= $now) {
-            $state = [
-                'attempts' => 0,
-                'reset_at' => $now + $this->decaySeconds,
-            ];
+        // APCu fast path: atomic increment without any file I/O.
+        // This eliminates the read-increment-write race on shared hosts that
+        // have APCu enabled (most cPanel/Plesk stacks include it by default).
+        if ($this->apcuAvailable()) {
+            return $this->handleWithApcu($request, $next, $now, $signature);
         }
 
-        $state['attempts'] = (int) ($state['attempts'] ?? 0) + 1;
-        $remaining = max(0, $this->maxAttempts - $state['attempts']);
-        $retryAfter = max(0, (int) $state['reset_at'] - $now);
+        // Cache-driver fallback: uses the configured cache() driver which supports
+        // Redis, APCu, and file. Redis provides atomic INCR, making this path
+        // race-safe on Redis-backed deployments without needing APCu at all.
+        if (function_exists('cache') && $this->cacheDriverAvailable()) {
+            return $this->handleWithCache($request, $next, $now, $signature);
+        }
 
-        // Always persist the state (even on 429) so the counter stays accurate
+        // File-based last-resort fallback: uses exclusive flock for atomicity.
+        return $this->handleWithFile($request, $next, $now, $signature);
+    }
+
+    /** @internal Check if the application cache() driver is usable. */
+    private function cacheDriverAvailable(): bool
+    {
+        try {
+            return cache()->store() !== null;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Cache-driver path — atomic via Redis INCR / APCu add+inc / file.
+     * Uses the configured cache() driver, so Redis is automatically used
+     * when CACHE_DRIVER=redis is set in .env.
+     */
+    private function handleWithCache(Request $request, callable $next, int $now, string $signature): mixed
+    {
+        $cacheKey = 'rl_v3_' . $signature;
+        $resetKey = 'rl_v3_' . $signature . '_rst';
+
+        // Atomic first-write (SET NX) — only one request wins the race to open the window
+        if (!cache()->add($resetKey, $now + $this->decaySeconds, $this->decaySeconds + 5)) {
+            $resetAt = (int) cache()->get($resetKey, $now + $this->decaySeconds);
+            if ($resetAt <= $now) {
+                // Window expired — reset
+                cache()->put($resetKey, $now + $this->decaySeconds, $this->decaySeconds + 5);
+                cache()->forget($cacheKey);
+            }
+        }
+
+        // Atomic increment using add+increment pattern.
+        // cache()->add() maps to SET NX — returns true only if the key was NEWLY created.
+        // On concurrent requests both seeing a missing key, whichever loses the add()
+        // falls through to increment() — no request is silently counted as 1 twice.
+        if (!cache()->add($cacheKey, 1, $this->decaySeconds + 5)) {
+            $attempts = (int) cache()->increment($cacheKey);
+        } else {
+            $attempts = 1;
+        }
+
+        $resetAt    = (int) cache()->get($resetKey, $now + $this->decaySeconds);
+        $remaining  = max(0, $this->maxAttempts - $attempts);
+        $retryAfter = max(0, $resetAt - $now);
+
+        return $this->applyRateLimitHeaders($request, $next, $attempts, $remaining, $retryAfter);
+    }
+
+    /** @internal APCu fast path — atomic, no file I/O. */
+    private function handleWithApcu(Request $request, callable $next, int $now, string $signature): mixed
+    {
+        $prefix   = 'rl_v2_';
+        $countKey = $prefix . $signature . '_cnt';
+        $resetKey = $prefix . $signature . '_rst';
+
+        // Initialise the window reset timestamp on first touch.
+        // apcu_add() is atomic — only ONE concurrent caller wins the race.
+        $isNew = (bool) call_user_func('apcu_add', $resetKey, $now + $this->decaySeconds, $this->decaySeconds + 5);
+
+        if (!$isNew && call_user_func('apcu_exists', $resetKey)) {
+            $resetAt = (int) call_user_func('apcu_fetch', $resetKey);
+            if ($resetAt <= $now) {
+                // Window expired — reset atomically.
+                call_user_func('apcu_store', $resetKey, $now + $this->decaySeconds, $this->decaySeconds + 5);
+                call_user_func('apcu_store', $countKey, 0, $this->decaySeconds + 5);
+            }
+        }
+
+        // Atomic increment — no lost updates under concurrent load.
+        if (!call_user_func('apcu_exists', $countKey)) {
+            call_user_func('apcu_store', $countKey, 1, $this->decaySeconds + 5);
+            $attempts = 1;
+        } else {
+            $result   = call_user_func('apcu_inc', $countKey, 1);
+            $attempts = (int) ($result !== false ? $result : 1);
+        }
+
+        $resetAtRaw = call_user_func('apcu_exists', $resetKey)
+            ? call_user_func('apcu_fetch', $resetKey)
+            : ($now + $this->decaySeconds);
+        $resetAt    = (int) $resetAtRaw;
+        $remaining  = max(0, $this->maxAttempts - $attempts);
+        $retryAfter = max(0, $resetAt - $now);
+
+        return $this->applyRateLimitHeaders($request, $next, $attempts, $remaining, $retryAfter);
+    }
+
+    /** @internal File-based fallback — uses exclusive flock for atomicity. */
+    private function handleWithFile(Request $request, callable $next, int $now, string $signature): mixed
+    {
+        $file   = $this->cacheFile($signature);
+        $state  = $this->readStateAtomic($file, $now);
+
+        $state['attempts'] = (int) ($state['attempts'] ?? 0) + 1;
+        $remaining  = max(0, $this->maxAttempts - $state['attempts']);
+        $retryAfter = max(0, (int) ($state['reset_at'] ?? $now) - $now);
+
         $this->writeState($signature, $state);
 
+        return $this->applyRateLimitHeaders($request, $next, $state['attempts'], $remaining, $retryAfter);
+    }
+
+    private function applyRateLimitHeaders(Request $request, callable $next, int $attempts, int $remaining, int $retryAfter): mixed
+    {
         header('X-RateLimit-Limit: ' . $this->maxAttempts);
         header('X-RateLimit-Remaining: ' . $remaining);
 
-        if ($state['attempts'] > $this->maxAttempts) {
+        if ($attempts > $this->maxAttempts) {
             header('Retry-After: ' . $retryAfter);
 
             if ($request->expectsJson()) {
                 Response::json([
-                    'code' => 429,
-                    'message' => 'Too many requests',
+                    'code'        => 429,
+                    'message'     => 'Too many requests',
                     'retry_after' => $retryAfter,
                 ], 429);
             }
@@ -158,23 +264,66 @@ class RateLimit implements MiddlewareInterface
     private function readState(string $signature): array
     {
         $file = $this->cacheFile($signature);
+        return $this->readStateAtomic($file, time());
+    }
 
+    /**
+     * Read state file with shared lock to prevent reading a partial write.
+     */
+    private function readStateAtomic(string $file, int $now): array
+    {
         if (!is_file($file) || !is_readable($file)) {
-            return [];
+            return ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
         }
 
-        $raw = file_get_contents($file);
-        if ($raw === false || $raw === '') {
-            return [];
+        $handle = @fopen($file, 'rb');
+        if ($handle === false) {
+            return ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
         }
+
+        flock($handle, LOCK_SH);
+        $raw = '';
+        while (!feof($handle)) {
+            $chunk = fread($handle, 4096);
+            if ($chunk === false) break;
+            $raw .= $chunk;
+        }
+        flock($handle, LOCK_UN);
+        fclose($handle);
 
         $decoded = json_decode($raw, true);
-        return is_array($decoded) ? $decoded : [];
+        $state   = is_array($decoded) ? $decoded : ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
+
+        // Reset window if expired.
+        if (($state['reset_at'] ?? 0) <= $now) {
+            $state = ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
+        }
+
+        return $state;
     }
 
     private function writeState(string $signature, array $state): void
     {
         $file = $this->cacheFile($signature);
-        file_put_contents($file, json_encode($state), LOCK_EX);
+        // Atomic: write to temp then rename — prevents concurrent readers
+        // from seeing a partial JSON payload.
+        $tmp = $file . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, json_encode($state), LOCK_EX) !== false) {
+            @rename($tmp, $file);
+        } else {
+            @unlink($tmp);
+        }
+    }
+
+    private function apcuAvailable(): bool
+    {
+        static $available = null;
+        if ($available === null) {
+            $available = function_exists('apcu_inc')
+                && function_exists('apcu_add')
+                && function_exists('apcu_enabled')
+                && (bool) call_user_func('apcu_enabled');
+        }
+        return $available;
     }
 }

@@ -168,20 +168,20 @@ class PerformanceMonitor
             $entry['backtrace'] = $timer['backtrace'];
         }
 
-        // Track query fingerprint for N+1 detection (full-profiling path)
+        // Track query fingerprint for N+1 detection (full-profiling path).
+        // Called once here — trackSql() in HasProfiling is guarded by !self::$enabled
+        // so there is no double-counting between the two code paths.
         self::trackQueryFingerprint($entry['sql']);
 
         // Add to query log
         self::addToLog($entry);
 
-        // Track query fingerprint for N+1 detection
-        self::trackQueryFingerprint($entry['sql']);
-
         // Update statistics
         self::updateStats($executionTime, $memoryUsed, $queryType);
 
-        // Check if slow query
-        if ($executionTime > self::$slowQueryThreshold) {
+        // Check if slow query — use per-type threshold for finer-grained detection
+        $threshold = self::$slowThresholdsByType[$queryType] ?? self::$slowQueryThreshold;
+        if ($executionTime > $threshold) {
             self::$slowQueries[] = $entry;
             self::$stats['slow_queries']++;
 
@@ -578,7 +578,8 @@ class PerformanceMonitor
     }
 
     /**
-     * Clear all logs and reset statistics
+     * Clear all logs and reset statistics.
+     * Also resets per-request N+1 fingerprints.
      *
      * @return void
      */
@@ -605,6 +606,21 @@ class PerformanceMonitor
                 'other'  => ['count' => 0, 'time' => 0.0],
             ],
         ];
+    }
+
+    /**
+     * Flush only the per-request N+1 fingerprint table.
+     *
+     * Useful in Octane/worker mode where query logs are kept across requests
+     * for aggregated metrics, but the per-request fingerprint set must be
+     * cleared on each new request to avoid false positives.
+     *
+     * @return void
+     */
+    public static function resetQueryLog(): void
+    {
+        self::$queryFingerprints = [];
+        self::$timers            = [];
     }
 
     /**

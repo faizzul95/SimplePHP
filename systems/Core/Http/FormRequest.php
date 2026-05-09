@@ -288,8 +288,8 @@ abstract class FormRequest
      *   protected function afterValidation(): void
      *   {
      *       if (!empty($this->validatedData['password'])) {
-     *           $this->validatedData['password'] = password_hash(
-     *               $this->validatedData['password'], PASSWORD_BCRYPT
+     *           $this->validatedData['password'] = \Core\Security\Hasher::make(
+     *               $this->validatedData['password']
      *           );
      *       }
      *   }

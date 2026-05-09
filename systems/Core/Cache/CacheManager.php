@@ -36,7 +36,7 @@ class CacheManager
     /**
      * Get a cache store instance by name.
      */
-    public function store(?string $name = null): FileStore|ArrayStore
+    public function store(?string $name = null): FileStore|ArrayStore|ApcuStore
     {
         $name = $name ?? $this->config['default'] ?? 'file';
 
@@ -50,7 +50,7 @@ class CacheManager
     /**
      * Resolve a store by its configuration.
      */
-    private function resolve(string $name): FileStore|ArrayStore
+    private function resolve(string $name): FileStore|ArrayStore|ApcuStore
     {
         $storeConfig = $this->config['stores'][$name] ?? null;
 
@@ -59,6 +59,16 @@ class CacheManager
         }
 
         $driver = $storeConfig['driver'] ?? 'file';
+
+        // APCu tier: fast in-process + cross-worker shared memory.
+        // Degrades gracefully when APCu is unavailable (shared hosting safe).
+        if ($driver === 'apcu') {
+            if (function_exists('apcu_store') && function_exists('apcu_enabled') && (bool) call_user_func('apcu_enabled')) {
+                return new ApcuStore($storeConfig['prefix'] ?? 'MythPHP_cache:');
+            }
+            // APCu requested but not available — fall through to file driver.
+            $driver = 'file';
+        }
 
         return match ($driver) {
             'file'  => new FileStore(

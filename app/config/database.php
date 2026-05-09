@@ -62,36 +62,47 @@ $config['db'] = [
             'database' => (string) env('DB_PRODUCTION_DATABASE', env('DB_DATABASE', '')),
             'port'     => (string) env('DB_PRODUCTION_PORT', env('DB_PORT', '3306')),
             'charset'  => (string) env('DB_PRODUCTION_CHARSET', env('DB_CHARSET', 'utf8mb4')),
-        ]
+            // SSL/TLS for encrypted connections 
+            'ssl' => [
+                'enabled'     => (bool) env('DB_SSL_ENABLED', false),
+                'ca'          => env('DB_SSL_CA', null),          // Path to CA cert
+                'cert'        => env('DB_SSL_CERT', null),        // Path to client cert
+                'key'         => env('DB_SSL_KEY', null),         // Path to client key
+                'verify_peer' => (bool) env('DB_SSL_VERIFY_PEER', true),
+            ],
+        ],
     ],
 
-    // 'slave' => [
-    //     'development' => [
-    //         'driver' => 'mysql',
-    //         'host' => '127.0.0.1',
-    //         'username' => 'root',
-    //         'password' => '',
-    //         'database' => '',
-    //         'port' => '3306',
-    //         'charset' => 'utf8mb4',
-    //     ],
-    //     'staging' => [
-    //         'driver' => 'mysql',
-    //         'host' => '127.0.0.1',
-    //         'username' => 'root',
-    //         'password' => '',
-    //         'database' => '',
-    //         'port' => '3306',
-    //         'charset' => 'utf8mb4',
-    //     ],
-    //     'production' => [
-    //         'driver' => 'mysql',
-    //         'host' => '127.0.0.1',
-    //         'username' => 'root',
-    //         'password' => '',
-    //         'database' => '',
-    //         'port' => '3306',
-    //         'charset' => 'utf8mb4',
-    //     ]
-    // ]
+    // Read replica — enables read/write splitting 
+    // Set DB_READ_HOST in .env to activate. All SELECT queries route to the replica.
+    // During a transaction, ALL queries go to the write server automatically.
+    'slave' => [
+        'development' => [
+            'driver'   => (string) env('DB_READ_CONNECTION', env('DB_CONNECTION', 'mysql')),
+            'host'     => (string) env('DB_READ_HOST', env('DB_HOST', 'localhost')),
+            'username' => (string) env('DB_READ_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => (string) env('DB_READ_PASSWORD', env('DB_PASSWORD', '')),
+            'database' => (string) env('DB_READ_DATABASE', env('DB_DATABASE', 'example_db')),
+            'port'     => (string) env('DB_READ_PORT', env('DB_PORT', '3306')),
+            'charset'  => (string) env('DB_READ_CHARSET', env('DB_CHARSET', 'utf8mb4')),
+        ],
+        'staging' => [
+            'driver'   => (string) env('DB_READ_STAGING_CONNECTION', env('DB_STAGING_CONNECTION', 'mysql')),
+            'host'     => (string) env('DB_READ_STAGING_HOST', env('DB_STAGING_HOST', '')),
+            'username' => (string) env('DB_READ_STAGING_USERNAME', env('DB_STAGING_USERNAME', '')),
+            'password' => (string) env('DB_READ_STAGING_PASSWORD', env('DB_STAGING_PASSWORD', '')),
+            'database' => (string) env('DB_READ_STAGING_DATABASE', env('DB_STAGING_DATABASE', '')),
+            'port'     => (string) env('DB_READ_STAGING_PORT', env('DB_STAGING_PORT', '3306')),
+            'charset'  => (string) env('DB_READ_STAGING_CHARSET', env('DB_STAGING_CHARSET', 'utf8mb4')),
+        ],
+        'production' => [
+            'driver'   => (string) env('DB_READ_PRODUCTION_CONNECTION', env('DB_PRODUCTION_CONNECTION', 'mysql')),
+            'host'     => (string) env('DB_READ_PRODUCTION_HOST', env('DB_PRODUCTION_HOST', '')),
+            'username' => (string) env('DB_READ_PRODUCTION_USERNAME', env('DB_PRODUCTION_USERNAME', '')),
+            'password' => (string) env('DB_READ_PRODUCTION_PASSWORD', env('DB_PRODUCTION_PASSWORD', '')),
+            'database' => (string) env('DB_READ_PRODUCTION_DATABASE', env('DB_PRODUCTION_DATABASE', '')),
+            'port'     => (string) env('DB_READ_PRODUCTION_PORT', env('DB_PRODUCTION_PORT', '3306')),
+            'charset'  => (string) env('DB_READ_PRODUCTION_CHARSET', env('DB_PRODUCTION_CHARSET', 'utf8mb4')),
+        ],
+    ],
 ];

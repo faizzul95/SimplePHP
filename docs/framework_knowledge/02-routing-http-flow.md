@@ -78,11 +78,35 @@ This shared-controller pattern maps to:
 
 The framework can still use resource routes, but this project now keeps web page actions and API actions inside the same controller class instead of splitting them under a dedicated `Controllers\Api` namespace.
 
-### 4) Parameter constraints (`where`) on route params
+### 4) Global parameter constraints — `Router::pattern()`
+
+Three patterns are pre-seeded at boot and apply automatically to every matching route parameter when no per-route `->where()` override is set:
+
+| Parameter | Default pattern | Notes |
+|-----------|----------------|-------|
+| `{id}`   | `[0-9]+` | Digits-only; blocks path traversal and type confusion |
+| `{uuid}` | UUID v1–v5 regex | Case-insensitive hex; rejects malformed values |
+| `{slug}` | `[a-z0-9][a-z0-9-]*` | Must start with alphanum; hyphens allowed |
+
+Register additional patterns at bootstrap (e.g. `RouteServiceProvider::map()` or `app/http/Kernel.php`):
+
+```php
+Router::pattern('locale', '[a-z]{2}');
+Router::pattern(['year' => '[0-9]{4}', 'month' => '0[1-9]|1[0-2]']);
+
+// Read all registered patterns (for testing / debug)
+$patterns = Router::getPatterns();
+```
+
+Priority (highest wins): per-route `->where()` → `Router::pattern()` global → built-in fallback `[A-Za-z0-9_-]+`
+
+Every route declaring `{id}` is digit-only by default with zero per-route boilerplate.
+
+### 5) Per-route parameter constraints (`where`)
 
 ```php
 $router->get('/users/{id}', [UserController::class, 'show'])
-	->whereNumber('id');
+	->whereNumber('id');   // explicit override — still works; takes priority over global
 
 $router->get('/posts/{slug}', [PostController::class, 'show'])
 	->where('slug', '[a-z0-9-]+');
@@ -208,13 +232,14 @@ This directly controls whether Router returns JSON errors or HTML/redirect behav
 1. Define route in `web.php` (pages) or `api.php` (data endpoints).
 2. Attach middleware alias/group intentionally.
 3. Add route name if frontend/helper resolution needs it.
-4. For dynamic params, add constraints (`whereNumber`, etc.) when applicable.
+4. For dynamic params, `{id}`, `{uuid}`, and `{slug}` are constrained automatically by global patterns — no `->where()` needed for those. For other param names, add explicit `->where()` or register via `Router::pattern()`.
 5. Test these cases: success, unauthorized, invalid method (405), unknown route (404/redirect).
 
 ## What To Avoid
 
 - Avoid adding API JSON endpoints in `web.php`.
-- Avoid unbounded route params when numeric/slug constraints are known.
+- Avoid unbounded route params when numeric/slug constraints are known. Register a global pattern via `Router::pattern()` rather than repeating `->where()` on every route.
+- Avoid calling `Router::pattern()` after `Router::dispatch()` has started — global patterns are baked into compiled regex at index-build time.
 - Avoid assuming browser and AJAX unmatched routes behave the same.
 - Avoid middleware aliases not registered in `framework.middleware_aliases`.
 
@@ -227,8 +252,8 @@ This directly controls whether Router returns JSON errors or HTML/redirect behav
 
 ## Evidence
 
-- `systems/Core/Routing/Router.php`
-- `systems/Core/Routing/RouteDefinition.php`
+- `systems/Core/Routing/Router.php` — `Router::pattern()`, `Router::getPatterns()`, `compileRouteRegex()`, dispatch, index
+- `systems/Core/Routing/RouteDefinition.php` — `->where()`, `->whereNumber()`, `->whereAlpha()`, `->whereAlphaNumeric()`, fluent auth/permission/role/ability/featureFlag helpers
 - `systems/Core/Routing/RouteServiceProvider.php`
 - `systems/Core/Http/Request.php`
 - `app/http/Kernel.php`

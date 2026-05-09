@@ -29,19 +29,36 @@ $config['framework'] = [
         'console' => 'app/routes/console.php',
     ],
     'providers' => [
-        \App\Providers\AppServiceProvider::class,
-        \App\Providers\LogServiceProvider::class,
-        \App\Providers\DatabaseServiceProvider::class,
-        \App\Providers\CacheServiceProvider::class,
-        \App\Providers\SecurityServiceProvider::class,
-        \App\Providers\FilesystemServiceProvider::class,
-        \App\Providers\ViewServiceProvider::class,
-        \App\Providers\ResponseServiceProvider::class,
-        \App\Providers\RoutingServiceProvider::class,
-        \App\Providers\EventServiceProvider::class,
-        \App\Providers\MaintenanceServiceProvider::class,
-        \App\Providers\FeatureServiceProvider::class,
-        \App\Providers\AuthServiceProvider::class,
+        // Loaded on every request — web, api, and cli
+        'always' => [
+            \App\Providers\AppServiceProvider::class,
+            \App\Providers\LogServiceProvider::class,
+            \App\Providers\DatabaseServiceProvider::class,
+            \App\Providers\CacheServiceProvider::class,
+            \App\Providers\SecurityServiceProvider::class,
+            \App\Providers\EventServiceProvider::class,
+        ],
+        // Only for browser-facing web requests
+        'web' => [
+            \App\Providers\FilesystemServiceProvider::class,
+            \App\Providers\ViewServiceProvider::class,
+            \App\Providers\ResponseServiceProvider::class,
+            \App\Providers\RoutingServiceProvider::class,
+            \App\Providers\MaintenanceServiceProvider::class,
+            \App\Providers\FeatureServiceProvider::class,
+            \App\Providers\AuthServiceProvider::class,
+        ],
+        // Only for stateless API requests (no view/session providers)
+        'api' => [
+            \App\Providers\AuthServiceProvider::class,
+            \App\Providers\ResponseServiceProvider::class,
+            \App\Providers\RoutingServiceProvider::class,
+            \App\Providers\FeatureServiceProvider::class,
+        ],
+        // Only for CLI / Artisan-style commands
+        'cli' => [
+            \App\Providers\RoutingServiceProvider::class,
+        ],
     ],
     'view_path' => 'app/views',
     'view_cache_path' => 'storage/cache/views',
@@ -94,6 +111,8 @@ $config['framework'] = [
         'cache.headers' => \App\Http\Middleware\SetResponseCache::class,
         'request.safety' => \App\Http\Middleware\ValidateRequestSafety::class,
         'menu.access' => \App\Http\Middleware\EnforceMenuAccess::class,
+        'idor'        => \Middleware\DetectIdor::class,
+        'compress'    => \Middleware\CompressResponse::class,
     ],
     'middleware_groups' => [
         'web' => ['session.stateful', 'headers', 'trusted.hosts', 'trusted.proxies', 'payload.limits', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'csrf', 'throttle:web'],

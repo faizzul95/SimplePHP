@@ -33,9 +33,40 @@ A single controller class now serves both the browser page action and the matchi
 
 ### Record Helpers
 
-- `decodeIdOrFail(string $encodedId, string $label = 'ID'): int|string` — Decodes encoded (hashed) ID or returns 400 error.
-- `findOrFail(string $table, int|string $id, string $label = 'Record', ?string $select = null, bool $softDelete = true): array` — Fetch single record or 404. Respects soft-delete by default via `whereNull('deleted_at')`. Uses `safeOutput()`.
-- `findByEncodedIdOrFail(string $encodedId, string $table, string $label, ?string $select = null, bool $softDelete = true): array` — Combines `decodeIdOrFail()` + `findOrFail()` in one call.
+- `decodeIdOrFail(string $encodedId, string $message = 'ID is required'): int|string` — Decodes encoded (hashed) ID or returns 400 error.
+- `findOrFail(string $table, int|string $id, ?string $select = null, bool $softDelete = true, string $message = 'Record not found'): array` — Fetch single record or 404. Respects soft-delete by default via `whereNull('deleted_at')`. Uses `safeOutput()`.
+- `findByEncodedIdOrFail(string $encodedId, string $table, string $label = 'Record', ?string $select = null, bool $softDelete = true): array` — Combines `decodeIdOrFail()` + `findOrFail()` in one call.
+
+### IDOR / Ownership Helpers (from `SecureResourceAccess` trait)
+
+Mixed into `Controller` automatically — available on every controller without any extra `use` statement.
+
+- `authorizeResource(string $table, string $encodedId, ?callable $ownershipCheck = null, string $label = 'Record', ?string $select = null, bool $softDelete = true): array`
+  Decode encoded ID → fetch record (400/404 on failure) → run ownership check (403 if false). Returns the fetched record. Pass `null` for `$ownershipCheck` when route-level RBAC middleware is sufficient.
+
+- `authorizeResourceById(string $table, int|string $id, ?callable $ownershipCheck = null, string $label = 'Record', string $select = '*', bool $softDelete = true): array`
+  Same as `authorizeResource()` but accepts a plain (non-encoded) ID. Use on internal API routes.
+
+- `assertOwnership(array $record, string $ownerColumn = 'user_id', ?callable $adminCheck = null, string $label = 'resource'): void`
+  Standalone ownership assertion after a manual fetch. Compares `$record[$ownerColumn]` against `authId()`. Terminates 401 if unauthenticated, 403 if ownership fails and `$adminCheck` is null or returns false.
+
+Usage pattern:
+
+```php
+// Decode + fetch + ownership — one call (encoded ID from route)
+$post = $this->authorizeResource('posts', $id,
+    fn($r) => (int) $r['user_id'] === $this->authId(),
+    label: 'Post'
+);
+
+// Plain-ID variant (API routes where ID is not encoded)
+$post = $this->authorizeResourceById('posts', $id, fn($r) => (int) $r['user_id'] === $this->authId());
+
+// Separate ownership assertion after a manual fetch
+$this->assertOwnership($record, 'user_id',
+    adminBypass: fn($r) => $this->can('admin-override')
+);
+```
 
 ### Soft-Delete Helpers
 
@@ -44,7 +75,10 @@ A single controller class now serves both the browser page action and the matchi
 
 ### Authorization
 
-- `authorizeOrFail(string $permissionSlug, string $message = 'Unauthorized')` — Checks permission and returns 403 JSON on failure.
+- `authorizeOrFail(string $permissionSlug, string $message = 'Unauthorized')` — Checks RBAC permission and returns 403 JSON on failure. Use for action-level guards not covered by route middleware.
+- `can(string $slug): bool` — Check if current user has permission.
+- `cannot(string $slug): bool` — Inverse of `can()`.
+- See **IDOR / Ownership Helpers** above for record-level authorization.
 
 ### Auth Utilities
 
@@ -85,9 +119,12 @@ class UserController extends \Core\Http\Controller
 
 	public function show(string $id): void
 	{
-		$data = $this->findByEncodedIdOrFail($id, 'users', 'User', 'id, name, email');
-		$this->successResponse('User found', $data);
-	}
+			// authorizeResource: decode + fetch + ownership in one call
+			$data = $this->authorizeResource('users', $id,
+				ownershipCheck: fn($r) => (int) $r['id'] === $this->authId() || $this->can('user-view-any'),
+				label: 'User',
+				select: 'id, name, email'
+			);
 
 	public function store(\App\Http\Requests\StoreUserRequest $request): void
 	{
@@ -146,10 +183,11 @@ public function profile(): void
 ## How To Use
 
 1. Extend `Core\Http\Controller` for all app controllers.
-2. Use `findByEncodedIdOrFail()` for single-record lookups with encoded IDs.
-3. Use `softDeleteByEncodedId()` / `restoreByEncodedId()` for standard soft-delete CRUD.
-4. Use `setPageState()` for menu, breadcrumb, and title state; keep access control in route middleware.
-5. Use `successResponse()` / `errorResponse()` for consistent JSON shape.
+2. Use `authorizeResource()` for single-record lookups with encoded IDs when ownership enforcement is needed — it replaces the manual decode + fetch + ownership check pattern in one call.
+3. Use `findByEncodedIdOrFail()` directly when ownership is not required (e.g., admin-only routes already guarded by RBAC middleware).
+4. Use `softDeleteByEncodedId()` / `restoreByEncodedId()` for standard soft-delete CRUD.
+5. Use `setPageState()` for menu, breadcrumb, and title state; keep access control in route middleware.
+6. Use `successResponse()` / `errorResponse()` for consistent JSON shape.
 
 ## What To Avoid
 
@@ -157,6 +195,8 @@ public function profile(): void
 - Avoid duplicating ID decode logic — use `decodeIdOrFail()` or `findByEncodedIdOrFail()`.
 - Avoid relying on `setPageState()` for page authorization when the route already declares `->webAuth()`, `->can()`, or related middleware.
 - Avoid using `$_SESSION` directly — use `authId()`, `authUser()`, `can()`.
+- Avoid using `use \Core\Http\SecureResourceAccess` in subclasses — the trait is already mixed into the base `Controller`; adding it again causes a PHP fatal error.
+- Avoid passing `null` as `$ownershipCheck` to `authorizeResource()` on user-owned resources; the ownership check should always be explicit.
 
 ## Benefits
 
@@ -167,6 +207,7 @@ public function profile(): void
 
 ## Evidence
 
-- `systems/Core/Http/Controller.php` (337 lines)
+- `systems/Core/Http/Controller.php`
+- `systems/Core/Http/SecureResourceAccess.php` (trait — mixed into `Controller`)
 - `systems/Core/Routing/Router.php`
 - `systems/Core/Console/Commands.php` (`make:controller` scaffold)

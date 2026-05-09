@@ -1,0 +1,18 @@
+version: '3'
+
+server:
+  command: "php systems/Core/Server/RoadRunnerWorker.php"
+  relay: pipes
+
+http:
+  address: 0.0.0.0:8080
+  pool:
+    num_workers: 4
+    max_jobs: 500
+    supervisor:
+      max_worker_memory: 256
+
+logs:
+  mode: development
+  level: warn
+  output: stderr

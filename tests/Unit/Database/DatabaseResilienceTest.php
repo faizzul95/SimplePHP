@@ -56,7 +56,7 @@ final class DatabaseResilienceProbe extends BaseDatabase
     public function batchInsert($data) { return []; }
     public function batchUpdate($data) { return []; }
     public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-    protected function sanitizeColumn($data) { return $data; }
+    protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
 }
 
 final class DatabaseResilienceTest extends TestCase

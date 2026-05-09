@@ -92,8 +92,8 @@ trait HasStreaming
                 // Clear the results to free memory
                 unset($results);
 
-                // Suggest garbage collection on large chunks
-                if ($size >= 1000 && function_exists('gc_collect_cycles')) {
+                // GC hint: >= 100 so it fires on shared-hosting-sized chunks too
+                if ($size >= 100 && function_exists('gc_collect_cycles')) {
                     gc_collect_cycles();
                 }
             }
@@ -340,7 +340,8 @@ trait HasStreaming
 
                 unset($results);
 
-                if ($size >= 1000 && function_exists('gc_collect_cycles')) {
+                // GC hint: >= 100 to match shared-hosting memory profiles
+                if ($size >= 100 && function_exists('gc_collect_cycles')) {
                     gc_collect_cycles();
                 }
             }
@@ -670,7 +671,15 @@ trait HasStreaming
                 fputcsv($output, $values);
             }
 
-            if (function_exists('gc_collect_cycles') && $chunkSize >= 500) {
+            // Flush output buffer to the client to prevent memory accumulation
+            // from buffered output handlers (e.g. ob_gzhandler).
+            if (ob_get_level() > 0) {
+                ob_flush();
+            }
+            flush();
+
+            // GC hint: fire at chunkSize >= 100 (matches shared hosting 128MB limit profiles)
+            if ($chunkSize >= 100 && function_exists('gc_collect_cycles')) {
                 gc_collect_cycles();
             }
         };

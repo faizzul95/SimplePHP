@@ -1,0 +1,93 @@
+; MythPHP — Production PHP Configuration
+; =========================================
+; Copy to your PHP-FPM pool config or merge into /etc/php/8.x/fpm/php.ini
+; Replace paths with your actual server paths.
+;
+; Shared hosting note: Many cPanel/Plesk hosts allow a user-level .user.ini
+; or php.ini in the document root. Copy the relevant settings there.
+; JIT requires PHP 8.0+. OPcache preload requires PHP 7.4+.
+;
+
+; ── OPcache ────────────────────────────────────────────────────────────────
+[opcache]
+opcache.enable=1
+opcache.enable_cli=0
+
+; Memory for compiled bytecode (256 MB for a mid-size application)
+opcache.memory_consumption=256
+
+; Interned strings buffer (shared between processes)
+opcache.interned_strings_buffer=32
+
+; Max number of PHP files that can be cached (set higher than your file count)
+opcache.max_accelerated_files=20000
+
+; Percentage of wasted memory before restart (low = more aggressive restart)
+opcache.max_wasted_percentage=5
+
+; PRODUCTION ONLY: disable file-change checks (set to 1 in development)
+; When disabled, you MUST clear OPcache after every deployment:
+;   php -r "opcache_reset();"  OR  reload PHP-FPM
+opcache.validate_timestamps=0
+opcache.revalidate_freq=0
+
+; Miscellaneous
+opcache.save_comments=0          ; Drop docblocks (saves memory)
+opcache.fast_shutdown=1          ; Faster per-request cleanup
+opcache.consistency_checks=0     ; No CRC check per request (faster)
+opcache.huge_code_pages=1        ; Use hugepages if available (Linux only)
+
+; ── JIT (PHP 8.0+) ─────────────────────────────────────────────────────────
+; tracing JIT provides 20-40% throughput improvement on CPU-bound PHP code.
+; Set to 0 to disable JIT (e.g. if you're using Xdebug for profiling).
+opcache.jit=tracing
+opcache.jit_buffer_size=128M
+
+; ── OPcache Preload (PHP 7.4+) ─────────────────────────────────────────────
+; Loads hot-path classes into shared memory at FPM startup — zero compile cost per request.
+; Adjust path to your actual installation directory.
+;
+; opcache.preload=/var/www/mythphp/systems/Core/Server/preload.php
+; opcache.preload_user=www-data   ; Must match PHP-FPM pool user
+
+; ── Security ────────────────────────────────────────────────────────────────
+expose_php=Off                   ; Don't reveal PHP version in headers
+display_errors=Off               ; Never display errors to users in production
+log_errors=On
+; error_log=/var/log/php/mythphp-error.log
+
+; ── Session ─────────────────────────────────────────────────────────────────
+session.cookie_httponly=1        ; Block JavaScript from accessing session cookies
+session.cookie_secure=1          ; HTTPS only (requires SSL termination)
+session.cookie_samesite=Lax      ; CSRF mitigation
+session.use_strict_mode=1        ; Reject unrecognized session IDs (session fixation defence)
+session.gc_maxlifetime=7200      ; 2 hours idle timeout
+session.gc_probability=1
+session.gc_divisor=100
+
+; ── File Uploads ────────────────────────────────────────────────────────────
+file_uploads=On
+upload_max_filesize=10M
+post_max_size=12M                ; Slightly larger than upload_max_filesize
+upload_tmp_dir=/tmp
+
+; ── General ─────────────────────────────────────────────────────────────────
+memory_limit=256M
+max_execution_time=60
+max_input_time=30
+max_input_vars=1000
+realpath_cache_size=4096k
+realpath_cache_ttl=600
+
+; ── PHP Shared-Hosting .user.ini (minimal set) ──────────────────────────────
+; If your host only allows .user.ini (subset of settings), use this block:
+;
+; expose_php=Off
+; display_errors=Off
+; log_errors=On
+; session.cookie_httponly=1
+; session.cookie_samesite=Lax
+; session.use_strict_mode=1
+; memory_limit=256M
+; upload_max_filesize=10M
+; post_max_size=12M

@@ -374,7 +374,7 @@ class AuthController extends Controller
                 $newPassword .= $chars[random_int(0, $charLen)];
             }
 
-            $hashedPassword = password_hash($newPassword, PASSWORD_DEFAULT);
+            $hashedPassword = \Core\Security\Hasher::make($newPassword);
             $appName = defined('APP_NAME') ? APP_NAME : 'Our Application';
 
             $update = db()->table('users')->where('id', $id)->update(['password' => $hashedPassword, 'updated_at' => timestamp()]);

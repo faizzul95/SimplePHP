@@ -372,6 +372,55 @@ For deep pagination (search results, API feeds, infinite scroll), use `cursorPag
 | `safeOutput` | `safeOutput(bool $enable = true): self` | Enable HTML entity encoding on query results |
 | `safeOutputWithException` | `safeOutputWithException(array $data = []): self` | Enable safe output but exclude specific columns from encoding |
 
+### Mass-Assignment Guard (`$fillable` / `$guarded`)
+
+`BaseDatabase` ships a two-layer column guard applied automatically on every `insert()` and `update()` call via `sanitizeColumn()`.
+
+#### How it works
+
+1. **Layer 1 — Schema guard (always active):** Only columns that exist in the real database table survive. Unknown keys are silently dropped. Uses `getTableColumns()` to resolve the schema.
+2. **Layer 2a — Allowlist (`$fillable`):** When non-empty, only the listed columns pass through. All others are stripped even if they are real schema columns.
+3. **Layer 2b — Denylist (`$guarded`):** Always strips the listed columns regardless of `$fillable`. Applied after the allowlist so a column in both lists is always blocked.
+
+#### Declaring guards at runtime (the only pattern in this framework)
+
+MythPHP does not use Model classes. All database access goes through `db()->table(...)`. Guards must be set via the runtime setter methods before each insert or update that handles user input.
+
+```php
+// In your controller, restrict what the user can write
+db()->table('users')
+    ->setFillable(['name', 'email', 'bio'])   // only these columns accepted
+    ->setGuarded(['role_id', 'is_admin'])      // never accepted — even if in $fillable
+    ->insert($request->all());
+```
+
+#### Runtime setters (ad-hoc, single-request scope)
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setFillable` | `setFillable(array $columns): static` | Replace the allowlist for this builder instance |
+| `getFillable` | `getFillable(): array` | Return the current allowlist |
+| `setGuarded` | `setGuarded(array $columns): static` | Replace the denylist for this builder instance |
+| `getGuarded` | `getGuarded(): array` | Return the current denylist |
+
+```php
+// Temporarily restrict what a one-off insert can write
+db()->table('users')
+    ->setFillable(['name', 'email'])
+    ->setGuarded(['role_id'])
+    ->insert($request->all());
+```
+
+#### Persistence across calls
+
+- Runtime setters (`setFillable()` / `setGuarded()`) update instance-level properties, so they persist across subsequent queries on the same builder instance.
+- `reset()` clears query state (table, where, joins, etc.) but does **not** clear `$fillable`/`$guarded`. Call `setFillable([])` / `setGuarded([])` explicitly if you need to clear them.
+- Because `db()` returns a shared instance, always call `setFillable()` / `setGuarded()` immediately before the `insert()` or `update()` that needs them.
+
+#### Known design difference vs Laravel
+
+Laravel's Eloquent throws `MassAssignmentException` when `$fillable` is not declared and unguarded mode is off. MythPHP's guard is opt-in: when both `$fillable` and `$guarded` are empty, all schema-valid columns pass through (only the schema guard runs). Always call `setFillable()` before any insert or update that processes user-supplied input.
+
 ### Transaction Control
 
 | Method | Signature | Description |

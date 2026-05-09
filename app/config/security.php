@@ -88,18 +88,16 @@ $config['security'] = [
         // When active, 'unsafe-inline' is automatically removed from those directives
         // so nonce-only inline scripts/styles are enforced. Use {{ $csp_nonce }} or
         // @nonce in templates. Leave false until your CDN/inline scripts are nonce-aware.
-        'nonce_enabled' => false,
+        'nonce_enabled' => true,   // enables per-request nonce; removes 'unsafe-inline'
         'default-src' => ["'self'"],
         'script-src'  => [
             "'self'",
-            "'unsafe-inline'",
             'https://cdn.datatables.net',
             'https://cdn.jsdelivr.net',
             'https://cdnjs.cloudflare.com',
         ],
         'style-src'   => [
             "'self'",
-            "'unsafe-inline'",
             'https://fonts.googleapis.com',
             'https://cdn.datatables.net',
             'https://cdnjs.cloudflare.com',
@@ -124,12 +122,16 @@ $config['security'] = [
     | () to deny entirely, or (self "https://example.com") to allow specific origins.
     */
     'permissions_policy' => [
-        'geolocation' => '(self)',
-        'microphone'  => '()',
-        'camera'      => '()',
-        'fullscreen'  => '(self)',
-        'sync-xhr'    => '(self)',
-        'usb'         => '()',
+        'geolocation'    => [],
+        'microphone'     => [],
+        'camera'         => [],
+        'payment'        => [],
+        'usb'            => [],
+        'magnetometer'   => [],
+        'gyroscope'      => [],
+        'accelerometer'  => [],
+        'fullscreen'     => ['self'],
+        'clipboard-read' => ['self'],
     ],
 
     // Security headers baseline (Laravel-inspired, lightweight defaults)

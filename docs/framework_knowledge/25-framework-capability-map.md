@@ -33,6 +33,7 @@
 
 ### Database Query Builder (100+ methods)
 - Full CRUD with fluent chainable API
+- **Two-layer mass-assignment guard:** schema-level column filter (always on) + `$fillable` allowlist + `$guarded` denylist; runtime setters `setFillable()`/`setGuarded()` for ad-hoc scoping
 - Where clauses: basic, or, not, between, in, null, date, JSON, fulltext, raw, nested
 - Joins: inner, left, right, cross, lateral, subquery
 - Eager loading: `with`, `withOne`, `withCount`, `withSum`, `withAvg`, `withMin`, `withMax`

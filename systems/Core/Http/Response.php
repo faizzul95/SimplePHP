@@ -113,6 +113,40 @@ class Response
         header('Expires: ' . gmdate('D, d M Y H:i:s', time() + $seconds) . ' GMT');
     }
 
+    /**
+     * Add stale-while-revalidate and optional stale-if-error to the current
+     * Cache-Control header. Call AFTER cache() to extend the directive list.
+     *
+     * stale-while-revalidate: serve stale content while fetching a fresh copy in background.
+     * stale-if-error:         serve stale content when the origin is returning errors.
+     *
+     * @param int $whileRevalidate  Seconds to serve stale while revalidating (default 30)
+     * @param int $ifError          Seconds to serve stale on error (default 86400 = 1 day)
+     */
+    public static function staleWhileRevalidate(int $whileRevalidate = 30, int $ifError = 86400): void
+    {
+        header('Cache-Control: stale-while-revalidate=' . max(0, $whileRevalidate)
+            . ', stale-if-error=' . max(0, $ifError), false);
+    }
+
+    /**
+     * Set or append to the Vary header.
+     * Sending multiple Vary values is merged by browsers/CDNs correctly.
+     *
+     * @param string|string[] $fields  Header field name(s) to vary on
+     */
+    public static function vary(string|array $fields): void
+    {
+        $clean = array_map(
+            static fn(string $f): string => preg_replace('/[^\w-]/', '', trim($f)),
+            is_array($fields) ? $fields : [$fields]
+        );
+        $clean = array_filter($clean);
+        if (!empty($clean)) {
+            header('Vary: ' . implode(', ', $clean), false);
+        }
+    }
+
     public static function noCache(): void
     {
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
@@ -128,6 +162,49 @@ class Response
         }
 
         header('ETag: "' . $safe . '"');
+    }
+
+    /**
+     * Set ETag + Last-Modified and return true when the browser cache is
+     * still valid (a 304 has already been sent; caller should return immediately).
+     *
+     * Usage:
+     *   $html = view('home');
+     *   if (Response::withCacheHeaders($html)) return;
+     *   echo $html;
+     *
+     * Shared hosting safe: no external service needed; pure HTTP headers.
+     *
+     * @param string                  $content      Full response body to fingerprint.
+     * @param \DateTimeImmutable|null $lastModified  Defaults to now.
+     * @return bool  true = 304 sent and caller should stop; false = send full response.
+     */
+    public static function withCacheHeaders(string $content, ?\DateTimeImmutable $lastModified = null): bool
+    {
+        $etag         = '"' . md5($content) . '"';
+        $lastModified = $lastModified ?? new \DateTimeImmutable();
+
+        header('ETag: ' . $etag);
+        header('Last-Modified: ' . $lastModified->format('D, d M Y H:i:s') . ' GMT');
+        header('Vary: Accept-Encoding, Accept');
+
+        $ifNoneMatch = trim((string) ($_SERVER['HTTP_IF_NONE_MATCH'] ?? ''));
+        $ifModSince  = trim((string) ($_SERVER['HTTP_IF_MODIFIED_SINCE'] ?? ''));
+
+        if ($ifNoneMatch !== '' && hash_equals($etag, $ifNoneMatch)) {
+            http_response_code(304);
+            return true;
+        }
+
+        if ($ifModSince !== '') {
+            $since = \DateTimeImmutable::createFromFormat('D, d M Y H:i:s T', $ifModSince);
+            if ($since !== false && $lastModified <= $since) {
+                http_response_code(304);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static function json(array $data, int $status = 200): void

@@ -87,13 +87,25 @@ class AccessCredentialService
 
             $user = $findUserByIdentifierColumn($safeColumn, $identifier);
             if (!is_array($user) || $user === []) {
+                \Core\Security\Hasher::dummyVerify($password);
                 continue;
             }
 
             $matchedUserId = max($matchedUserId, (int) ($user[$userIdColumn] ?? 0));
 
-            if (!password_verify($password, (string) ($user[$passwordColumn] ?? ''))) {
+            if (!\Core\Security\Hasher::verify($password, (string) ($user[$passwordColumn] ?? ''))) {
                 continue;
+            }
+
+            // SEC-02: transparent rehash — upgrade bcrypt → Argon2id on next successful login
+            if (\Core\Security\Hasher::needsRehash((string) ($user[$passwordColumn] ?? ''))) {
+                try {
+                    db()->table($uc['table'] ?? 'users')
+                        ->where($userIdColumn, $user[$userIdColumn])
+                        ->update([$passwordColumn => \Core\Security\Hasher::make($password)]);
+                } catch (\Throwable) {
+                    // Non-critical — don't break the login flow
+                }
             }
 
             if (!$isUserStatusAllowed($user)) {

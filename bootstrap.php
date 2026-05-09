@@ -75,6 +75,18 @@ if (!function_exists('loadConfig')) {
     {
         global $config;
 
+        // Fast-path: serve compiled config cache when available.
+        // Generate with: php myth config:cache
+        // Clear with:    php myth config:clear
+        $cacheFile = __DIR__ . '/storage/cache/config.cache.php';
+        if (is_file($cacheFile)) {
+            $cached = require $cacheFile;
+            if (is_array($cached)) {
+                $config = empty($baseConfig) ? $cached : array_replace_recursive($baseConfig, $cached);
+                return $config;
+            }
+        }
+
         $loadedConfig = $baseConfig;
         $configFiles = glob(__DIR__ . '/app/config/*.php') ?: [];
         sort($configFiles, SORT_NATURAL | SORT_FLAG_CASE);
@@ -322,6 +334,29 @@ if (!function_exists('bootstrapStartSession')) {
             if (!isset($_SESSION['last_regeneration'])) {
                 $_SESSION['last_regeneration'] = time();
             }
+            // Stamp session creation time for absolute lifetime enforcement
+            if (!isset($_SESSION['_session_created_at'])) {
+                $_SESSION['_session_created_at'] = time();
+            }
+        }
+
+        // Absolute session lifetime: destroy session regardless of activity after N seconds.
+        // Configured via framework.session.absolute_lifetime (seconds, default 28800 = 8h).
+        // This prevents indefinitely-lived sessions from stolen tokens.
+        $absoluteLifetime = (int) ($config['framework']['session']['absolute_lifetime'] ?? 28800);
+        if (
+            $absoluteLifetime > 0
+            && session_status() === PHP_SESSION_ACTIVE
+            && isset($_SESSION['_session_created_at'])
+            && (time() - (int) $_SESSION['_session_created_at']) > $absoluteLifetime
+        ) {
+            // Wipe all data and rotate the session ID atomically.
+            // session_regenerate_id(true) issues a new ID + deletes the old session file,
+            // preventing session fixation from a stolen but expired session token.
+            $_SESSION = [];
+            session_regenerate_id(true);
+            $_SESSION['last_regeneration'] = time();
+            $_SESSION['_session_created_at'] = time();
         }
 
         if (

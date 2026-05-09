@@ -55,6 +55,10 @@ class FileStore
     /**
      * Store an item in the cache.
      *
+     * Writes atomically via a temp file + rename() so concurrent readers
+     * never see a half-written payload (POSIX rename is atomic; on Windows
+     * it is best-effort but still safer than an in-place overwrite).
+     *
      * @param string $key
      * @param mixed  $value
      * @param int    $seconds  0 = forever
@@ -68,10 +72,22 @@ class FileStore
             @mkdir($dir, 0755, true);
         }
 
-        $expire = $seconds > 0 ? time() + $seconds : 0;
+        $expire  = $seconds > 0 ? time() + $seconds : 0;
         $payload = str_pad((string) $expire, 10, '0', STR_PAD_LEFT) . serialize($value);
 
-        return @file_put_contents($path, $payload, LOCK_EX) !== false;
+        // Atomic: write to a temp file then rename into place.
+        // This prevents concurrent readers from seeing a partial payload.
+        $tmp = $path . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, $payload, LOCK_EX) === false) {
+            return false;
+        }
+
+        if (!@rename($tmp, $path)) {
+            @unlink($tmp);
+            return false;
+        }
+
+        return true;
     }
 
     /**

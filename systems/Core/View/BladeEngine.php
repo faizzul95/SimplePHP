@@ -462,6 +462,9 @@ class BladeEngine
             // Outputs nonce="{value}" attribute — use inside <script> or <style> tags:
             // <script @nonce src="app.js"></script>
             '@nonce'         => '<?php echo \'nonce="\' . htmlspecialchars((string)(\Core\Security\CspNonce::get()), ENT_QUOTES, \'UTF-8\') . \'"\'; ?>',
+            // @sri('url', 'sha384-<hash>') → integrity="sha384-<hash>" crossorigin="anonymous"
+            // Usage: <script src="https://cdn.example.com/app.js" @sri('https://cdn.example.com/app.js', 'sha384-ABC...')></script>
+            // Generate hashes: php myth security:sri <url>
         ]);
 
         $content = $this->compileYieldDirectives($content);
@@ -540,6 +543,17 @@ class BladeEngine
 
         $content = preg_replace('/@break\s*\((.*?)\)/', '<?php if ($1) break; ?>', $content) ?? $content;
         $content = preg_replace('/@continue\s*\((.*?)\)/', '<?php if ($1) continue; ?>', $content) ?? $content;
+
+        // @sri('url', 'sha384-hash') → integrity="sha384-hash" crossorigin="anonymous"
+        // The hash is output verbatim — it must be a trusted literal in the template, not user input.
+        $content = preg_replace_callback(
+            '/@sri\(\s*(?:[\'"][^\'"]*[\'"]\s*,\s*)?[\'"](sha(?:256|384|512)-[A-Za-z0-9+\/=]+)[\'"]\s*\)/',
+            static function (array $m): string {
+                $hash = htmlspecialchars($m[1], ENT_QUOTES, 'UTF-8');
+                return 'integrity="' . $hash . '" crossorigin="anonymous"';
+            },
+            $content
+        ) ?? $content;
 
         $content = preg_replace('/\{!!\s*(.+?)\s*!!\}/s', '<?php echo $1; ?>', $content) ?? $content;
         $content = preg_replace('/\{{\s*(.+?)\s*\}}/s', '<?php echo htmlspecialchars((string)($1), ENT_QUOTES, "UTF-8"); ?>', $content) ?? $content;

@@ -230,6 +230,133 @@ class LocalFilesystemAdapter implements FilesystemAdapterInterface
         return $files;
     }
 
+    // ─── New interface methods ────────────────────────────────────────────────
+
+    /**
+     * Return the file size in bytes.
+     *
+     * @throws \RuntimeException if the path does not exist.
+     */
+    public function size(string $path): int
+    {
+        $absolutePath = $this->path($path);
+        if (!is_file($absolutePath)) {
+            throw new \RuntimeException('File does not exist: ' . $path);
+        }
+
+        $size = filesize($absolutePath);
+        if ($size === false) {
+            throw new \RuntimeException('Unable to determine file size: ' . $path);
+        }
+
+        return $size;
+    }
+
+    /**
+     * Return the file's last-modified time as a Unix timestamp.
+     *
+     * @throws \RuntimeException if the path does not exist.
+     */
+    public function lastModified(string $path): int
+    {
+        $absolutePath = $this->path($path);
+        if (!file_exists($absolutePath)) {
+            throw new \RuntimeException('Path does not exist: ' . $path);
+        }
+
+        $mtime = filemtime($absolutePath);
+        if ($mtime === false) {
+            throw new \RuntimeException('Unable to determine modification time: ' . $path);
+        }
+
+        return $mtime;
+    }
+
+    /**
+     * Generate a time-limited HMAC-signed URL for private file access.
+     *
+     * The URL embeds:
+     *  ?path=<encoded>&expires=<unix_ts>&sig=<hmac_sha256>
+     *
+     * Verifying the URL (e.g. in a FileServeController):
+     *   $expires = (int) request()->query('expires');
+     *   $sig     = (string) request()->query('sig');
+     *   $appKey  = config('app.key') ?? throw new \RuntimeException('APP_KEY not set');
+     *   $expected = hash_hmac('sha256', $path . '|' . $expires, $appKey);
+     *   if (!hash_equals($expected, $sig) || time() > $expires) abort(403);
+     *
+     * @throws \RuntimeException if APP_KEY is not configured.
+     */
+    public function temporaryUrl(string $path, \DateTimeInterface $expiry): string
+    {
+        $appKey = (function_exists('config') ? config('app.key') : null)
+            ?? (defined('APP_KEY') ? APP_KEY : null)
+            ?? throw new \RuntimeException('APP_KEY is required to generate temporary URLs.');
+
+        $expires  = $expiry->getTimestamp();
+        $relative = $this->normalizeRelativePath($path);
+        $sig      = hash_hmac('sha256', $relative . '|' . $expires, $appKey);
+
+        $base = function_exists('getProjectBaseUrl') ? rtrim(getProjectBaseUrl(), '/') : '';
+
+        return $base . '/files/serve?' . http_build_query([
+            'path'    => $relative,
+            'expires' => $expires,
+            'sig'     => $sig,
+        ]);
+    }
+
+    /**
+     * Return the file's visibility: 'public' if world-readable, 'private' otherwise.
+     *
+     * @throws \RuntimeException if the path does not exist.
+     */
+    public function visibility(string $path): string
+    {
+        $absolutePath = $this->path($path);
+        if (!file_exists($absolutePath)) {
+            throw new \RuntimeException('Path does not exist: ' . $path);
+        }
+
+        $perms = fileperms($absolutePath);
+        if ($perms === false) {
+            throw new \RuntimeException('Unable to read permissions: ' . $path);
+        }
+
+        // World-readable bit (0004) is set → public
+        return ($perms & 0004) !== 0 ? 'public' : 'private';
+    }
+
+    /**
+     * Set the file's visibility.
+     *
+     * @param string $visibility 'public' (0644) or 'private' (0600).
+     * @throws \RuntimeException if the path does not exist or chmod fails.
+     */
+    public function setVisibility(string $path, string $visibility): bool
+    {
+        $absolutePath = $this->path($path);
+        if (!file_exists($absolutePath)) {
+            throw new \RuntimeException('Path does not exist: ' . $path);
+        }
+
+        $mode = match ($visibility) {
+            'public'  => 0644,
+            'private' => 0600,
+            default   => throw new \InvalidArgumentException(
+                "Visibility must be 'public' or 'private', got: {$visibility}"
+            ),
+        };
+
+        if (!chmod($absolutePath, $mode)) {
+            throw new \RuntimeException('Failed to set permissions on: ' . $path);
+        }
+
+        return true;
+    }
+
+    // ─── Internal helpers ─────────────────────────────────────────────────────
+
     private function resolveRootPath(string $root): string
     {
         $root = trim($root);

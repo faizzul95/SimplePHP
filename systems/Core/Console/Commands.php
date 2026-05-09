@@ -97,13 +97,31 @@ class Commands
             $console->newLine();
         }, 'Clear compiled view files');
 
+        $console->command('config:cache', function () use ($console) {
+            try {
+                (new \Core\Console\Commands\ConfigCacheCommand())->handle();
+            } catch (\Throwable $e) {
+                $console->error('  ' . $e->getMessage());
+            }
+        }, 'Compile all config files into storage/cache/config.cache.php');
+
         $console->command('config:clear', function () use ($console) {
-            $cacheFile = ROOT_DIR . 'storage/cache/config.php';
-            if (file_exists($cacheFile)) {
-                @unlink($cacheFile);
-                $console->success("  Configuration cache cleared.");
+            // Remove both the legacy name and the current cache file name
+            $files = [
+                ROOT_DIR . 'storage/cache/config.php',
+                ROOT_DIR . 'storage/cache/config.cache.php',
+            ];
+            $cleared = false;
+            foreach ($files as $cacheFile) {
+                if (file_exists($cacheFile)) {
+                    @unlink($cacheFile);
+                    $cleared = true;
+                }
+            }
+            if ($cleared) {
+                $console->success('  Configuration cache cleared.');
             } else {
-                $console->info("  Configuration cache file not found. Nothing to clear.");
+                $console->info('  Configuration cache file not found. Nothing to clear.');
             }
         }, 'Remove the configuration cache file');
     }
@@ -189,6 +207,22 @@ class Commands
 
             $console->newLine();
         }, 'Display all registered routes [--method=GET] [--name=] [--path=]');
+
+        $console->command('route:cache', function () use ($console) {
+            try {
+                (new \Core\Console\Commands\RouteCacheCommand())->handle();
+            } catch (\Throwable $e) {
+                $console->error('  ' . $e->getMessage());
+            }
+        }, 'Compile all routes into storage/cache/routes.cache.php');
+
+        $console->command('route:clear', function () use ($console) {
+            try {
+                (new \Core\Console\Commands\RouteClearCommand())->handle();
+            } catch (\Throwable $e) {
+                $console->error('  ' . $e->getMessage());
+            }
+        }, 'Remove the route cache file');
     }
 
     // ─── Make (Generator) Commands ───────────────────────────

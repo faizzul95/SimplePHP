@@ -45,7 +45,7 @@ final class BaseDatabaseQueryHelperProbe extends BaseDatabase
     public function batchInsert($data) { return []; }
     public function batchUpdate($data) { return []; }
     public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-    protected function sanitizeColumn($data) { return $data; }
+    protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
 
     public function where($columnName, $operator = null, $value = null)
     {
@@ -110,7 +110,7 @@ final class BaseDatabaseSqlProbe extends BaseDatabase
     public function batchInsert($data) { return []; }
     public function batchUpdate($data) { return []; }
     public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
-    protected function sanitizeColumn($data) { return $data; }
+    protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
 
     public function currentWhere(): ?string
     {

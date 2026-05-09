@@ -112,6 +112,29 @@ trait HasAggregates
     }
 
     /**
+     * Sort by a user-supplied column only if it appears in an explicit allowlist.
+     * Use this whenever sort column comes from user input to prevent SQL injection.
+     *
+     * OrderBy() validates identifier format, but this adds an extra explicit allowlist.
+     *
+     * @param string   $column         User-supplied column name
+     * @param string   $direction      'ASC' or 'DESC'
+     * @param string[] $allowedColumns Explicit allowlist of permitted column names
+     * @return $this
+     * @throws \InvalidArgumentException if column is not in the allowlist
+     */
+    public function orderByAllowed(string $column, string $direction, array $allowedColumns): static
+    {
+        if (!in_array($column, $allowedColumns, true)) {
+            throw new \InvalidArgumentException(
+                "Column '{$column}' is not in the sort allowlist: [" . implode(', ', $allowedColumns) . ']'
+            );
+        }
+
+        return $this->orderBy($column, $direction);
+    }
+
+    /**
      * Order by column in descending order (created_at by default).
      *
      * @param string $column

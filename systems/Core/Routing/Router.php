@@ -17,6 +17,56 @@ class Router
     private array $middlewareGroups = [];
     private static array $namedRoutes = [];
 
+    /**
+     * Global parameter type constraints applied to all routes when no
+     * per-route ->where() constraint is set for a given parameter name.
+     *
+     * Pre-seeded with safe defaults for the most common parameter names:
+     *   {id}   → digits only        (prevents type-confusion / path traversal)
+     *   {uuid} → UUID v1-v5 format  (strict format enforcement)
+     *   {slug} → lowercase alphanum + hyphens
+     *
+     * Add custom patterns in RouteServiceProvider::map() or bootstrap:
+     *   Router::pattern('locale', '[a-z]{2}');
+     *   Router::pattern(['year' => '[0-9]{4}', 'month' => '0[1-9]|1[0-2]']);
+     */
+    private static array $globalPatterns = [
+        'id'   => '[0-9]+',
+        'uuid' => '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}',
+        'slug' => '[a-z0-9][a-z0-9-]*',
+    ];
+
+    /**
+     * Register a global parameter constraint.
+     *
+     * Once registered, every route whose URI contains {paramName} will
+     * automatically enforce this regex unless the route declares its own
+     * ->where(paramName, ...) override.
+     *
+     * @param string|array $param  Parameter name or associative [param => pattern]
+     * @param string|null  $regex  Regex pattern (when $param is a string)
+     */
+    public static function pattern(string|array $param, ?string $regex = null): void
+    {
+        if (is_array($param)) {
+            foreach ($param as $key => $pat) {
+                static::$globalPatterns[(string) $key] = (string) $pat;
+            }
+        } elseif ($regex !== null) {
+            static::$globalPatterns[(string) $param] = $regex;
+        }
+    }
+
+    /**
+     * Return the currently registered global patterns (read-only snapshot).
+     *
+     * @return array<string, string>
+     */
+    public static function getPatterns(): array
+    {
+        return static::$globalPatterns;
+    }
+
     public function aliasMiddleware(array $aliases): void
     {
         $this->middlewareAliases = array_merge($this->middlewareAliases, $aliases);
@@ -477,7 +527,7 @@ class Router
             // Optional parameter: {id?}
             if (preg_match('/^\{([a-zA-Z_][a-zA-Z0-9_]*)\?\}$/', $segment, $matches) === 1) {
                 $paramName = $matches[1];
-                $constraint = $wheres[$paramName] ?? '[A-Za-z0-9_-]+';
+                $constraint = $wheres[$paramName] ?? static::$globalPatterns[$paramName] ?? '[A-Za-z0-9_-]+';
                 $patternParts[] = '(?:/(?P<' . $paramName . '>' . $constraint . '))?';
                 continue;
             }
@@ -485,7 +535,7 @@ class Router
             // Required parameter: {id}
             if (preg_match('/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/', $segment, $matches) === 1) {
                 $paramName = $matches[1];
-                $constraint = $wheres[$paramName] ?? '[A-Za-z0-9_-]+';
+                $constraint = $wheres[$paramName] ?? static::$globalPatterns[$paramName] ?? '[A-Za-z0-9_-]+';
                 $patternParts[] = '/(?P<' . $paramName . '>' . $constraint . ')';
                 continue;
             }

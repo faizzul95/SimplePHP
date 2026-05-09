@@ -372,32 +372,6 @@ class MariaDBDriver extends BaseDatabase
         return "$query LIMIT $limit OFFSET $offset";
     }
 
-    protected function sanitizeColumn($data)
-    {
-        $columns_table = $this->getTableColumns();
-
-        // Filter $data array based on $columns_table
-        $data = array_intersect_key($data, array_flip($columns_table));
-
-        if ($this->_secureInput) {
-            $data = array_map(function ($value) {
-                if ($value === '') {
-                    return null;
-                }
-
-                // Sanitize non-empty values
-                return $this->normalizeDatabaseValue($value);
-            }, $data);
-        } else {
-            // Even without sanitization, empty string should be null
-            $data = array_map(function ($value) {
-                return $value === '' ? null : $value;
-            }, $data);
-        }
-
-        return $data;
-    }
-
     public function batchInsert($data)
     {
         return $this;
