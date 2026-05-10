@@ -324,7 +324,7 @@ class Request
             }
         }
 
-        return $data ?? $default;
+        return $data;
     }
 
      /**
@@ -371,7 +371,7 @@ class Request
             }
         }
 
-        $result = $this->sanitizeInput($data ?? $default);
+        $result = $this->sanitizeInput($data);
         $this->secureRequest = $originalSecure;
         return $result;
     }
@@ -420,7 +420,7 @@ class Request
             }
         }
 
-        $result = $this->sanitizeInput($data ?? $default);
+        $result = $this->sanitizeInput($data);
         $this->secureRequest = $originalSecure;
         return $result;
     }
@@ -1091,9 +1091,7 @@ class Request
         $validator = new \Components\Validation();
         $validator->setRules($rules);
 
-        if (!empty($data)) {
-            $validator->setData($data);
-        }
+        $validator->setData($data);
 
         if (!empty($customMessage)) {
             $validator->setMessages($customMessage);

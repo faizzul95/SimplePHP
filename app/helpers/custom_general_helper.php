@@ -289,7 +289,7 @@ if (!function_exists('decode_base64')) {
  * It sanitizes input parameters to prevent XSS attacks and ensures
  * proper URL formatting.
  *
- * @param string|null $param Optional path to append to base URL
+ * @param string|null $path Optional path to append to base URL
  * @return string The complete, sanitized base URL
  * @throws InvalidArgumentException If BASE_URL constant is not defined
  */

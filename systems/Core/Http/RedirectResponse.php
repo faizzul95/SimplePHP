@@ -58,7 +58,7 @@ class RedirectResponse
 
     public function withInput(?array $input = null, array $except = ['_token', 'password', 'password_confirmation', 'current_password', 'new_password', 'new_password_confirmation']): self
     {
-        $payload = $input ?? array_merge($_GET ?? [], $_POST ?? []);
+        $payload = $input ?? array_merge($_GET, $_POST);
         $filtered = [];
 
         foreach ($payload as $key => $value) {

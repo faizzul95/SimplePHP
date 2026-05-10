@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\AuthController;
 
+/** @var \Core\Routing\Router $router */
+
 /*
 |--------------------------------------------------------------------------
 | API Routes

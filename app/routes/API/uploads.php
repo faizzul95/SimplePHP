@@ -2,9 +2,11 @@
 
 use App\Http\Controllers\UploadController;
 
+/** @var \Core\Routing\Router $router */
+
 $router->group(['prefix' => 'uploads'], function ($router) {
     $router->post('/image-cropper', [UploadController::class, 'uploadImageCropper'])
-        ->permission('user-upload-profile')
+    ->permission('user-upload-profile')
     ->middleware('api.upload.image')
     ->middleware('xss:image')
     ->featureFlag('uploads.image-cropper')

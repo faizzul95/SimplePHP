@@ -272,8 +272,8 @@ class TaskRunner
     /**
      * Execute a task.
      *
-     * @param array $task Task to execute
-     * @return resource Process resource
+        * @param array<string, mixed> $task Task to execute.
+        * @return array{process: resource, command: string, start_time: float}|null
      */
     private function executeTask($task)
     {
@@ -410,7 +410,7 @@ class TaskRunner
      * Get the PID of a process.
      *
      * @param resource $process Process resource
-     * @return int PID
+        * @return int|null PID when available
      */
     private function getPid($process)
     {
@@ -487,7 +487,7 @@ class TaskRunner
     /**
      * Log all the process.
      *
-     * @param string $logRecord Record message to log file
+    * @param string $message Record message to log file
      */
     private function logRecord($message, $type = 'error')
     {

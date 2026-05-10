@@ -167,6 +167,10 @@ class MySQLDriver extends BaseDatabase
 
     public function count($table = null)
     {
+        $sqlTotal = '';
+        $hasGroupBy = false;
+        $hasHaving = false;
+
         try {
             if (!empty($table)) {
                 $this->table = $table;
@@ -268,10 +272,10 @@ class MySQLDriver extends BaseDatabase
                 'method' => __FUNCTION__,
                 'table' => $this->table ?? 'unknown',
                 'original_query' => $this->_query ?? 'not_available',
-                'generated_count_query' => $sqlTotal ?? 'not_generated',
+                'generated_count_query' => $sqlTotal,
                 'binds' => $bindings ?? [],
-                'has_group_by' => isset($hasGroupBy) ? $hasGroupBy : 'unknown',
-                'has_having' => isset($hasHaving) ? $hasHaving : 'unknown'
+                'has_group_by' => $hasGroupBy,
+                'has_having' => $hasHaving,
             ];
 
             $this->db_error_log($e, __FUNCTION__, 'Count query failed', $context);
@@ -391,12 +395,12 @@ class MySQLDriver extends BaseDatabase
             throw new \InvalidArgumentException('Please specify the table.');
         }
 
-        // Ensure data is a list of rows
-        $data = isset($data[0]) ? $data : [$data];
-
-        if (empty($data)) {
+        if ($data === []) {
             return $this->_returnResult(['code' => 200, 'affected_rows' => 0, 'message' => 'No data to insert', 'action' => 'batchInsert']);
         }
+
+        // Ensure data is a list of rows
+        $data = isset($data[0]) ? $data : [$data];
 
         // Start profiler
         $this->_startProfiler(__FUNCTION__);
@@ -494,12 +498,12 @@ class MySQLDriver extends BaseDatabase
             throw new \InvalidArgumentException('Please specify the table.');
         }
 
-        // Ensure data is a list of rows
-        $data = isset($data[0]) ? $data : [$data];
-
-        if (empty($data)) {
+        if ($data === []) {
             return $this->_returnResult(['code' => 200, 'affected_rows' => 0, 'message' => 'No data to update', 'action' => 'batchUpdate']);
         }
+
+        // Ensure data is a list of rows
+        $data = isset($data[0]) ? $data : [$data];
 
         // Start profiler
         $this->_startProfiler(__FUNCTION__);
@@ -778,7 +782,7 @@ class MySQLDriver extends BaseDatabase
 
                 // Restore original database settings only if they were changed
                 try {
-                    if (!$skipOptimization && !empty($originalSettings)) {
+                    if (!$skipOptimization) {
                         $this->pdo[$this->connectionName]->exec("SET autocommit = {$originalSettings['autocommit']}");
                         $this->pdo[$this->connectionName]->exec("SET unique_checks = {$originalSettings['unique_checks']}");
                         $this->pdo[$this->connectionName]->exec("SET foreign_key_checks = {$originalSettings['foreign_key_checks']}");

@@ -62,9 +62,7 @@ if (!function_exists('scopeSystemQuery')) {
             ];
 
             // Register multiple scopes at once
-            if (!empty($listOfScope)) {
-                $db->scopes($listOfScope);
-            }
+            $db->scopes($listOfScope);
         } catch (Exception $e) {
             if (function_exists('logger')) {
                 logger()->logException($e);

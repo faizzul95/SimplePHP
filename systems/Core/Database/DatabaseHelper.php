@@ -348,7 +348,7 @@ class DatabaseHelper
      * Uses caching to avoid re-validating the same columns
      *
      * @param string $column The column name to validate.
-     * @throws InvalidArgumentException If the column name is not a string or no value.
+    * @throws \InvalidArgumentException If the column name is not a string or no value.
      */
     protected function validateColumn($column, $default = 'Column')
     {
@@ -376,7 +376,7 @@ class DatabaseHelper
      *
      * @param string $date The date string to validate and convert.
      * @return string The validated date in Y-m-d format.
-     * @throws InvalidArgumentException If the date format is not recognized.
+    * @throws \InvalidArgumentException If the date format is not recognized.
      */
     protected function validateDate($date)
     {
@@ -392,7 +392,7 @@ class DatabaseHelper
      *
      * @param string $operator The operator to validate.
      * @param array $extra The extra operator to validate.
-     * @throws InvalidArgumentException If the operator is not supported.
+    * @throws \InvalidArgumentException If the operator is not supported.
      */
     protected function validateOperator($operator, $extra = [])
     {
@@ -406,7 +406,7 @@ class DatabaseHelper
      * Validates if the given day is a valid number between 1 and 31.
      *
      * @param int $day The day to validate.
-     * @throws InvalidArgumentException If the day is not a valid number between 1 and 31.
+    * @throws \InvalidArgumentException If the day is not a valid number between 1 and 31.
      */
     protected function validateDay($day)
     {
@@ -419,7 +419,7 @@ class DatabaseHelper
      * Validates if the given month is a valid number between 1 and 12.
      *
      * @param int $month The month to validate.
-     * @throws InvalidArgumentException If the month is not a valid number between 1 and 12.
+    * @throws \InvalidArgumentException If the month is not a valid number between 1 and 12.
      */
     protected function validateMonth($month)
     {
@@ -432,7 +432,7 @@ class DatabaseHelper
      * Validates if the given year is a valid four-digit number.
      *
      * @param int $year The year to validate.
-     * @throws InvalidArgumentException If the year is not a valid four-digit number.
+    * @throws \InvalidArgumentException If the year is not a valid four-digit number.
      */
     protected function validateYear($year)
     {

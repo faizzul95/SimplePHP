@@ -24,19 +24,19 @@ if (!defined('ROOT_DIR')) {
 require ROOT_DIR . 'vendor/autoload.php';
 require ROOT_DIR . 'bootstrap.php';
 
-if (!class_exists(\Spiral\RoadRunner\Worker::class)) {
+$workerClass = 'Spiral\\RoadRunner\\Worker';
+$psr17FactoryClass = 'Nyholm\\Psr7\\Factory\\Psr17Factory';
+$psr7WorkerClass = 'Spiral\\RoadRunner\\Http\\PSR7Worker';
+$responseClass = 'Nyholm\\Psr7\\Response';
+
+if (!class_exists($workerClass) || !class_exists($psr17FactoryClass) || !class_exists($psr7WorkerClass) || !class_exists($responseClass)) {
     fwrite(STDERR, "RoadRunner worker requires: composer require spiral/roadrunner-http nyholm/psr7\n");
     exit(1);
 }
 
-use Nyholm\Psr7\Factory\Psr17Factory;
-use Nyholm\Psr7\Response;
-use Spiral\RoadRunner\Http\PSR7Worker;
-use Spiral\RoadRunner\Worker;
-
-$worker  = Worker::create();
-$factory = new Psr17Factory();
-$psr7    = new PSR7Worker($worker, $factory, $factory, $factory);
+$worker  = $workerClass::create();
+$factory = new $psr17FactoryClass();
+$psr7    = new $psr7WorkerClass($worker, $factory, $factory, $factory);
 
 // Bootstrap kernel ONCE per worker process
 $kernel = new \App\Http\Kernel();
@@ -103,7 +103,7 @@ while (true) {
         header_remove(); // Clear headers — RoadRunner will send them from the response
 
         // 5. Build PSR-7 response from captured output + headers
-        $psrResponse = new Response($status, $headers, $output);
+        $psrResponse = new $responseClass($status, $headers, $output);
         $psr7->respond($psrResponse);
     } catch (\Throwable $e) {
         if (ob_get_level() > 0) {

@@ -75,6 +75,31 @@ abstract class ScaffoldedRemoteFilesystemAdapter implements FilesystemAdapterInt
         throw $this->notImplemented();
     }
 
+    public function size(string $path): int
+    {
+        throw $this->notImplemented();
+    }
+
+    public function lastModified(string $path): int
+    {
+        throw $this->notImplemented();
+    }
+
+    public function temporaryUrl(string $path, \DateTimeInterface $expiry): string
+    {
+        throw $this->notImplemented();
+    }
+
+    public function visibility(string $path): string
+    {
+        throw $this->notImplemented();
+    }
+
+    public function setVisibility(string $path, string $visibility): bool
+    {
+        throw $this->notImplemented();
+    }
+
     protected function normalizeRelativePath(string $path): string
     {
         $path = str_replace('\\', '/', trim($path));

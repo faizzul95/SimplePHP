@@ -3,6 +3,8 @@
 use App\Http\Controllers\PermissionController;
 use App\Http\Controllers\RoleController;
 
+/** @var \Core\Routing\Router $router */
+
 // Roles
 $router->group(['prefix' => 'roles', 'middleware' => ['permission:rbac-roles-view', 'feature:rbac.role']], function ($router) {
     $router->post('/list', [RoleController::class, 'listRolesDatatable'])->name('roles.list');

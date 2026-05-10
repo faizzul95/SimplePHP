@@ -15,6 +15,10 @@ use Core\Database\PerformanceMonitor;
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
  * @version   0.0.1
+ *
+ * @method BaseDatabase addConnection(string $name, array $params)
+ * @method BaseDatabase setProfilingEnabled(bool $enable = true)
+ * @method BaseDatabase connect(string $connectionID = null)
  */
 
 class Database
@@ -57,6 +61,11 @@ class Database
     public function queryGrammar(): QueryGrammar
     {
         return DriverRegistry::queryGrammar($this->driver);
+    }
+
+    public function raw(): BaseDatabase
+    {
+        return $this->db;
     }
 
     public function __call($method, $args)

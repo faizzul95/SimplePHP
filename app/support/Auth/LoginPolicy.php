@@ -84,6 +84,7 @@ class LoginPolicy
             'bcrypt' => [
                 'enabled' => ($hashing['enabled'] ?? true) === true,
                 'algorithm' => PASSWORD_BCRYPT,
+                'uses_framework_default' => false,
                 'options' => [
                     'cost' => max(4, (int) ($hashing['bcrypt_rounds'] ?? 12)),
                 ],
@@ -91,6 +92,7 @@ class LoginPolicy
             'argon2i' => [
                 'enabled' => defined('PASSWORD_ARGON2I') && ($hashing['enabled'] ?? true) === true,
                 'algorithm' => defined('PASSWORD_ARGON2I') ? PASSWORD_ARGON2I : PASSWORD_DEFAULT,
+                'uses_framework_default' => false,
                 'options' => [
                     'memory_cost' => max(1024, (int) ($hashing['argon_memory_cost'] ?? PASSWORD_ARGON2_DEFAULT_MEMORY_COST)),
                     'time_cost' => max(1, (int) ($hashing['argon_time_cost'] ?? PASSWORD_ARGON2_DEFAULT_TIME_COST)),
@@ -100,6 +102,7 @@ class LoginPolicy
             'argon2id' => [
                 'enabled' => defined('PASSWORD_ARGON2ID') && ($hashing['enabled'] ?? true) === true,
                 'algorithm' => defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT,
+                'uses_framework_default' => false,
                 'options' => [
                     'memory_cost' => max(1024, (int) ($hashing['argon_memory_cost'] ?? PASSWORD_ARGON2_DEFAULT_MEMORY_COST)),
                     'time_cost' => max(1, (int) ($hashing['argon_time_cost'] ?? PASSWORD_ARGON2_DEFAULT_TIME_COST)),
@@ -109,6 +112,7 @@ class LoginPolicy
             default => [
                 'enabled' => ($hashing['enabled'] ?? true) === true,
                 'algorithm' => PASSWORD_DEFAULT,
+                'uses_framework_default' => true,
                 'options' => [],
             ],
         };
@@ -127,14 +131,15 @@ class LoginPolicy
 
         $algorithm = $configuration['algorithm'] ?? PASSWORD_DEFAULT;
         $options = (array) ($configuration['options'] ?? []);
+        $usesFrameworkDefault = ($configuration['uses_framework_default'] ?? false) === true;
 
         if (!password_needs_rehash($currentHash, $algorithm, $options)) {
             return;
         }
 
-        // Use Hasher::make() (Argon2id) if the configured algorithm is the framework default;
-        // otherwise fall through to the configured algorithm for backward compatibility.
-        $rehash = (strtolower((string) $algorithm) === 'default' || $algorithm === PASSWORD_DEFAULT)
+        // Preserve explicit algorithms like bcrypt even when PASSWORD_DEFAULT
+        // currently aliases to the same constant value on this PHP runtime.
+        $rehash = $usesFrameworkDefault
             ? \Core\Security\Hasher::make($plainPassword)
             : password_hash($plainPassword, $algorithm, $options);
 

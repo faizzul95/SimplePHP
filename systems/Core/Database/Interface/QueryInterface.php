@@ -205,7 +205,7 @@ interface QueryInterface
     /**
      * Returns the current SQL query without showing the eager query.
      *
-     * @return string The current SQL query as a string.
+      * @return array{query: string|null, binds: array, full_query: string|null} The current SQL query with bindings.
      */
     public function toSql();
 

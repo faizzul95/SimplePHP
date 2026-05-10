@@ -7,6 +7,8 @@ use App\Http\Controllers\RoleController;
 use App\Http\Controllers\UserController;
 use Core\Http\Request;
 
+/** @var \Core\Routing\Router $router */
+
 /*
 |--------------------------------------------------------------------------
 | Web Routes — Page Rendering Only

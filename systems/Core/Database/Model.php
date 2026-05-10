@@ -36,6 +36,8 @@ use RuntimeException;
  *   User::destroy([1, 2, 3])
  *   User::firstOrCreate(['email' => 'a@example.com'], ['name' => 'Alice'])
  *   User::withTrashed()->where('email', 'x')->first()
+ *
+ * @phpstan-consistent-constructor
  */
 abstract class Model implements JsonSerializable
 {
@@ -589,6 +591,26 @@ abstract class Model implements JsonSerializable
     {
         $this->original = $this->attributes;
         return $this;
+    }
+
+    protected function freshTimestamp(): string
+    {
+        return date('Y-m-d H:i:s');
+    }
+
+    protected function touchTimestamps(bool $isCreate = false): void
+    {
+        if (!$this->timestamps) {
+            return;
+        }
+
+        $now = $this->freshTimestamp();
+
+        if ($isCreate && !array_key_exists(static::CREATED_AT, $this->attributes)) {
+            $this->attributes[static::CREATED_AT] = $now;
+        }
+
+        $this->attributes[static::UPDATED_AT] = $now;
     }
 
     // ── Row-instance persistence ──────────────────────────────────────────

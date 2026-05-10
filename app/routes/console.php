@@ -1,5 +1,7 @@
 <?php
 
+/** @var \Core\Console\Kernel $console */
+
 /*
 |--------------------------------------------------------------------------
 | Console Routes — Custom Commands & Schedule

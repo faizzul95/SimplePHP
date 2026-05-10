@@ -3,6 +3,8 @@
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\UserController;
 
+/** @var \Core\Routing\Router $router */
+
 $router->group(['prefix' => 'users'], function ($router) {
     $router->post('/list', [UserController::class, 'listUserDatatable'])->permission('user-view')->name('users.list');
     $router->post('/profile-options', [RoleController::class, 'listSelectOptionRole'])->permission('user-view')->name('users.profile-options');

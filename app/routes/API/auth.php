@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\AuthController;
 
+/** @var \Core\Routing\Router $router */
+
 $router->post('/auth/reset-password', [AuthController::class, 'resetPassword'])
     ->middleware('throttle:5,1,auth-route')
     ->middleware('xss')

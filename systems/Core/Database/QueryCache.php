@@ -543,7 +543,7 @@ class QueryCache
     public static function getStats()
     {
         $totalRequests = self::$stats['hits'] + self::$stats['misses'];
-        $hitRate = $totalRequests > 0 
+        $hitRate = is_numeric($totalRequests) && $totalRequests > 0 
             ? round((self::$stats['hits'] / $totalRequests) * 100, 2) 
             : 0;
 

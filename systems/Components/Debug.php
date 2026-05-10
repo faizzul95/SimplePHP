@@ -753,15 +753,13 @@ class Debug
 
         // Loop through categorized extensions and display them
         foreach ($categorizedExtensions as $category => $extList) {
-            if (!empty($extList)) {
-                $output .= '<h3 style="background:#007BFF; color:#fff; padding:10px; margin-top:20px; border-radius:5px;">' . $category . '</h3>';
-                $output .= '<ul class="ext-category" style="list-style:none; padding:10px; columns:2;">';
-                foreach ($extList as $ext) {
-                    $version = phpversion($ext);
-                    $output .= '<li style="padding:5px; border-bottom:1px solid #ddd;">🔹 <strong>' . $ext . '</strong> <small style="color:#888;">' . ($version ? '(' . $version . ')' : '') . '</small></li>';
-                }
-                $output .= '</ul>';
+            $output .= '<h3 style="background:#007BFF; color:#fff; padding:10px; margin-top:20px; border-radius:5px;">' . $category . '</h3>';
+            $output .= '<ul class="ext-category" style="list-style:none; padding:10px; columns:2;">';
+            foreach ($extList as $ext) {
+                $version = phpversion($ext);
+                $output .= '<li style="padding:5px; border-bottom:1px solid #ddd;">🔹 <strong>' . $ext . '</strong> <small style="color:#888;">' . ($version ? '(' . $version . ')' : '') . '</small></li>';
             }
+            $output .= '</ul>';
         }
 
         $output .= '</div>';
@@ -1355,6 +1353,7 @@ class Debug
         $startMemory = memory_get_usage();
 
         $functionName = '';
+        $error = null;
 
         // Try to get function info
         $reflection = is_array($callback) ? new \ReflectionMethod($callback[0], $callback[1]) : new \ReflectionFunction($callback);
@@ -1414,7 +1413,7 @@ class Debug
             echo $output;
         }
 
-        if (!$success && isset($error)) {
+        if (!$success && $error instanceof \Exception) {
             throw $error;
         }
 
@@ -2422,7 +2421,7 @@ class Debug
      */
     public function formatBytes($bytes, $precision = 2)
     {
-        if ($bytes <= 0 || empty($bytes)) return '0 B';
+        if ($bytes <= 0) return '0 B';
 
         $units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
 

@@ -4,7 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Database;
 
+use Core\Database\Drivers\MySQLDriver;
 use PHPUnit\Framework\TestCase;
+
+final class OrderByAllowedBuilderStub extends MySQLDriver
+{
+    public function getOrderByClauses(): array
+    {
+        return $this->orderBy ?? [];
+    }
+}
 
 /**
  * Tests for HasAggregates::orderByAllowed() (SEC-15)
@@ -13,8 +22,6 @@ use PHPUnit\Framework\TestCase;
  */
 class OrderByAllowedTest extends TestCase
 {
-    private object $builder;
-
     protected function setUp(): void
     {
         // We need a concrete DB class that uses HasAggregates.
@@ -26,17 +33,12 @@ class OrderByAllowedTest extends TestCase
 
     public function test_order_by_allowed_accepts_valid_column(): void
     {
-        // Create an anonymous class that uses the trait
-        $builder = new class {
-            use \Core\Database\Concerns\HasAggregates;
-            public array $orderBy = [];
-            protected function _sanitizeColumnName(string $col): string { return $col; }
-        };
+        $builder = new OrderByAllowedBuilderStub();
 
         $result = $builder->orderByAllowed('created_at', 'DESC', ['created_at', 'name', 'id']);
 
         $this->assertSame($builder, $result); // Returns $this for chaining
-        $this->assertNotEmpty($builder->orderBy);
+        $this->assertNotEmpty($builder->getOrderByClauses());
     }
 
     public function test_order_by_allowed_throws_for_unlisted_column(): void
@@ -44,11 +46,7 @@ class OrderByAllowedTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessageMatches('/not in the sort allowlist/');
 
-        $builder = new class {
-            use \Core\Database\Concerns\HasAggregates;
-            public array $orderBy = [];
-            protected function _sanitizeColumnName(string $col): string { return $col; }
-        };
+        $builder = new OrderByAllowedBuilderStub();
 
         $builder->orderByAllowed('password', 'ASC', ['created_at', 'name', 'id']);
     }
@@ -57,11 +55,7 @@ class OrderByAllowedTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
 
-        $builder = new class {
-            use \Core\Database\Concerns\HasAggregates;
-            public array $orderBy = [];
-            protected function _sanitizeColumnName(string $col): string { return $col; }
-        };
+        $builder = new OrderByAllowedBuilderStub();
 
         $builder->orderByAllowed("1; DROP TABLE users--", 'ASC', ['created_at']);
     }
@@ -71,11 +65,7 @@ class OrderByAllowedTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessageMatches('/ASC.*DESC|direction/i');
 
-        $builder = new class {
-            use \Core\Database\Concerns\HasAggregates;
-            public array $orderBy = [];
-            protected function _sanitizeColumnName(string $col): string { return $col; }
-        };
+        $builder = new OrderByAllowedBuilderStub();
 
         $builder->orderByAllowed('created_at', 'INVALID', ['created_at']);
     }

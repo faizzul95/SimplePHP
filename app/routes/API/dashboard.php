@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\DashboardController;
 
+/** @var \Core\Routing\Router $router */
+
 $router->post('/dashboard/count-admin', [DashboardController::class, 'countAdminDashboard'])
     ->middleware('throttle:30,1,auth-route')
     ->permission('management-view')

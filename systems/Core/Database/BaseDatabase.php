@@ -395,7 +395,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      *
      * @return static
      */
-    abstract public function connect();
+    abstract public function connect($connectionID = null);
 
     /**
      * Switch the active connection name used by subsequent queries.
@@ -1997,8 +1997,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             $paginate = [
                 'draw' => $draw,
-                'recordsTotal' => $totalRecords ?? 0,
-                'recordsFiltered' => $totalFiltered ?? 0,
+                'recordsTotal' => $totalRecords,
+                'recordsFiltered' => $totalFiltered,
                 'data' => $this->_safeOutputSanitize($result) ?? null,
             ];
         } catch (\PDOException $e) {
@@ -2753,7 +2753,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Builds the SQL UPDATE query string based on the provided data.
      *
      * @param array $data An associative array containing column names as keys and new values as values.
-    * @throws InvalidArgumentException If the provided data is empty, not an array, or not an associative array with column names as keys.
+    * @throws \InvalidArgumentException If the provided data is empty, not an array, or not an associative array with column names as keys.
     * @return $this
      */
     protected function _buildUpdateQuery($data)

@@ -268,7 +268,7 @@ class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonS
     /**
      * Flatten a multi-dimensional collection.
      */
-    public function flatten(int $depth = INF): static
+    public function flatten(int|float $depth = INF): static
     {
         $result = [];
 

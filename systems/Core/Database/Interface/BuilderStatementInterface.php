@@ -65,8 +65,8 @@ interface BuilderStatementInterface
     /**
      * Adds a where clause to the query.
      *
-     * @param string|array|callable $column The column name.
-     * @param mixed $value The value to compare.
+    * @param string|array|\Closure $column The column name.
+    * @param string|null $value The value to compare.
      * @param string $operator The comparison operator, default is '='.
      * @return $this
      */
@@ -75,8 +75,8 @@ interface BuilderStatementInterface
     /**
      * Adds an OR where clause to the query.
      *
-     * @param string|array|callable $column The column name.
-     * @param mixed $value The value to compare.
+    * @param string|array|\Closure $column The column name.
+    * @param string|null $value The value to compare.
      * @param string $operator The comparison operator, default is '='.
      * @return $this
      */
@@ -122,8 +122,8 @@ interface BuilderStatementInterface
      * Adds a whereBetween clause to the query.
      *
      * @param string $column The column name.
-     * @param mixed $start The start value.
-     * @param mixed $end The end value.
+    * @param string $start The start value.
+    * @param string $end The end value.
      * @return $this
      */
     public function whereBetween(string $column, mixed $start, mixed $end);
@@ -132,8 +132,8 @@ interface BuilderStatementInterface
      * Adds an OR whereBetween clause to the query.
      *
      * @param string $column The column name.
-     * @param mixed $start The start value.
-     * @param mixed $end The end value.
+    * @param string $start The start value.
+    * @param string $end The end value.
      * @return $this
      */
     public function orWhereBetween(string $column, mixed $start, mixed $end);
@@ -142,8 +142,8 @@ interface BuilderStatementInterface
      * Adds a whereNotBetween clause to the query.
      *
      * @param string $column The column name.
-     * @param mixed $start The start value.
-     * @param mixed $end The end value.
+    * @param string $start The start value.
+    * @param string $end The end value.
      * @return $this
      */
     public function whereNotBetween(string $column, string $start, string $end);
@@ -152,8 +152,8 @@ interface BuilderStatementInterface
      * Adds an OR whereNotBetween clause to the query.
      *
      * @param string $column The column name.
-     * @param mixed $start The start value.
-     * @param mixed $end The end value.
+    * @param string $start The start value.
+    * @param string $end The end value.
      * @return $this
      */
     public function orWhereNotBetween(string $column, string $start, string $end);
@@ -269,7 +269,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator
-     * @param mixed|null $value The date to compare.
+    * @param string|null $value The date to compare.
      * @return $this
      */
     public function whereDate(string $column, ?string $operator, ?string $value);
@@ -279,7 +279,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The date to compare.
+    * @param string|null $value The date to compare.
      * @return $this
      */
     public function orWhereDate(string $column, ?string $operator, ?string $value);
@@ -289,7 +289,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The day to compare.
+    * @param string|null $value The day to compare.
      * @return $this
      */
     public function whereDay(string $column, ?string $operator, ?string $value);
@@ -299,7 +299,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The day to compare.
+    * @param string|null $value The day to compare.
      * @return $this
      */
     public function orWhereDay(string $column, ?string $operator, ?string $value);
@@ -309,7 +309,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The month to compare.
+    * @param string|null $value The month to compare.
      * @return $this
      */
     public function whereMonth(string $column, ?string $operator, ?string $value);
@@ -319,7 +319,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The month to compare.
+    * @param string|null $value The month to compare.
      * @return $this
      */
     public function orWhereMonth(string $column, ?string $operator, ?string $value);
@@ -329,7 +329,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The year to compare.
+    * @param string|null $value The year to compare.
      * @return $this
      */
     public function whereYear(string $column, ?string $operator, ?string $value);
@@ -339,7 +339,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The year to compare.
+    * @param string|null $value The year to compare.
      * @return $this
      */
     public function orWhereYear(string $column, ?string $operator, ?string $value);
@@ -349,7 +349,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The time to compare (e.g. '14:30:00').
+    * @param string|null $value The time to compare (e.g. '14:30:00').
      * @return $this
      */
     public function whereTime(string $column, ?string $operator, ?string $value);
@@ -359,7 +359,7 @@ interface BuilderStatementInterface
      *
      * @param string $column The column name.
      * @param string|null $operator The comparison operator.
-     * @param mixed|null $value The time to compare (e.g. '14:30:00').
+    * @param string|null $value The time to compare (e.g. '14:30:00').
      * @return $this
      */
     public function orWhereTime(string $column, ?string $operator, ?string $value);
@@ -399,7 +399,7 @@ interface BuilderStatementInterface
      *
      * @param array $columns Array of column names.
      * @param string $operator Comparison operator.
-     * @param mixed $value The value to compare.
+    * @param string|null $value The value to compare.
      * @return $this
      */
     public function whereAny(array $columns, $operator, $value);
@@ -614,7 +614,7 @@ interface BuilderStatementInterface
      * Adds a raw order by clause to the query.
      *
      * @param string $string The raw order by string.
-     * @param array|null $bindParams Parameters to bind to the raw order by string.
+    * @param string|null $bindParams Parameters to bind to the raw order by string.
      * @return $this
      */
     public function orderByRaw(string $string, ?string $bindParams);
@@ -640,7 +640,7 @@ interface BuilderStatementInterface
      * Adds a having clause to the query.
      *
      * @param string $column The column name.
-     * @param mixed $value The value to compare.
+        * @param string|null $value The value to compare.
      * @param string $operator The comparison operator, default is '='.
      * @return $this
      */

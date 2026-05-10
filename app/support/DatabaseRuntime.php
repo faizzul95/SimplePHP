@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use Core\Database\Database;
+use Core\Database\BaseDatabase;
 use RuntimeException;
 
 class DatabaseRuntime
@@ -25,10 +26,10 @@ class DatabaseRuntime
         return $this->connectionRegistry[$this->normalizeConnectionName($connectionName)] ?? null;
     }
 
-    public function manager(string $connectionName): Database
+    public function manager(string $connectionName): BaseDatabase
     {
         $normalizedName = $this->normalizeConnectionName($connectionName);
-        if (isset($this->managers[$normalizedName]) && $this->managers[$normalizedName] instanceof Database) {
+        if (isset($this->managers[$normalizedName]) && $this->managers[$normalizedName] instanceof BaseDatabase) {
             return $this->managers[$normalizedName];
         }
 
@@ -37,7 +38,9 @@ class DatabaseRuntime
             throw new RuntimeException('Database connection not configured: ' . $normalizedName);
         }
 
-        $manager = new Database((string) $connection['driver']);
+        $database = new Database((string) $connection['driver']);
+        $manager = $database->raw();
+
         $manager->addConnection($normalizedName, (array) $connection['config']);
 
         if (!empty($this->config['db']['profiling']['enabled'])) {
@@ -97,7 +100,10 @@ class DatabaseRuntime
 
     protected function normalizeEnvironment(): string
     {
-        $environment = defined('ENVIRONMENT') ? ENVIRONMENT : (string) ($this->config['environment'] ?? 'development');
+        $configuredEnvironment = trim((string) ($this->config['environment'] ?? ''));
+        $environment = $configuredEnvironment !== ''
+            ? $configuredEnvironment
+            : (defined('ENVIRONMENT') ? ENVIRONMENT : 'development');
         $allowed = ['development', 'staging', 'production'];
 
         if (!in_array($environment, $allowed, true)) {

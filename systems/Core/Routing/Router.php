@@ -11,7 +11,7 @@ use Throwable;
 
 class Router
 {
-    /** @var static|null Singleton instance used by route caching. */
+    /** @var self|null Singleton instance used by route caching. */
     private static ?self $currentInstance = null;
 
     /** Capture the router instance so RouteCacheCommand can retrieve it. */
@@ -226,10 +226,10 @@ class Router
     {
         if (is_array($param)) {
             foreach ($param as $key => $pat) {
-                static::$globalPatterns[(string) $key] = (string) $pat;
+                self::$globalPatterns[(string) $key] = (string) $pat;
             }
         } elseif ($regex !== null) {
-            static::$globalPatterns[(string) $param] = $regex;
+            self::$globalPatterns[(string) $param] = $regex;
         }
     }
 
@@ -240,7 +240,7 @@ class Router
      */
     public static function getPatterns(): array
     {
-        return static::$globalPatterns;
+        return self::$globalPatterns;
     }
 
     public function aliasMiddleware(array $aliases): void
@@ -693,7 +693,7 @@ class Router
     {
         $segments = explode('/', trim($uri, '/'));
 
-        if (empty($segments) || $segments === ['']) {
+        if ($segments === ['']) {
             return '#^/$#';
         }
 
@@ -703,7 +703,7 @@ class Router
             // Optional parameter: {id?}
             if (preg_match('/^\{([a-zA-Z_][a-zA-Z0-9_]*)\?\}$/', $segment, $matches) === 1) {
                 $paramName = $matches[1];
-                $constraint = $wheres[$paramName] ?? static::$globalPatterns[$paramName] ?? '[A-Za-z0-9_-]+';
+                $constraint = $wheres[$paramName] ?? self::$globalPatterns[$paramName] ?? '[A-Za-z0-9_-]+';
                 $patternParts[] = '(?:/(?P<' . $paramName . '>' . $constraint . '))?';
                 continue;
             }
@@ -711,7 +711,7 @@ class Router
             // Required parameter: {id}
             if (preg_match('/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/', $segment, $matches) === 1) {
                 $paramName = $matches[1];
-                $constraint = $wheres[$paramName] ?? static::$globalPatterns[$paramName] ?? '[A-Za-z0-9_-]+';
+                $constraint = $wheres[$paramName] ?? self::$globalPatterns[$paramName] ?? '[A-Za-z0-9_-]+';
                 $patternParts[] = '/(?P<' . $paramName . '>' . $constraint . ')';
                 continue;
             }
@@ -1018,7 +1018,7 @@ class Router
     private function indexNamedRoutes(): void
     {
         foreach ($this->routes as $route) {
-            if (!empty($route->name)) {
+            if ($route instanceof RouteDefinition && !empty($route->name)) {
                 self::$namedRoutes[$route->name] = $route->uri;
             }
         }
@@ -1049,7 +1049,7 @@ class Router
         $remaining = $params;
 
         $segments = explode('/', trim($uri, '/'));
-        if (empty($segments) || $segments === ['']) {
+        if ($segments === ['']) {
             return '/';
         }
 

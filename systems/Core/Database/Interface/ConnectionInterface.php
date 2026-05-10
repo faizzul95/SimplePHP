@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Core\Database\Interface;
 
+use Core\Database\BaseDatabase;
+
 /**
  * Database ConnectionInterface Interface
  *
@@ -27,8 +29,7 @@ interface ConnectionInterface
     /**
      * Connect to the database.
      *
-     * @return         false|object|resource
-     * @phpstan-return false|TConnection
+    * @return BaseDatabase
      */
     public function connect();
 
@@ -45,8 +46,7 @@ interface ConnectionInterface
      * get that connection. If you pass either alias in and only a single
      * connection is present, it must return the sole connection.
      *
-     * @return         false|object|resource
-     * @phpstan-return false|TConnection
+    * @return string|null
      */
     public function getConnection(?string $alias = null);
 

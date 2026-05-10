@@ -1179,7 +1179,7 @@ class ExceptionHandler
             'server' => $filterData($_SERVER),
             'post' => $filterData($_POST),
             'get' => $filterData($_GET),
-            'cookies' => $filterData($_COOKIE ?? []),
+            'cookies' => $filterData($_COOKIE),
             'session' => $filterData($_SESSION ?? [])
         ];
     }

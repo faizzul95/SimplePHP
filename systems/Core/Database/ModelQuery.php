@@ -37,6 +37,20 @@ class ModelQuery
         $this->modelClass = $modelClass;
     }
 
+    public function select(array|string $columns = ['*']): self
+    {
+        $this->builder->select($columns);
+
+        return $this;
+    }
+
+    public function where(string|array|\Closure $column, mixed $value = null, string $operator = '='): self
+    {
+        $this->builder->where($column, $value, $operator);
+
+        return $this;
+    }
+
     // -------------------------------------------------------------------------
     // Hydrating terminal methods
     // -------------------------------------------------------------------------
@@ -93,8 +107,9 @@ class ModelQuery
     {
         $result = $this->first($columns);
         if ($result === null) {
+            $modelParts = explode('\\', $this->modelClass);
             throw new RuntimeException(
-                class_basename($this->modelClass) . ': no matching record found.'
+                end($modelParts) . ': no matching record found.'
             );
         }
         return $result;

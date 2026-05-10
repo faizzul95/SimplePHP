@@ -256,4 +256,29 @@ final class StorageManagerTestMemoryAdapter implements FilesystemAdapterInterfac
     {
         return [];
     }
+
+    public function size(string $path): int
+    {
+        return 0;
+    }
+
+    public function lastModified(string $path): int
+    {
+        return time();
+    }
+
+    public function temporaryUrl(string $path, \DateTimeInterface $expiry): string
+    {
+        return $path;
+    }
+
+    public function visibility(string $path): string
+    {
+        return 'private';
+    }
+
+    public function setVisibility(string $path, string $visibility): bool
+    {
+        return true;
+    }
 }

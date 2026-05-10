@@ -631,7 +631,13 @@ class PerformanceMonitor
      */
     public static function setSlowQueryThreshold($seconds)
     {
-        self::$slowQueryThreshold = max(0.001, (float)$seconds);
+        $threshold = max(0.0, (float) $seconds);
+
+        self::$slowQueryThreshold = $threshold;
+
+        foreach (array_keys(self::$slowThresholdsByType) as $queryType) {
+            self::$slowThresholdsByType[$queryType] = $threshold;
+        }
     }
 
     /**

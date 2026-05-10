@@ -643,7 +643,7 @@ class Api
     private function compileRoutePattern(string $uri): string
     {
         $segments = explode('/', trim($uri, '/'));
-        if (empty($segments) || $segments === ['']) {
+        if ($segments === ['']) {
             return '#^/$#';
         }
 
