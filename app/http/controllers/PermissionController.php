@@ -33,7 +33,10 @@ class PermissionController extends Controller
 
     public function listPermissionAssignDatatable(Request $request): void
     {
-        $roleID = $this->decodeIdOrFail($request->input('id'), 'Role ID is required');
+        $roleID = $request->input('id');
+        if ($roleID === null || $roleID === '') {
+            jsonResponse(['code' => 400, 'message' => 'Role ID is required']);
+        }
 
         $db = db();
         $result = $db->table('system_abilities')->select('id, abilities_name, abilities_slug, abilities_desc')
@@ -98,9 +101,11 @@ class PermissionController extends Controller
         jsonResponse($result);
     }
 
-    public function show(string $id): void
+    public function show(int|string $id): void
     {
-        $id = $this->decodeIdOrFail($id);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'Abilities ID is required']);
+        }
 
         $abilities = db()->table('system_abilities')->where('id', $id)->safeOutput()->fetch();
 
@@ -206,9 +211,11 @@ class PermissionController extends Controller
         jsonResponse(['code' => 200, 'message' => ucfirst($permission)]);
     }
 
-    public function destroy(string $id): void
+    public function destroy(int|string $id): void
     {
-        $id = $this->decodeIdOrFail($id);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'Abilities ID is required']);
+        }
 
         $result = db()->table('system_abilities')->where('id', $id)->softDelete();
 
@@ -221,7 +228,7 @@ class PermissionController extends Controller
 
     private function mapPermissionDatatableRow(array $row): array
     {
-        $key = encodeID($row['id']);
+        $key = $row['id'] ?? null;
         $rowKey = 'permission-row-' . $row['id'];
         $canUpdate = permission('rbac-abilities-update');
         $canDelete = permission('rbac-abilities-delete') && (int) $row['count'] < 1;

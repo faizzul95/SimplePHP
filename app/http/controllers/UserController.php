@@ -81,9 +81,11 @@ class UserController extends Controller
         jsonResponse($result);
     }
 
-    public function show(string $id): void
+    public function show(int|string $id): void
     {
-        $id = $this->decodeIdOrFail($id);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'User ID is required']);
+        }
 
         $user = db()->table('users')
             ->where('id', $id)
@@ -232,9 +234,11 @@ class UserController extends Controller
         ]);
     }
 
-    public function destroy(string $id): void
+    public function destroy(int|string $id): void
     {
-        $id = $this->decodeIdOrFail($id);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'User ID is required']);
+        }
 
         $result = db()->table('users')->where('id', $id)->softDelete(
             [
@@ -252,11 +256,11 @@ class UserController extends Controller
 
     private function mapUserDatatableRow(array $row): array
     {
-        $key = encodeID($row['id']);
+        $key = $row['id'] ?? null;
         $rowKey = 'user-row-' . $row['id'];
         $avatar = isset($row['avatar']['files_path']) ? asset(getFilesCompression($row['avatar']), false) : asset('upload/default.jpg');
         $avatarOriginal = isset($row['avatar']['files_path']) ? asset($row['avatar']['files_path'], false) : asset('upload/default.jpg');
-        $avatarId = isset($row['avatar']['id']) ? encodeID($row['avatar']['id']) : null;
+        $avatarId = $row['avatar']['id'] ?? null;
         $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$key}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
         $uploadAction = permission('user-upload-profile') && featureFlag('uploads.image-cropper') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">                             
                                                                             <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>                            

@@ -2,6 +2,8 @@
 
 $trustedHosts = env_list('TRUSTED_HOSTS', []);
 $trustedProxies = env_list('TRUSTED_PROXIES', []);
+$cspNonceEnabled = (bool) env('CSP_NONCE_ENABLED', false);
+$cspAllowUnsafeInline = (bool) env('CSP_ALLOW_UNSAFE_INLINE', true);
 $defaultWriteContentTypes = [
     'application/json',
     'application/x-www-form-urlencoded',
@@ -84,20 +86,20 @@ $config['security'] = [
     */
     'csp' => [
         'enabled'      => true,
-        // Set to true to inject a per-request nonce into script-src and style-src.
-        // When active, 'unsafe-inline' is automatically removed from those directives
-        // so nonce-only inline scripts/styles are enforced. Use {{ $csp_nonce }} or
-        // @nonce in templates. Leave false until your CDN/inline scripts are nonce-aware.
-        'nonce_enabled' => true,   // enables per-request nonce; removes 'unsafe-inline'
+        // Keep nonce mode opt-in until the views stop relying on inline scripts,
+        // inline styles, and inline event handlers such as onclick.
+        'nonce_enabled' => $cspNonceEnabled,
         'default-src' => ["'self'"],
         'script-src'  => [
             "'self'",
+            ...($cspAllowUnsafeInline ? ["'unsafe-inline'"] : []),
             'https://cdn.datatables.net',
             'https://cdn.jsdelivr.net',
             'https://cdnjs.cloudflare.com',
         ],
         'style-src'   => [
             "'self'",
+            ...($cspAllowUnsafeInline ? ["'unsafe-inline'"] : []),
             'https://fonts.googleapis.com',
             'https://cdn.datatables.net',
             'https://cdnjs.cloudflare.com',

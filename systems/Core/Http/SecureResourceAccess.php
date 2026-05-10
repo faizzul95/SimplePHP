@@ -5,9 +5,8 @@ namespace Core\Http;
 /**
  * SecureResourceAccess Trait
  *
- * Provides automatic encoded-ID decoding + ownership check in one call,
- * removing the boilerplate that previously left IDOR prevention entirely
- * to the developer.
+ * Provides plain-ID record lookup + ownership check helpers so controllers
+ * can enforce record-level authorization without duplicating boilerplate.
  *
  * Usage — available automatically on every controller that extends Core\Http\Controller
  * (the trait is already mixed in; do NOT add `use SecureResourceAccess` to subclasses):
@@ -16,8 +15,7 @@ namespace Core\Http;
  *   {
  *       public function show(string $id): void
  *       {
- *           // Decodes encoded ID, fetches record, enforces ownership — one line
- *           $user = $this->authorizeResource('users', $id, fn($r) => $r['id'] === $this->authId());
+ *           $user = $this->authorizeResourceById('users', (int) $id, fn($r) => $r['id'] === $this->authId());
  *           $this->successResponse('OK', $user);
  *       }
  *   }
@@ -25,7 +23,6 @@ namespace Core\Http;
  * Requirements:
  *   The using class MUST provide:
  *     - errorResponse(string $message, int $code): void  (terminates)
- *     - findByEncodedIdOrFail(string $encodedId, string $table, string $label): array
  *     - findOrFail(string $table, int|string $id, string $select, bool $softDelete, string $message): array
  *     - authId(): int|null
  *
@@ -33,40 +30,6 @@ namespace Core\Http;
  */
 trait SecureResourceAccess
 {
-    /**
-     * Decode an encoded ID, fetch the record, and assert ownership.
-     *
-     * Terminates with:
-     *   400  if the encoded ID is invalid / cannot be decoded
-     *   404  if no record exists for that ID (or it is soft-deleted)
-     *   403  if $ownershipCheck returns false
-     *
-     * @param string        $table          Table name (e.g. 'posts')
-     * @param string        $encodedId      Encoded ID from the route / request
-     * @param callable|null $ownershipCheck Receives the fetched record array; must return bool.
-     *                                      Null = no ownership check (auth middleware is sufficient).
-     * @param string        $label          Human-readable entity name used in error messages
-     * @param string|null   $select         Columns to SELECT (null = all)
-     * @param bool          $softDelete     Respect deleted_at soft-delete column
-     * @return array  The fetched record
-     */
-    protected function authorizeResource(
-        string $table,
-        string $encodedId,
-        ?callable $ownershipCheck = null,
-        string $label = 'Record',
-        ?string $select = null,
-        bool $softDelete = true
-    ): array {
-        $record = $this->findByEncodedIdOrFail($encodedId, $table, $label, $select, $softDelete);
-
-        if ($ownershipCheck !== null && !$ownershipCheck($record)) {
-            $this->errorResponse('You do not have permission to access this ' . strtolower($label), 403);
-        }
-
-        return $record;
-    }
-
     /**
      * Fetch a record by plain (non-encoded) ID and assert ownership.
      *

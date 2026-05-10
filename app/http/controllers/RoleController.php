@@ -42,9 +42,13 @@ class RoleController extends Controller
         jsonResponse($result);
     }
 
-    public function show(string $id): void
+    public function show(int|string $id): void
     {
-        $role = $this->findByEncodedIdOrFail($id, 'master_roles', 'Role not found', '*', false);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'Role ID is required']);
+        }
+
+        $role = $this->findOrFail('master_roles', $id, '*', false, 'Role not found');
         jsonResponse(['code' => 200, 'data' => $role]);
     }
 
@@ -85,9 +89,11 @@ class RoleController extends Controller
         ]);
     }
 
-    public function destroy(string $id): void
+    public function destroy(int|string $id): void
     {
-        $id = $this->decodeIdOrFail($id);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'Role ID is required']);
+        }
         
         $result = db()->table('master_roles')->where('id', $id)->softDelete(
             [
@@ -111,11 +117,12 @@ class RoleController extends Controller
 
     private function mapRoleDatatableRow(array $row): array
     {
-        $key = encodeID($row['id']);
+        $key = $row['id'] ?? null;
         $rowKey = 'role-row-' . $row['id'];
         $canUpdate = permission('rbac-roles-update');
         $canDelete = permission('rbac-roles-delete') && (int) $row['profile_count'] < 1;
         $canAssign = permission('rbac-roles-update');
+        
         $delAction = $canDelete ? "onclick='deleteRecord(\"{$key}\", \"{$rowKey}\")'" : null;
         $delText = empty($delAction) ? '(disabled)' : '';
         $editAction = $canUpdate ? "onclick='editRecord(\"{$key}\")'" : '';

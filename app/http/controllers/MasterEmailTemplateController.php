@@ -39,9 +39,11 @@ class MasterEmailTemplateController extends Controller
         jsonResponse($result);
     }
 
-    public function show(string $id): void
+    public function show(int|string $id): void
     {
-        $id = $this->decodeIdOrFail($id);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'Email template ID is required']);
+        }
 
         $emailTemplate = db()->table('master_email_templates')
             ->where('id', $id)
@@ -86,9 +88,11 @@ class MasterEmailTemplateController extends Controller
         ]);
     }
 
-    public function destroy(string $id): void
+    public function destroy(int|string $id): void
     {
-        $id = $this->decodeIdOrFail($id);
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'Email template ID is required']);
+        }
 
         $result = db()->table('master_email_templates')->where('id', $id)->delete();
 
@@ -101,7 +105,7 @@ class MasterEmailTemplateController extends Controller
 
     private function mapEmailTemplateDatatableRow(array $row): array
     {
-        $key = encodeID($row['id']);
+        $key = $row['id'] ?? null;
         $rowKey = 'email-template-row-' . $row['id'];
         $canUpdate = permission('rbac-email-update');
         $canDelete = permission('rbac-email-delete');

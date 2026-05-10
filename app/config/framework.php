@@ -37,14 +37,14 @@ $config['framework'] = [
             \App\Providers\CacheServiceProvider::class,
             \App\Providers\SecurityServiceProvider::class,
             \App\Providers\EventServiceProvider::class,
+            \App\Providers\MaintenanceServiceProvider::class,
+            \App\Providers\ViewServiceProvider::class,
         ],
         // Only for browser-facing web requests
         'web' => [
             \App\Providers\FilesystemServiceProvider::class,
-            \App\Providers\ViewServiceProvider::class,
             \App\Providers\ResponseServiceProvider::class,
             \App\Providers\RoutingServiceProvider::class,
-            \App\Providers\MaintenanceServiceProvider::class,
             \App\Providers\FeatureServiceProvider::class,
             \App\Providers\AuthServiceProvider::class,
         ],

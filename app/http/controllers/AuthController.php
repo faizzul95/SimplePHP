@@ -342,7 +342,10 @@ class AuthController extends Controller
 
     public function resetPassword(Request $request): array
     {
-        $id = $this->decodeIdOrFail($request->input('id'));
+        $id = $request->input('id');
+        if ($id === null || $id === '') {
+            return ['code' => 400, 'message' => 'User ID is required'];
+        }
 
         $result = db()->table('users')->where('id', $id)->whereNotNull('email')->safeOutput()->fetch();
         if (empty($result)) {

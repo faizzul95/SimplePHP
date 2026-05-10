@@ -18,17 +18,22 @@ class UploadController extends Controller
         $storedFile = null;
 
         try {
-            $entity_id = decodeID($request->validated('entity_id'));
+            $entity_id = $request->validated('entity_id');
+            if ($entity_id === null || $entity_id === '') {
+                jsonResponse(['code' => 400, 'message' => 'Entity ID is invalid']);
+            }
+
             $entity_type = $request->validated('entity_type');
             $entity_file_type = $request->validated('entity_file_type');
             $image = $request->validated('image');
 
-            if (empty($entity_id)) {
-                jsonResponse(['code' => 400, 'message' => 'Entity ID is invalid']);
-            }
-
             $user_id = currentUserID();
-            $id = decodeID($request->validated('id'));
+            $requestId = $request->validated('id');
+            if ($requestId === null || $requestId === '') {
+                $id = null;
+            } else {
+                $id = $requestId;
+            }
             $folder_group = $request->validated('folder_group', 'unknown');
             $folder_type = $request->validated('folder_type', 'unknown');
             $originalBaseName = $entity_id . '_' . date('YmdHis');
@@ -123,14 +128,17 @@ class UploadController extends Controller
 
     public function removeUploadFiles(Request $request): void
     {
-        $id = $this->decodeIdOrFail((string) $request->input('id'), 'ID');
+        $id = $request->input('id');
+        if ($id === null || $id === '') {
+            jsonResponse(['code' => 400, 'message' => 'File ID is required']);
+        }
 
         $files = db()->table('entity_files')->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
             ->where('id', $id)
             ->fetch();
 
         if (empty($files)) {
-            jsonResponse(['code' => 404, 'message' => 'No files data found']);
+            jsonResponse(['code' => 404, 'message' => 'No file data found']);
         }
 
         $result = db()->table('entity_files')->where('id', $id)->delete();
@@ -140,11 +148,11 @@ class UploadController extends Controller
                 'entity_file_id' => $id,
                 'response' => $result,
             ], \Components\Logger::LOG_LEVEL_ERROR);
-            jsonResponse(['code' => 422, 'message' => 'Failed to delete files']);
+            jsonResponse(['code' => 422, 'message' => 'Failed to delete file']);
         }
 
         unlinkOldFiles($files);
 
-        jsonResponse(['code' => 200, 'message' => 'Files deleted']);
+        jsonResponse(['code' => 200, 'message' => 'File deleted']);
     }
 }
