@@ -269,6 +269,7 @@ Standard setup:
 - Use `rowId: 'row_key'` for stable row identity. Keep route/action identity in a separate `key` field.
 - For AJAX-backed tables, define `ajax.url` and, when needed, `mutation` rules once per table.
 - For form-driven pages, prefer `syncDatatableRow()` after save and `removeDatatableRow()` after delete instead of requerying the list by default.
+- For server-side tables that mutate rows locally, `BootstrapDataTable` keeps the last known `recordsTotal` / `recordsFiltered` from the API response and updates the footer count locally after delete instead of forcing a list reload.
 
 Recommended payload shape:
 
@@ -419,10 +420,17 @@ Operational rules:
 - `syncDatatableRow()` updates an existing visible row locally.
 - If the updated row no longer matches the active filter, it removes the row locally.
 - `removeDatatableRow()` removes by stable row key without forcing a list query when the row is present.
+- `removeDatatableRow()` accepts either one row key/payload or an array of row keys/payloads.
 - If all visible rows are gone and `emptyStateContainerId` is configured, the no-data container is shown.
 - `reloadWhenMissing` and `reloadWhenEmpty` control when the class falls back to server reloads.
 - If the response already returns the mapped row object directly, set `mutation.rowPath: null` so the payload itself is treated as the updated row.
 - `submitApi()` now closes modal or offcanvas overlays using the form's `data-modal` selector, so modal-backed forms keep the old close-on-success behavior.
+
+Server-side local delete rule:
+
+- When a visible row is removed locally from a server-side table, the class subtracts from the last known API totals and re-renders the info text locally.
+- This keeps delete interactions cheap for large lists where a full reload would cost an extra server request and exact count query.
+- If the row is missing locally, normal `reloadWhenMissing` fallback still applies.
 
 ### Standard CRUD List Lifecycle
 

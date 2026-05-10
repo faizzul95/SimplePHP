@@ -38,6 +38,10 @@ class BootstrapDataTable {
         this.options = this.mergeDeep(resolvedDefaults, options);
         this.instance = null;
         this.$table = null;
+        this.serverSideDisplayState = {
+            recordsTotal: null,
+            recordsDisplay: null,
+        };
         this.cursorState = {
             requestCursor: null,
             nextCursor: null,
@@ -68,25 +72,67 @@ class BootstrapDataTable {
         return Array.isArray(settings) ? settings[0] || null : settings || null;
     }
 
-    updateServerSideDisplayState(totalDelta = 0, filteredDelta = 0) {
+    getServerSideDisplayState() {
+        if (
+            typeof this.serverSideDisplayState.recordsTotal === 'number'
+            || typeof this.serverSideDisplayState.recordsDisplay === 'number'
+        ) {
+            return {
+                recordsTotal: typeof this.serverSideDisplayState.recordsTotal === 'number' ? this.serverSideDisplayState.recordsTotal : null,
+                recordsDisplay: typeof this.serverSideDisplayState.recordsDisplay === 'number' ? this.serverSideDisplayState.recordsDisplay : null,
+            };
+        }
+
+        const settings = this.getSettings();
+        if (!settings) {
+            return {
+                recordsTotal: null,
+                recordsDisplay: null,
+            };
+        }
+
+        return {
+            recordsTotal: typeof settings._iRecordsTotal === 'number' ? settings._iRecordsTotal : null,
+            recordsDisplay: typeof settings._iRecordsDisplay === 'number' ? settings._iRecordsDisplay : null,
+        };
+    }
+
+    setServerSideDisplayState(recordsTotal = null, recordsDisplay = null) {
         if (!this.isServerSideTable()) {
             return;
         }
+
+        this.serverSideDisplayState = {
+            recordsTotal: typeof recordsTotal === 'number' ? Math.max(0, recordsTotal) : null,
+            recordsDisplay: typeof recordsDisplay === 'number' ? Math.max(0, recordsDisplay) : null,
+        };
 
         const settings = this.getSettings();
         if (!settings) {
             return;
         }
 
-        if (typeof settings._iRecordsTotal === 'number') {
-            settings._iRecordsTotal = Math.max(0, settings._iRecordsTotal + totalDelta);
+        if (typeof this.serverSideDisplayState.recordsTotal === 'number') {
+            settings._iRecordsTotal = this.serverSideDisplayState.recordsTotal;
         }
 
-        if (typeof settings._iRecordsDisplay === 'number') {
-            settings._iRecordsDisplay = Math.max(0, settings._iRecordsDisplay + filteredDelta);
+        if (typeof this.serverSideDisplayState.recordsDisplay === 'number') {
+            settings._iRecordsDisplay = this.serverSideDisplayState.recordsDisplay;
         }
 
         this.refreshInfoDisplay();
+    }
+
+    updateServerSideDisplayState(totalDelta = 0, filteredDelta = 0) {
+        if (!this.isServerSideTable()) {
+            return;
+        }
+
+        const currentState = this.getServerSideDisplayState();
+        this.setServerSideDisplayState(
+            typeof currentState.recordsTotal === 'number' ? currentState.recordsTotal + totalDelta : null,
+            typeof currentState.recordsDisplay === 'number' ? currentState.recordsDisplay + filteredDelta : null,
+        );
     }
 
     refreshInfoDisplay() {
@@ -104,12 +150,26 @@ class BootstrapDataTable {
             return;
         }
 
-        const filteredTotal = typeof settings._iRecordsDisplay === 'number' ? settings._iRecordsDisplay : this.countRows();
-        const recordsTotal = typeof settings._iRecordsTotal === 'number' ? settings._iRecordsTotal : filteredTotal;
+        const displayState = this.getServerSideDisplayState();
+        const filteredTotal = typeof displayState.recordsDisplay === 'number' ? displayState.recordsDisplay : this.countRows();
+        const recordsTotal = typeof displayState.recordsTotal === 'number' ? displayState.recordsTotal : filteredTotal;
         const pageInfo = typeof this.instance.page === 'function' ? this.instance.page.info() : null;
         const startIndex = pageInfo && filteredTotal > 0 ? pageInfo.start + 1 : 0;
         const endIndex = filteredTotal > 0 ? ((pageInfo ? pageInfo.start : 0) + this.countRows()) : 0;
         const language = settings.oLanguage || {};
+        const configuredLanguage = this.options.language || {};
+        const formatNumber = (value) => {
+            if (typeof settings.fnFormatNumber === 'function') {
+                return settings.fnFormatNumber(value);
+            }
+
+            const numericValue = Number(value);
+            if (Number.isFinite(numericValue)) {
+                return numericValue.toLocaleString('en-US');
+            }
+
+            return String(value);
+        };
         const getLanguageValue = (modernKey, legacyKey, fallback) => {
             if (typeof language[modernKey] === 'string' && language[modernKey] !== '') {
                 return language[modernKey];
@@ -119,21 +179,29 @@ class BootstrapDataTable {
                 return language[legacyKey];
             }
 
+            if (typeof configuredLanguage[modernKey] === 'string' && configuredLanguage[modernKey] !== '') {
+                return configuredLanguage[modernKey];
+            }
+
+            if (typeof configuredLanguage[legacyKey] === 'string' && configuredLanguage[legacyKey] !== '') {
+                return configuredLanguage[legacyKey];
+            }
+
             return fallback;
         };
         const infoTemplate = filteredTotal === 0
-            ? getLanguageValue('infoEmpty', 'sInfoEmpty', 'Showing 0 to 0 of 0 entries')
-            : getLanguageValue('info', 'sInfo', 'Showing _START_ to _END_ of _TOTAL_ entries');
+            ? getLanguageValue('infoEmpty', 'sInfoEmpty', 'Showing 0 to 0 of 0 items')
+            : getLanguageValue('info', 'sInfo', 'Showing _START_ to _END_ of _TOTAL_ items');
 
         let infoText = infoTemplate
-            .replace('_START_', startIndex)
-            .replace('_END_', endIndex)
-            .replace('_TOTAL_', filteredTotal)
-            .replace('_MAX_', recordsTotal);
+            .replace('_START_', formatNumber(startIndex))
+            .replace('_END_', formatNumber(endIndex))
+            .replace('_TOTAL_', formatNumber(filteredTotal))
+            .replace('_MAX_', formatNumber(recordsTotal));
 
         if (filteredTotal > 0 && filteredTotal !== recordsTotal) {
-            const filteredTemplate = getLanguageValue('infoFiltered', 'sInfoFiltered', '(filtered from _MAX_ total entries)');
-            infoText += ' ' + filteredTemplate.replace('_MAX_', recordsTotal);
+            const filteredTemplate = getLanguageValue('infoFiltered', 'sInfoFiltered', '(filtered from _MAX_ total items)');
+            infoText += ' ' + filteredTemplate.replace('_MAX_', formatNumber(recordsTotal));
         }
 
         infoElement.textContent = infoText;
@@ -431,6 +499,11 @@ class BootstrapDataTable {
         this.hideLoading();
         this.unbindCursorControls();
 
+        this.serverSideDisplayState = {
+            recordsTotal: null,
+            recordsDisplay: null,
+        };
+
         if (this.hasExistingInstance()) {
             this.$table.DataTable().clear().destroy();
         }
@@ -676,12 +749,19 @@ class BootstrapDataTable {
 
     normalizeServerResponse(response, request) {
         if (Array.isArray(response)) {
-            return {
+            const normalized = {
                 draw: request.draw,
                 recordsTotal: response.length,
                 recordsFiltered: response.length,
                 data: response,
             };
+
+            this.serverSideDisplayState = {
+                recordsTotal: normalized.recordsTotal,
+                recordsDisplay: normalized.recordsFiltered,
+            };
+
+            return normalized;
         }
 
         const rows = this.normalizeArrayResponse(response, this.options.ajax.dataSrc);
@@ -689,12 +769,19 @@ class BootstrapDataTable {
         const recordsFiltered = this.getValueByPath(response, this.options.ajax.recordsFilteredPath, recordsTotal);
         const draw = this.getValueByPath(response, this.options.ajax.drawPath, request.draw);
 
-        return {
+        const normalized = {
             draw,
             recordsTotal,
             recordsFiltered,
             data: rows,
         };
+
+        this.serverSideDisplayState = {
+            recordsTotal: Number.isFinite(Number(recordsTotal)) ? Number(recordsTotal) : rows.length,
+            recordsDisplay: Number.isFinite(Number(recordsFiltered)) ? Number(recordsFiltered) : rows.length,
+        };
+
+        return normalized;
     }
 
     normalizeArrayResponse(response, dataPath = 'data') {
@@ -1101,6 +1188,20 @@ class BootstrapDataTable {
         return resolvedRowId == null || resolvedRowId === '' ? null : String(resolvedRowId);
     }
 
+    resolvePayloadRowIds(payloadOrRowIds, options = {}) {
+        const inputs = Array.isArray(payloadOrRowIds) ? payloadOrRowIds : [payloadOrRowIds];
+        const rowIds = [];
+
+        for (let index = 0; index < inputs.length; index++) {
+            const rowId = this.resolvePayloadRowId(inputs[index], options);
+            if (rowId && !rowIds.includes(rowId)) {
+                rowIds.push(rowId);
+            }
+        }
+
+        return rowIds;
+    }
+
     isServerSideTable() {
         if (!this.instance || typeof this.instance.settings !== 'function') {
             return String(this.options.mode).toLowerCase() === 'server';
@@ -1309,6 +1410,7 @@ class BootstrapDataTable {
         }
 
         const mutationOptions = this.getMutationOptions(options);
+        const previousServerSideState = this.getServerSideDisplayState();
         const rowNode = typeof row.node === 'function' ? row.node() : null;
         row.remove();
 
@@ -1320,7 +1422,15 @@ class BootstrapDataTable {
             const serverSideCountDelta = mutationOptions.serverSideCountDelta || {};
             const totalDelta = Number.isFinite(serverSideCountDelta.total) ? serverSideCountDelta.total : -1;
             const filteredDelta = Number.isFinite(serverSideCountDelta.filtered) ? serverSideCountDelta.filtered : -1;
-            this.updateServerSideDisplayState(totalDelta, filteredDelta);
+            const nextRecordsTotal = typeof previousServerSideState.recordsTotal === 'number'
+                ? previousServerSideState.recordsTotal + totalDelta
+                : null;
+            const nextRecordsDisplay = typeof previousServerSideState.recordsDisplay === 'number'
+                ? previousServerSideState.recordsDisplay + filteredDelta
+                : null;
+
+            this.setServerSideDisplayState(nextRecordsTotal, nextRecordsDisplay);
+
             this.toggleEmptyState(this.countRows() > 0);
 
             if (mutationOptions.reloadWhenEmpty && this.countRows() === 0) {
@@ -1424,7 +1534,43 @@ class BootstrapDataTable {
 
     removeRowByPayload(payloadOrRowId, options = {}) {
         const mutationOptions = this.getMutationOptions(options);
-        const rowId = this.resolvePayloadRowId(payloadOrRowId, mutationOptions);
+        const rowIds = this.resolvePayloadRowIds(payloadOrRowId, mutationOptions);
+
+        if (Array.isArray(payloadOrRowId)) {
+            if (rowIds.length === 0) {
+                if (mutationOptions.reloadWhenMissing) {
+                    this.reload(false);
+                }
+                return false;
+            }
+
+            let removedCount = 0;
+
+            for (let index = 0; index < rowIds.length; index++) {
+                const removed = this.removeRow(rowIds[index], false, {
+                    ...mutationOptions,
+                    reloadWhenMissing: false,
+                    reloadWhenEmpty: false,
+                });
+
+                if (removed) {
+                    removedCount++;
+                }
+            }
+
+            if (removedCount === 0 && mutationOptions.reloadWhenMissing) {
+                this.reload(false);
+                return false;
+            }
+
+            if (mutationOptions.reloadWhenEmpty && this.countRows() === 0) {
+                this.reload(false);
+            }
+
+            return removedCount > 0;
+        }
+
+        const rowId = rowIds[0] ?? null;
 
         if (!rowId) {
             if (mutationOptions.reloadWhenMissing) {

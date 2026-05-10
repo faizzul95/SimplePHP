@@ -19,9 +19,19 @@
 - `HasStreaming` owns `chunk`, `cursor`, `lazy`, `chunkById`, and `lazyById` large-data iteration helpers.
 - `HasProfiling` owns query profiling, slow-query logging, retry behavior, and per-session performance rules.
 - `HasDebugHelpers` owns SQL/debug rendering helpers such as `toSql`, `toRawSql`, `dump`, `dd`, and `toDebugSql`.
+- `HasPaginateCountCache` owns count-only paginate caching, cache-group invalidation, and successful-write cache flush behavior.
 - Primary-key lookup helpers now include `find`, `findMany`, and `findOrFail` in addition to `fetch`, `firstOrFail`, and `sole`.
 - Record-creation helpers now include `firstOrNew`, `firstOrCreate`, `insertOrUpdate`, `updateOrInsert`, and `updateOrCreate`.
 - Soft-delete flows now expose `softDelete`, `delete`, `forceDelete`, and `restore` explicitly.
+
+### Paginate Count Cache
+
+- Use `rememberCount($ttl, $namespace)` to cache only paginate count queries; row result sets still come from the database.
+- `cachePaginateCounts()` remains as a backward-compatible alias.
+- Use `removeCache('group-name')` or `removeCache(['group-a', 'group-b'])` before write operations to queue invalidation.
+- Pending paginate-count cache groups are flushed only after successful `insert`, `update`, `delete`, or `forceDelete` writes.
+- `BaseDatabase::reset()` clears paginate count cache state so the cache namespace and pending removals do not leak across builder reuse.
+- The cache namespace is part of the cache key together with connection name, SQL text, bindings, and a `total`/`filtered` suffix.
 
 ### Connection Pool and Statement Cache
 

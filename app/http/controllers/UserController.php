@@ -8,6 +8,8 @@ use Core\Http\Request;
 
 class UserController extends Controller
 {
+    private const DIRECTORY_COUNT_CACHE_GROUP = 'users-directory';
+
     private const USER_STATUS_BADGES = [
         0 => '<span class="badge bg-label-warning"> Inactive </span>',
         1 => '<span class="badge bg-label-success"> Active </span>',
@@ -71,6 +73,7 @@ class UserController extends Controller
                 $db->select('id, entity_id, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
                     ->where('entity_file_type', 'USER_PROFILE');
             })
+            ->rememberCount(60, self::DIRECTORY_COUNT_CACHE_GROUP)
             ->safeOutput()
             ->paginate_ajax($request->all());
 
@@ -183,7 +186,9 @@ class UserController extends Controller
             unset($data['id']);
         }
 
-        $result = db()->table('users')->insertOrUpdate(
+        $result = db()->table('users')
+            ->removeCache(self::DIRECTORY_COUNT_CACHE_GROUP)
+            ->insertOrUpdate(
             [
                 'id' => $requestId
             ],
@@ -240,7 +245,10 @@ class UserController extends Controller
             jsonResponse(['code' => 400, 'message' => 'User ID is required']);
         }
 
-        $result = db()->table('users')->where('id', $id)->softDelete(
+        $result = db()->table('users')
+            ->where('id', $id)
+            ->removeCache(self::DIRECTORY_COUNT_CACHE_GROUP)
+            ->softDelete(
             [
                 'user_status' => 3,
                 'deleted_at' => timestamp(),

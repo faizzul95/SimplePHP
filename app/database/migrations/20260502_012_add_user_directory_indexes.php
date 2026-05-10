@@ -17,13 +17,16 @@ return new class extends Migration
         $this->ensureIndex('users', ['deleted_at', 'name'], 'users_deleted_at_name_index');
         $this->ensureIndex('users', ['deleted_at', 'email'], 'users_deleted_at_email_index');
         $this->ensureIndex('users', ['deleted_at', 'user_contact_no'], 'users_deleted_at_contact_index');
+        $this->ensureIndex('users', ['user_status', 'deleted_at'], 'users_user_status_deleted_index');
 
         $this->ensureIndex('user_profile', 'user_id', 'user_profile_user_id_index');
         $this->ensureIndex('user_profile', ['role_id', 'user_id'], 'user_profile_role_user_index');
         $this->ensureIndex('user_profile', ['user_id', 'profile_status'], 'user_profile_user_status_index');
+        $this->ensureIndex('user_profile', ['user_id', 'profile_status', 'is_main'], 'user_profile_user_status_main_index');
 
         $this->ensureIndex('entity_files', ['entity_type', 'entity_id'], 'entity_files_entity_type_entity_id_index');
         $this->ensureIndex('entity_files', ['entity_file_type', 'entity_id'], 'entity_files_file_type_entity_id_index');
+        $this->ensureIndex('entity_files', ['entity_id', 'entity_file_type'], 'entity_files_entity_id_file_type_index');
     }
 
     public function down(): void

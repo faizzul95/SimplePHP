@@ -91,7 +91,7 @@
 - API wrappers: login, submit, delete, call, upload with token management
 - PHP-style helpers: isset, empty, in_array, array_merge, implode, explode
 - Date/time formatting, currency formatting
-- DataTable generators plus `BootstrapDataTable` as the standard CRUD table abstraction with local row sync/remove helpers
+- DataTable generators plus `BootstrapDataTable` as the standard CRUD table abstraction with local row sync/remove helpers, multi-row local delete support, and server-side footer-count tracking from the last API response
 - File preview (PDF, image, video, audio, Office docs)
 - UI utilities: modals, loading states, skeletons, notifications
 

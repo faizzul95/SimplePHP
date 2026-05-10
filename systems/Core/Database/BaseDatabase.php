@@ -31,6 +31,7 @@ use Core\Database\Concerns\HasWhereConditions;
 use Core\Database\Concerns\HasJoins;
 use Core\Database\Concerns\HasAggregates;
 use Core\Database\Concerns\HasEagerLoading;
+use Core\Database\Concerns\HasPaginateCountCache;
 use Core\Database\Concerns\HasProfiling;
 
 use Core\Database\StatementCache;
@@ -45,7 +46,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     use Macroable, Scopeable, ValidationTrait;
     use HasDebugHelpers, HasStreaming;
     use HasWhereConditions, HasJoins, HasAggregates;
-    use HasEagerLoading, HasProfiling;
+    use HasEagerLoading, HasPaginateCountCache, HasProfiling;
 
     protected const DEFAULT_PAGINATE_LIMIT = 10;
     protected const MAX_PAGINATE_LIMIT = 500;
@@ -346,6 +347,16 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @var bool Skip QueryCache for streaming operations to avoid cache growth.
      */
     protected $suppressQueryCache = false;
+
+    /**
+     * @var string|null Optional cache namespace for paginate count queries.
+     */
+    protected $paginateCountCacheNamespace = null;
+
+    /**
+     * @var int Time to live for paginate count cache entries.
+     */
+    protected $paginateCountCacheTtl = 0;
 
     # Implement ConnectionInterface logic
 
@@ -668,6 +679,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->_paginateColumn = [];
         $this->_paginateAllowedSortColumns = [];
         $this->_paginateFilterValue = null;
+        $this->paginateCountCacheNamespace = null;
+        $this->paginateCountCacheTtl = 0;
+        $this->pendingPaginateCountCacheRemovals = [];
         return $this;
     }
 
@@ -1876,7 +1890,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $counter->unions = $this->unions;
                 $counter->indexHints = $this->indexHints;
                 $counter->_buildSelectQuery();
-                $totalRecords = $totalFiltered = $counter->count();
+                $totalRecords = $totalFiltered = $this->resolvePaginateCountCache(
+                    'total',
+                    $counter->_query,
+                    $counter->getSelectQueryBindings(),
+                    static fn() => $counter->count()
+                );
                 unset($counter);
             } else {
                 // For raw queries, wrap in a subquery to count
@@ -1935,7 +1954,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 // Count total rows after filter
                 if (!empty($this->_paginateFilterValue)) {
                     $this->_setProfilerIdentifier('count_filtered'); // set new profiler
-                    $totalFiltered = $this->count();
+                    $totalFiltered = $this->resolvePaginateCountCache(
+                        'filtered',
+                        $this->_query,
+                        $this->getSelectQueryBindings(),
+                        fn() => $this->count()
+                    );
                     $this->_setProfilerIdentifier(); // reset back to paginate profiler
                 }
             }
@@ -2271,6 +2295,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'data' => $this->_safeOutputSanitize($sanitizeData),
                 'action' => 'create'
             ];
+
+            if ($success) {
+                $this->flushPendingPaginateCountCacheRemovals();
+            }
         } catch (\PDOException $e) {
             // Log database errors
             $this->db_error_log($e, __FUNCTION__);
@@ -2702,6 +2730,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'data' => $this->_safeOutputSanitize($sanitizeData),
                 'action' => 'update'
             ];
+
+            if ($success) {
+                $this->flushPendingPaginateCountCacheRemovals();
+            }
         } catch (\PDOException $e) {
             // Log database errors
             $this->db_error_log($e, __FUNCTION__);
@@ -2869,6 +2901,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             if (!$this->_isRawQuery && $deletedData !== null) {
                 $response['data'] = $deletedData;
             }
+
+            if ($success) {
+                $this->flushPendingPaginateCountCacheRemovals();
+            }
         } catch (\PDOException $e) {
             // Log database errors
             $this->db_error_log($e, __FUNCTION__);
@@ -2930,6 +2966,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             if (!$this->_isRawQuery && $deletedData !== null) {
                 $response['data'] = $deletedData;
+            }
+
+            if ($success) {
+                $this->flushPendingPaginateCountCacheRemovals();
             }
         } catch (\PDOException $e) {
             $this->db_error_log($e, __FUNCTION__);
