@@ -6,8 +6,6 @@ namespace Tests\Unit\Security;
 
 use Core\Support\HttpClient;
 use PHPUnit\Framework\TestCase;
-use phpseclib3\Crypt\RSA;
-use phpseclib3\File\X509;
 
 /**
  * Tests for Core\Support\HttpClient (SSRF protection)
@@ -16,6 +14,32 @@ use phpseclib3\File\X509;
  */
 class HttpClientTest extends TestCase
 {
+    private const CERTIFICATE_PEM = <<<'PEM'
+-----BEGIN CERTIFICATE-----
+MIIDYTCCAhSgAwIBAgIUPfjK7PIMKuwVRkyp8pQTfeCFX0MwQgYJKoZIhvcNAQEK
+MDWgDTALBglghkgBZQMEAgGhGjAYBgkqhkiG9w0BAQgwCwYJYIZIAWUDBAIBogMC
+ASCjAwIBATAbMRkwFwYDVQQDDBBhcGkuZXhhbXBsZS50ZXN0MB4XDTI2MDUxNjEw
+MzYwN1oXDTI3MDUxNjEwMzYwN1owGzEZMBcGA1UEAwwQYXBpLmV4YW1wbGUudGVz
+dDCCAVcwQgYJKoZIhvcNAQEKMDWgDTALBglghkgBZQMEAgGhGjAYBgkqhkiG9w0B
+AQgwCwYJYIZIAWUDBAIBogMCASCjAwIBAQOCAQ8AMIIBCgKCAQEAvPUF22sNM7ex
+aJKXadanVWjA4LlOIaakTpKzwyI7frSK8saHgHphoFBqzAHfYmoq14h7DIFDBr5X
+p29jcZ2vldMyzX5hCGC5wslOcqHmTReYGvl8LbwjERIivN5XgYzFdvLPHoEFR2PW
+crA6U2LZI7tgx2RUcCeKuiV58lU+WZMzLSbneqCnfuum2a6OVWqvJ/Xr0heNOQ6W
+dQJ1em1OH58pqQMXCr0xe2yrSksDAAZ1979oEqQ499JmXSVaoxYs3au388zYZjoD
+pevMmlasV4pGbCrGW2w34WnODnIgMnxLFQDcg3oyqXu0Jo3hSIB6+bMYRiLN/uj1
+oX36NHRrKQIDAQABMEIGCSqGSIb3DQEBCjA1oA0wCwYJYIZIAWUDBAIBoRowGAYJ
+KoZIhvcNAQEIMAsGCWCGSAFlAwQCAaIDAgEgowMCAQEDggEBAAQCQkswet7m1kt3
+AjLjqEHwLB5JAuYOtIk3B8P4RA3ZX59hrl7tmza90FdExjgeP21JHcNuPftBc0om
+Kj7z0B2O9SVUzgOzQgxhyFIuYikpx/kIBDAIDJw6hXoxtCTjg+31tF/bwWAxk5LG
+frstxUEjGdp8Q3XDIrqXrbu21VwrB0pXuCLRnwGvplWFeHtkHq1IOQVW76UyvtcF
+CkaWHvYCpSmE4MqM1YauJJ6OFp8LNFrTmk409oRRNOvFFHRVcutdKmCYRu0BL0ZP
+7nBDsQPjJz68/RGvin35NL9qdmbmY3AxmMhr/89fN8aqLC1UTBjwxD68GSuWe1Oc
+8XkCpRI=
+-----END CERTIFICATE-----
+PEM;
+
+    private const CERTIFICATE_PIN = 'sha256//+zkJjfR6idxC+RQZ/ss4bV+qUvXq4i7+f7MWeWPSUZE=';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -37,13 +61,12 @@ class HttpClientTest extends TestCase
             $this->markTestSkipped('OpenSSL extension is not available.');
         }
 
-        [$certificatePem, $expectedPin] = $this->createSelfSignedCertificateAndPin();
         $method = new \ReflectionMethod(HttpClient::class, 'extractSpkiPinFromCertificatePem');
         $method->setAccessible(true);
 
-        $actual = $method->invoke(null, $certificatePem);
+        $actual = $method->invoke(null, self::CERTIFICATE_PEM);
 
-        self::assertSame($expectedPin, $actual);
+        self::assertSame(self::CERTIFICATE_PIN, $actual);
     }
 
     public function test_pin_mismatch_throws_when_policy_is_block(): void
@@ -52,7 +75,6 @@ class HttpClientTest extends TestCase
             $this->markTestSkipped('OpenSSL extension is not available.');
         }
 
-        [$certificatePem] = $this->createSelfSignedCertificateAndPin();
         $GLOBALS['config']['security']['http_client']['pins'] = [
             'api.example.test' => ['sha256//notTheRightPin'],
         ];
@@ -61,7 +83,7 @@ class HttpClientTest extends TestCase
 
         $method = new \ReflectionMethod(HttpClient::class, 'assertPinnedCertificateMatches');
         $method->setAccessible(true);
-        $method->invoke(null, 'api.example.test', [['Cert' => $certificatePem]], ['sha256//notTheRightPin']);
+        $method->invoke(null, 'api.example.test', [['Cert' => self::CERTIFICATE_PEM]], ['sha256//notTheRightPin']);
     }
 
     public function test_matching_pin_passes_validation(): void
@@ -70,13 +92,11 @@ class HttpClientTest extends TestCase
             $this->markTestSkipped('OpenSSL extension is not available.');
         }
 
-        [$certificatePem, $expectedPin] = $this->createSelfSignedCertificateAndPin();
-
         $this->expectNotToPerformAssertions();
 
         $method = new \ReflectionMethod(HttpClient::class, 'assertPinnedCertificateMatches');
         $method->setAccessible(true);
-        $method->invoke(null, 'api.example.test', [['Cert' => $certificatePem]], [$expectedPin]);
+        $method->invoke(null, 'api.example.test', [['Cert' => self::CERTIFICATE_PEM]], [self::CERTIFICATE_PIN]);
     }
 
     public function test_pin_mismatch_is_log_only_when_policy_is_configured(): void
@@ -84,15 +104,13 @@ class HttpClientTest extends TestCase
         if (!function_exists('openssl_x509_read')) {
             $this->markTestSkipped('OpenSSL extension is not available.');
         }
-
-        [$certificatePem] = $this->createSelfSignedCertificateAndPin();
         $GLOBALS['config']['security']['http_client']['pin_on_error'] = 'log-only';
 
         $this->expectNotToPerformAssertions();
 
         $method = new \ReflectionMethod(HttpClient::class, 'assertPinnedCertificateMatches');
         $method->setAccessible(true);
-        $method->invoke(null, 'api.example.test', [['Cert' => $certificatePem]], ['sha256//wrongPin']);
+        $method->invoke(null, 'api.example.test', [['Cert' => self::CERTIFICATE_PEM]], ['sha256//wrongPin']);
     }
 
     public function test_throws_for_private_ip_10_x_x_x(): void
@@ -196,42 +214,4 @@ class HttpClientTest extends TestCase
         HttpClient::assertConnectedIpIsSafe('10.0.0.9', 'https://internal-api.local');
     }
 
-    /**
-     * @return array{0: string, 1: string}
-     */
-    private function createSelfSignedCertificateAndPin(): array
-    {
-        $privateKey = RSA::createKey(2048);
-        $publicKey = $privateKey->getPublicKey();
-
-        $subject = new X509();
-        $subject->setDNProp('id-at-commonName', 'api.example.test');
-        $subject->setPublicKey($publicKey);
-
-        $issuer = new X509();
-        $issuer->setPrivateKey($privateKey);
-        $issuer->setDN($subject->getDN());
-        $issuer->setPublicKey($publicKey);
-
-        $certificate = $issuer->sign($issuer, $subject);
-        if (!is_array($certificate)) {
-            self::fail('Unable to create certificate for pinning test.');
-        }
-
-        $certificatePem = $issuer->saveX509($certificate);
-        if (!is_string($certificatePem) || $certificatePem === '') {
-            self::fail('Unable to export certificate for pinning test.');
-        }
-
-        $opensslCertificate = openssl_x509_read($certificatePem);
-        $opensslPublicKey = $opensslCertificate !== false ? openssl_pkey_get_public($opensslCertificate) : false;
-        $details = $opensslPublicKey !== false ? openssl_pkey_get_details($opensslPublicKey) : false;
-        if (!is_array($details) || !isset($details['key']) || !is_string($details['key'])) {
-            self::fail('Unable to extract key details for pinning test.');
-        }
-
-        $expectedPin = 'sha256//' . base64_encode(hash('sha256', $details['key'], true));
-
-        return [$certificatePem, $expectedPin];
-    }
 }
