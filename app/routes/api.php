@@ -56,6 +56,7 @@ if (($apiVersioning['enabled'] ?? true) === true) {
 
 $router->post($apiPrefix . '/auth/login', [AuthController::class, 'loginApi'])
 	->middleware('api.public.submit')
+	->middleware('timing.normalize:100')
 	->name('api.auth.login');
 
 $router->group(['prefix' => $apiPrefix, 'middleware' => ['api.external.auth']], function ($router) {

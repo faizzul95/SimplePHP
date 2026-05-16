@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CspReportController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MasterEmailTemplateController;
 use App\Http\Controllers\RoleController;
@@ -20,6 +21,9 @@ use Core\Http\Request;
 */
 
 $router->group(['middleware' => ['web']], function ($router) {
+    $router->post('/_myth/csp-report', [CspReportController::class, 'store'])
+        ->name('csp.report');
+
     $router->get('/', [DashboardController::class, 'index'])
         ->webAuth()
         ->permission('management-view')
@@ -31,6 +35,7 @@ $router->group(['middleware' => ['web']], function ($router) {
 
     $router->post('/auth/login', [AuthController::class, 'authorize'])
         ->guestOnly()
+        ->middleware('timing.normalize:200')
         ->middleware('xss')
         ->name('auth.login');
 

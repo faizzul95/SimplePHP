@@ -24,6 +24,7 @@ trait HasDebugHelpers
      */
     public function toSql()
     {
+        $this->ensureDebugInspectionAllowed(__FUNCTION__);
         $this->_buildSelectQuery();
         $bindings = $this->getSelectQueryBindings();
         $fullQuery = $this->_generateFullQuery($this->_query, $bindings, false);
@@ -54,6 +55,7 @@ trait HasDebugHelpers
      */
     public function dump()
     {
+        $this->ensureDebugInspectionAllowed(__FUNCTION__);
         $sql = $this->toSql();
         echo '<pre>';
         echo "Query: " . htmlspecialchars($sql['query']) . "\n";
@@ -84,6 +86,7 @@ trait HasDebugHelpers
      */
     public function toDebugSql()
     {
+        $this->ensureDebugInspectionAllowed(__FUNCTION__);
         // Build the final SELECT query string
         $this->_buildSelectQuery();
 
@@ -126,5 +129,41 @@ trait HasDebugHelpers
         unset($_temp_connection, $_temp_relations);
 
         return $queryList;
+    }
+
+    /**
+     * Return a unified debug snapshot that combines the current builder SQL,
+     * local profiler payload, and the global performance report.
+     *
+     * @param array $reportOptions
+     * @return array<string, mixed>
+     */
+    public function toDebugSnapshot(array $reportOptions = []): array
+    {
+        $this->ensureDebugInspectionAllowed(__FUNCTION__);
+        $sql = $this->toSql();
+        $profiler = method_exists($this, 'profiler') ? $this->profiler() : [];
+
+        return [
+            'sql' => $sql,
+            'raw_sql' => $sql['full_query'] ?? $sql['query'] ?? null,
+            'debug_sql' => $this->toDebugSql(),
+            'profiler' => $profiler,
+            'performance_report' => $this->getPerformanceReport($reportOptions),
+        ];
+    }
+
+    protected function ensureDebugInspectionAllowed(string $method): void
+    {
+        if (PHP_SAPI === 'cli') {
+            return;
+        }
+
+        $debugEnabled = function_exists('env') && (bool) env('APP_DEBUG', false);
+        if ($debugEnabled) {
+            return;
+        }
+
+        throw new \RuntimeException($method . '() is only available in CLI or when APP_DEBUG is enabled.');
     }
 }

@@ -19,6 +19,16 @@
 |
 */
 
+(new \App\Console\Commands\CspReportCommand())->register($console);
+(new \App\Console\Commands\DbSlowCommand())->register($console);
+(new \App\Console\Commands\ProfileMemoryCommand())->register($console);
+(new \App\Console\Commands\ResponseCacheClearCommand())->register($console);
+(new \App\Console\Commands\BlocklistAddCommand())->register($console);
+(new \App\Console\Commands\BlocklistRemoveCommand())->register($console);
+(new \App\Console\Commands\BlocklistListCommand())->register($console);
+(new \App\Console\Commands\BlocklistPruneCommand())->register($console);
+(new \App\Console\Commands\BlocklistImportCommand())->register($console);
+
 // ─── Custom Commands ─────────────────────────────────────────
 // Register your application-specific commands below.
 //

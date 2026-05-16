@@ -2,6 +2,8 @@
 
 namespace Core\Queue;
 
+use Core\Database\Schema\Schema;
+
 /**
  * Queue Dispatcher
  *
@@ -40,6 +42,8 @@ class Dispatcher
         if ($this->driver === 'redis') {
             return $this->dispatchToRedis($job);
         }
+
+        $this->ensureTable();
 
         return $this->dispatchToDatabase($job);
     }
@@ -103,6 +107,7 @@ class Dispatcher
                 'id'           => $id,
                 'queue'        => $payload['queue'],
                 'payload'      => json_encode($payload, JSON_UNESCAPED_UNICODE),
+                'priority'     => $this->normalizePriority((int) ($payload['priority'] ?? $job->priority ?? Job::PRIORITY_NORMAL)),
                 'attempts'     => 0,
                 'reserved_at'  => null,
                 'available_at' => $availableAt,
@@ -144,12 +149,13 @@ class Dispatcher
                 `id` VARCHAR(64) NOT NULL,
                 `queue` VARCHAR(100) NOT NULL DEFAULT 'default',
                 `payload` LONGTEXT NOT NULL,
+                `priority` TINYINT UNSIGNED NOT NULL DEFAULT 5,
                 `attempts` TINYINT UNSIGNED NOT NULL DEFAULT 0,
                 `reserved_at` DATETIME NULL,
                 `available_at` DATETIME NOT NULL,
                 `created_at` DATETIME NOT NULL,
                 PRIMARY KEY (`id`),
-                INDEX `idx_queue_available` (`queue`, `available_at`),
+                INDEX `idx_queue_priority_available` (`queue`, `priority`, `available_at`),
                 INDEX `idx_reserved` (`reserved_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
@@ -159,11 +165,60 @@ class Dispatcher
                 `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                 `queue` VARCHAR(100) NOT NULL DEFAULT 'default',
                 `payload` LONGTEXT NOT NULL,
+                `priority` TINYINT UNSIGNED NOT NULL DEFAULT 5,
                 `attempts` TINYINT UNSIGNED NOT NULL DEFAULT 0,
                 `error` TEXT NULL,
                 `failed_at` DATETIME NOT NULL,
                 INDEX `idx_queue` (`queue`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        $this->ensureExistingPriorityColumns($safeTable, $safeFailedTable);
+    }
+
+    private function ensureExistingPriorityColumns(string $jobsTable, string $failedTable): void
+    {
+        try {
+            if (Schema::hasTable($jobsTable) && !Schema::hasColumn($jobsTable, 'priority')) {
+                db()->rawQuery("ALTER TABLE `{$jobsTable}` ADD COLUMN `priority` TINYINT UNSIGNED NOT NULL DEFAULT 5 AFTER `payload`");
+            }
+
+            if (Schema::hasTable($failedTable) && !Schema::hasColumn($failedTable, 'priority')) {
+                db()->rawQuery("ALTER TABLE `{$failedTable}` ADD COLUMN `priority` TINYINT UNSIGNED NOT NULL DEFAULT 5 AFTER `payload`");
+            }
+
+            if (Schema::hasTable($jobsTable) && !$this->hasIndex($jobsTable, 'idx_queue_priority_available')) {
+                db()->rawQuery("ALTER TABLE `{$jobsTable}` ADD INDEX `idx_queue_priority_available` (`queue`, `priority`, `available_at`)");
+            }
+        } catch (\Throwable $e) {
+            if (function_exists('logger')) {
+                logger()->log_error('Queue schema backfill failed: ' . $e->getMessage());
+            }
+        }
+    }
+
+    private function hasIndex(string $table, string $indexName): bool
+    {
+        $statement = db()->getPdo()->prepare("SHOW INDEX FROM `{$table}`");
+        if ($statement === false) {
+            return false;
+        }
+
+        $statement->execute();
+        $indexes = $statement->fetchAll(\PDO::FETCH_ASSOC);
+        $statement->closeCursor();
+
+        foreach ((array) $indexes as $index) {
+            if (($index['Key_name'] ?? null) === $indexName) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizePriority(int $priority): int
+    {
+        return max(Job::PRIORITY_CRITICAL, min(Job::PRIORITY_BULK, $priority));
     }
 }

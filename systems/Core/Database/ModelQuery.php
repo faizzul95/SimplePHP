@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Core\Database;
 
+use Core\LazyCollection;
 use RuntimeException;
 
 /**
@@ -44,9 +45,9 @@ class ModelQuery
         return $this;
     }
 
-    public function where(string|array|\Closure $column, mixed $value = null, string $operator = '='): self
+    public function where(string|array|\Closure $column, mixed $operator = null, mixed $value = null): self
     {
-        $this->builder->where($column, $value, $operator);
+        $this->builder->where($column, $operator, $value);
 
         return $this;
     }
@@ -166,6 +167,58 @@ class ModelQuery
         return $result;
     }
 
+    /**
+     * Iterate through the result set in hydrated chunks.
+     */
+    public function chunk(int $size, callable $callback): self
+    {
+        $this->builder->chunk($size, function (array $rows) use ($callback) {
+            return $callback($this->hydrateRows($rows));
+        });
+
+        return $this;
+    }
+
+    /**
+     * Stream hydrated models using the builder's bounded-memory cursor path.
+     *
+     * @return \Generator<int, TModel>
+     */
+    public function cursor(int $chunkSize = 1000): \Generator
+    {
+        foreach ($this->builder->cursor($chunkSize) as $row) {
+            yield $this->hydrateRowValue($row);
+        }
+    }
+
+    /**
+     * Return a lazy collection of hydrated models.
+     */
+    public function lazy(int $chunkSize = 1000): mixed
+    {
+        return $this->mapTraversableResults($this->builder->lazy($chunkSize));
+    }
+
+    /**
+     * Iterate through hydrated model chunks using keyset pagination.
+     */
+    public function chunkById(int $size, callable $callback, string $column = 'id', ?string $alias = null): self
+    {
+        $this->builder->chunkById($size, function (array $rows) use ($callback) {
+            return $callback($this->hydrateRows($rows));
+        }, $column, $alias);
+
+        return $this;
+    }
+
+    /**
+     * Return a lazy collection of hydrated models using keyset pagination.
+     */
+    public function lazyById(int $chunkSize = 1000, string $column = 'id', ?string $alias = null): mixed
+    {
+        return $this->mapTraversableResults($this->builder->lazyById($chunkSize, $column, $alias));
+    }
+
     // -------------------------------------------------------------------------
     // Fluent proxy
     // -------------------------------------------------------------------------
@@ -199,11 +252,41 @@ class ModelQuery
      */
     private function hydrateRow(array $attributes): mixed
     {
+        $modelClass = $this->modelClass;
+
         /** @var TModel $model */
-        $model = new $this->modelClass();
-        $model->forceFill($attributes);
-        $model->syncOriginal();
-        $model->exists = true;
+        $model = $modelClass::hydrateRecord($attributes);
         return $model;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, TModel>
+     */
+    private function hydrateRows(array $rows): array
+    {
+        return array_map([$this, 'hydrateRow'], $rows);
+    }
+
+    private function hydrateRowValue(mixed $row): mixed
+    {
+        return is_array($row) ? $this->hydrateRow($row) : $row;
+    }
+
+    private function mapTraversableResults(mixed $result): mixed
+    {
+        if ($result instanceof LazyCollection) {
+            return $result->map(fn(mixed $row): mixed => $this->hydrateRowValue($row));
+        }
+
+        if ($result instanceof \Traversable) {
+            return (function () use ($result) {
+                foreach ($result as $row) {
+                    yield $this->hydrateRowValue($row);
+                }
+            })();
+        }
+
+        return $result;
     }
 }

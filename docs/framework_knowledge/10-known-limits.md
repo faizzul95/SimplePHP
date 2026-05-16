@@ -18,15 +18,12 @@ This section lists boundaries observed from current implementation.
 - No runtime custom directive registration API exists in `BladeEngine`.
 - Supported directives are hardcoded in compile logic.
 
-## Cache Drivers
+## Cache / Queue Boundaries
 
-- Cache manager supports `file` and `array` only.
-- No Redis/Memcached driver is implemented in current core cache manager.
-
-## Queue Backends
-
-- Queue supports `database` and `sync` only.
-- No Redis/SQS/etc backend implementation in current queue core.
+- Cache drivers verified in core are `file`, `array`, `apcu`, and `redis`.
+- Queue backends verified in core are `database`, `redis`, and `sync`.
+- No Memcached, SQS, RabbitMQ, or other queue/cache backend implementation is verified in the current core.
+- APCu and Redis are optional integrations and degrade to supported local/file behavior when the required extension is unavailable.
 
 ## Examples (How Limits Affect Design)
 
@@ -46,7 +43,7 @@ The hidden field is rendered, but request method parsing still depends on server
 
 1. Read this file before proposing new module architecture.
 2. Use explicit route methods for endpoints that need special HTTP behavior.
-3. Design queue workloads for `database`/`sync` only unless backend code is added.
+3. Design queue/cache workloads only around the verified backends listed above unless new backend code is added.
 4. Keep unsupported features in “future work” notes, not active docs claims.
 
 ## Benefits of Documented Limits
@@ -63,3 +60,4 @@ The hidden field is rendered, but request method parsing still depends on server
 - `systems/Components/Api.php`
 - `systems/Core/Cache/CacheManager.php`
 - `systems/Core/Queue/Dispatcher.php`
+- `systems/Core/Queue/RedisQueue.php`

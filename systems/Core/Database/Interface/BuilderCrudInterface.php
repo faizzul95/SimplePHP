@@ -75,12 +75,32 @@ interface BuilderCrudInterface
     public function batchInsert(array $data);
 
     /**
+     * Inserts records from an iterable source in bounded batches.
+     *
+     * @param iterable $rows Iterable of associative arrays.
+     * @param callable|null $progress Receives per-batch state; return false to stop.
+     * @param int|null $batchSize Optional batch size override.
+     * @return int Total processed rows.
+     */
+    public function insertInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int;
+
+    /**
      * Updates multiple records in the database in a single operation.
      *
      * @param array $data A multidimensional array of records, each record being an associative array of column names and their values.
      * @return mixed The result of the batch update operation, depending on the database driver.
      */
     public function batchUpdate(array $data);
+
+    /**
+     * Updates records from an iterable source in bounded batches.
+     *
+     * @param iterable $rows Iterable of associative arrays.
+     * @param callable|null $progress Receives per-batch state; return false to stop.
+     * @param int|null $batchSize Optional batch size override.
+     * @return int Total processed rows.
+     */
+    public function updateInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int;
 
     /**
      * Insert new records or update existing ones based on unique constraint.
@@ -94,6 +114,29 @@ interface BuilderCrudInterface
      * @return mixed The result of the upsert operation, depending on the database driver.
      */
     public function upsert(array $values, string|array $uniqueBy = 'id', ?array $updateColumns = null);
+
+    /**
+     * Upserts records from an iterable source in bounded batches.
+     *
+     * @param iterable $rows Iterable of associative arrays.
+     * @param string|array $uniqueBy Unique key columns.
+     * @param array|null $updateColumns Columns to update on conflicts.
+     * @param callable|null $progress Receives per-batch state; return false to stop.
+     * @param int|null $batchSize Optional batch size override.
+     * @return int Total processed rows.
+     */
+    public function upsertInBatches(iterable $rows, string|array $uniqueBy = 'id', ?array $updateColumns = null, ?callable $progress = null, ?int $batchSize = null): int;
+
+    /**
+     * Deletes rows by column values from an iterable source in bounded batches.
+     *
+     * @param iterable $values Iterable of scalar identifier values.
+     * @param string $column Column to match values against.
+     * @param callable|null $progress Receives per-batch state; return false to stop.
+     * @param int|null $batchSize Optional batch size override.
+     * @return int Total processed rows.
+     */
+    public function deleteInBatches(iterable $values, string $column = 'id', ?callable $progress = null, ?int $batchSize = null): int;
 
     /**
      * Insert or update a record based on a primary or unique key condition.

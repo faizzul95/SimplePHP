@@ -30,6 +30,11 @@ class PerformanceMonitor
     protected static $slowQueries = [];
 
     /**
+     * @var array<int, array<string, mixed>> Adaptive chunk-size decisions recorded during profiled reads.
+     */
+    protected static array $adaptiveChunkDecisions = [];
+
+    /**
      * @var array<string, array{sql: string, count: int}> Per-request SELECT fingerprints for N+1 detection.
      * Key: md5 of normalized SQL. Value: array with SQL preview and execution count.
      */
@@ -40,6 +45,9 @@ class PerformanceMonitor
      * Override via PerformanceMonitor::setN1WarnThreshold().
      */
     protected static int $n1WarnThreshold = 30;
+
+    /** @var int Maximum number of fingerprint entries retained per request lifecycle. */
+    protected static int $maxFingerprintEntries = 1000;
 
     /**
      * @var bool Track query fingerprints for N+1 detection even when monitoring is disabled.
@@ -67,6 +75,11 @@ class PerformanceMonitor
      * @var int Maximum log entries
      */
     protected static $maxLogSize = 1000;
+
+    /**
+     * @var int Maximum adaptive decision entries to retain.
+     */
+    protected static int $maxAdaptiveDecisionLogSize = 500;
 
     /**
      * @var bool Enable/disable monitoring
@@ -258,6 +271,10 @@ class PerformanceMonitor
         $count = $prev['count'] + 1;
         self::$queryFingerprints[$key] = ['sql' => $prev['sql'], 'count' => $count];
 
+        if (count(self::$queryFingerprints) > self::$maxFingerprintEntries) {
+            array_shift(self::$queryFingerprints);
+        }
+
         // Warn once — exactly at the threshold to avoid log flooding
         if ($count === self::$n1WarnThreshold) {
             $preview = strlen($sql) > 120 ? substr($sql, 0, 120) . '...' : $sql;
@@ -396,9 +413,102 @@ class PerformanceMonitor
             'capture_backtraces' => self::$captureBacktraces,
             'queries_logged' => count(self::$queryLog),
             'slow_queries_logged' => count(self::$slowQueries),
+            'adaptive_chunk_decisions_logged' => count(self::$adaptiveChunkDecisions),
             'current_memory' => memory_get_usage(true),
             'memory_peak' => memory_get_peak_usage(true)
         ]);
+    }
+
+    /**
+     * Record an adaptive chunk-size decision so performance reports can expose
+     * tuning behavior across streaming and eager-loading paths.
+     *
+     * @param array<string, mixed> $decision
+     * @return void
+     */
+    public static function recordAdaptiveChunkDecision(array $decision): void
+    {
+        if (!self::$enabled) {
+            return;
+        }
+
+        $previousSize = isset($decision['previous_size']) ? (int) $decision['previous_size'] : null;
+        $nextSize = isset($decision['next_size']) ? (int) $decision['next_size'] : null;
+        $reduction = ($previousSize !== null && $nextSize !== null) ? max(0, $previousSize - $nextSize) : 0;
+
+        $entry = $decision;
+        $entry['timestamp'] = time();
+        $entry['reduction'] = $reduction;
+
+        self::$adaptiveChunkDecisions[] = $entry;
+
+        if (count(self::$adaptiveChunkDecisions) > self::$maxAdaptiveDecisionLogSize) {
+            array_shift(self::$adaptiveChunkDecisions);
+        }
+    }
+
+    /**
+     * Return recorded adaptive chunk-size decisions.
+     *
+     * @param int|null $limit
+     * @return array<int, array<string, mixed>>
+     */
+    public static function getAdaptiveChunkDecisions(?int $limit = null): array
+    {
+        if ($limit === null) {
+            return self::$adaptiveChunkDecisions;
+        }
+
+        if ($limit <= 0) {
+            return [];
+        }
+
+        return array_slice(array_reverse(self::$adaptiveChunkDecisions), 0, $limit);
+    }
+
+    /**
+     * Summarize adaptive chunk-size decisions for performance reports.
+     *
+     * @return array<string, mixed>
+     */
+    public static function getAdaptiveChunkStats(): array
+    {
+        $stats = [
+            'total_decisions' => count(self::$adaptiveChunkDecisions),
+            'total_reduction' => 0,
+            'largest_reduction' => 0,
+            'by_phase' => [],
+        ];
+
+        foreach (self::$adaptiveChunkDecisions as $entry) {
+            $phase = (string) ($entry['phase'] ?? 'unknown');
+            $reduction = (int) ($entry['reduction'] ?? 0);
+
+            $stats['total_reduction'] += $reduction;
+            $stats['largest_reduction'] = max($stats['largest_reduction'], $reduction);
+
+            if (!isset($stats['by_phase'][$phase])) {
+                $stats['by_phase'][$phase] = [
+                    'count' => 0,
+                    'total_reduction' => 0,
+                    'largest_reduction' => 0,
+                    'avg_reduction' => 0.0,
+                ];
+            }
+
+            $stats['by_phase'][$phase]['count']++;
+            $stats['by_phase'][$phase]['total_reduction'] += $reduction;
+            $stats['by_phase'][$phase]['largest_reduction'] = max($stats['by_phase'][$phase]['largest_reduction'], $reduction);
+        }
+
+        foreach ($stats['by_phase'] as &$phaseStats) {
+            $phaseStats['avg_reduction'] = $phaseStats['count'] > 0
+                ? $phaseStats['total_reduction'] / $phaseStats['count']
+                : 0.0;
+        }
+        unset($phaseStats);
+
+        return $stats;
     }
 
     /**
@@ -563,6 +673,7 @@ class PerformanceMonitor
         $frequentLimit = max(1, (int) ($options['frequent_limit'] ?? 10));
         $recentLimit = max(1, (int) ($options['recent_limit'] ?? 10));
         $heavyLimit = max(1, (int) ($options['heavy_limit'] ?? 10));
+        $adaptiveLimit = max(1, (int) ($options['adaptive_limit'] ?? 10));
 
         return [
             'summary' => self::getStats(),
@@ -570,6 +681,8 @@ class PerformanceMonitor
             'frequent_queries' => self::getMostFrequentQueries($frequentLimit),
             'recent_queries' => self::getRecentQueries($recentLimit),
             'heavy_queries' => self::getHeaviestQueries($heavyLimit),
+            'adaptive_chunk_stats' => self::getAdaptiveChunkStats(),
+            'recent_adaptive_chunk_decisions' => self::getAdaptiveChunkDecisions($adaptiveLimit),
             'connection_stats' => ConnectionPool::getStats(),
             'statement_cache_stats' => StatementCache::getStats(),
             'query_cache_stats' => QueryCache::getStats(),
@@ -587,6 +700,7 @@ class PerformanceMonitor
     {
         self::$queryLog           = [];
         self::$slowQueries        = [];
+        self::$adaptiveChunkDecisions = [];
         self::$timers             = [];
         self::$captureBacktraces  = false;
         self::$queryFingerprints  = [];
@@ -714,7 +828,8 @@ class PerformanceMonitor
             'exported_at' => date('Y-m-d H:i:s'),
             'stats' => self::getStats(),
             'query_log' => self::$queryLog,
-            'slow_queries' => self::$slowQueries
+            'slow_queries' => self::$slowQueries,
+            'adaptive_chunk_decisions' => self::$adaptiveChunkDecisions,
         ];
 
         return file_put_contents($filePath, json_encode($data, JSON_PRETTY_PRINT)) !== false;

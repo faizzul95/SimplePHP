@@ -6,7 +6,7 @@ This knowledge set documents only capabilities verified from the current codebas
 
 - `01`–`10`: core runtime and architecture (request flow, router, security, config, limits)
 - `11`–`18`: implementation surfaces (controller base, DB layer, auth/api, files, task runner)
-- `19`–`27`: operational and developer tooling (console, scheduler, collections, JS helpers, capability map, schema builder, security component)
+- `19`–`29`: operational and developer tooling (console, scheduler, collections, JS helpers, capability map, schema builder, security component, lifecycle maintenance, streaming/observability notes)
 
 Each file is intentionally topic-scoped so AI agents and junior developers can load only what they need.
 
@@ -48,6 +48,7 @@ Each file is intentionally topic-scoped so AI agents and junior developers can l
 - [26. Schema Builder & Migration](26-schema-builder-migration.md)
 - [27. Security Component](27-security-component.md)
 - [28. Startup Lifecycle Maintenance](28-startup-lifecycle-maintenance.md)
+- [29. Cursor Pagination, Streaming, N+1 Detection & CSP Nonce](29-cursor-pagination-n1-csp.md)
 
 ## How To Use This Knowledge Base
 

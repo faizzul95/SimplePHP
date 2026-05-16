@@ -25,6 +25,11 @@ class SecurityAuditCommand extends Command
         $timeout = max(1, (int) ($options['timeout'] ?? 5));
         $format = strtolower(trim((string) ($options['format'] ?? 'table')));
         $authMode = strtolower(trim((string) ($options['auth'] ?? '')));
+        $requestedChecks = array_values(array_filter(array_map(static function ($value): string {
+            return trim((string) $value);
+        }, preg_split('/\s*,\s*/', (string) ($options['check'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: []), static function (string $value): bool {
+            return $value !== '';
+        }));
 
         if ($authMode === '' && isset($options['username'], $options['password'])) {
             $authMode = 'session';
@@ -45,7 +50,8 @@ class SecurityAuditCommand extends Command
             (array) (config('api') ?? []),
             $url,
             $timeout,
-            $probe
+            $probe,
+            $requestedChecks
         );
 
         if ($format === 'json') {

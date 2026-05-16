@@ -3,6 +3,7 @@
 namespace Core\Database\Concerns;
 
 use Core\Database\DriverRegistry;
+use Core\Database\QueryAllowlist;
 
 /**
  * Trait HasWhereConditions
@@ -21,6 +22,24 @@ use Core\Database\DriverRegistry;
  */
 trait HasWhereConditions
 {
+    protected const IN_LIST_CHUNK_SIZE = 1000;
+
+    /**
+     * Add a where clause using a positive allowlist for the column name.
+     *
+     * @param string $column
+     * @param mixed $value
+     * @param string $operator
+     * @param array<string>|null $allowedColumns
+     * @return $this
+     */
+    public function whereSafe(string $column, mixed $value, string $operator = '=', ?array $allowedColumns = null)
+    {
+        $allowed = $allowedColumns ?? $this->getFilterableColumns();
+        $resolved = QueryAllowlist::assertFilterable($this->table ?? null, $column, $allowed);
+        return $this->where($resolved, $operator, $value);
+    }
+
     /**
      * Append a raw WHERE fragment with bound parameters.
      *
@@ -282,7 +301,7 @@ trait HasWhereConditions
             return $this->_whereRawInternal('0 = 1', [], 'AND');
         }
 
-        return $this->where($column, 'IN', $value);
+        return $this->buildChunkedInCondition($column, $value, 'IN', 'AND');
     }
 
     /**
@@ -302,7 +321,7 @@ trait HasWhereConditions
             return $this->_whereRawInternal('0 = 1', [], 'OR');
         }
 
-        return $this->orWhere($column, 'IN', $value);
+        return $this->buildChunkedInCondition($column, $value, 'IN', 'OR');
     }
 
     /**
@@ -322,7 +341,7 @@ trait HasWhereConditions
             return $this;
         }
 
-        return $this->where($column, 'NOT IN', $value);
+        return $this->buildChunkedInCondition($column, $value, 'NOT IN', 'AND');
     }
 
     /**
@@ -342,7 +361,46 @@ trait HasWhereConditions
             return $this;
         }
 
-        return $this->orWhere($column, 'NOT IN', $value);
+        return $this->buildChunkedInCondition($column, $value, 'NOT IN', 'OR');
+    }
+
+    /**
+     * Split oversized IN predicates into grouped chunks to avoid driver limits.
+     *
+     * @param string $column
+     * @param array<int, mixed> $value
+     * @param 'IN'|'NOT IN' $operator
+     * @param 'AND'|'OR' $whereType
+     * @return $this
+     */
+    protected function buildChunkedInCondition(string $column, array $value, string $operator, string $whereType)
+    {
+        $value = array_values($value);
+        $chunkSize = $this->getInListChunkSize();
+
+        if (count($value) <= $chunkSize) {
+            return $whereType === 'OR'
+                ? $this->orWhere($column, $operator, $value)
+                : $this->where($column, $operator, $value);
+        }
+
+        $qualifiedColumn = $this->_qualifyColumn($column);
+        $bindings = [];
+        $clauses = [];
+
+        foreach (array_chunk($value, $chunkSize) as $chunk) {
+            $clauses[] = $qualifiedColumn . ' ' . $operator . ' (' . implode(',', array_fill(0, count($chunk), '?')) . ')';
+            $bindings = [...$bindings, ...$chunk];
+        }
+
+        $glue = $operator === 'NOT IN' ? ' AND ' : ' OR ';
+
+        return $this->_whereRawInternal('(' . implode($glue, $clauses) . ')', $bindings, $whereType);
+    }
+
+    protected function getInListChunkSize(): int
+    {
+        return self::IN_LIST_CHUNK_SIZE;
     }
 
     /**
@@ -771,23 +829,7 @@ trait HasWhereConditions
             return $this->_whereRawInternal('0 = 1', [], 'AND');
         }
 
-        $this->validateColumn($column);
-
-        $safeValues = array_map(function ($v) {
-            if (is_int($v)) {
-                return $v;
-            }
-            if (is_string($v) && preg_match('/^-?\d+$/', $v) === 1) {
-                return (int) $v;
-            }
-            throw new \InvalidArgumentException('All values in whereIntegerInRaw must be integers');
-        }, $values);
-
-        $safeValues = array_unique($safeValues);
-        sort($safeValues);
-
-        $list = implode(',', $safeValues);
-        return $this->_whereRawInternal($this->_qualifyColumn($column) . " IN ($list)", [], 'AND');
+        return $this->buildChunkedIntegerRawCondition($column, $values, 'IN', 'AND');
     }
 
     /**
@@ -803,6 +845,20 @@ trait HasWhereConditions
             return $this;
         }
 
+        return $this->buildChunkedIntegerRawCondition($column, $values, 'NOT IN', 'AND');
+    }
+
+    /**
+     * Build a grouped raw integer IN/NOT IN predicate for large numeric lists.
+     *
+     * @param string $column
+     * @param array<int, int|string> $values
+     * @param 'IN'|'NOT IN' $operator
+     * @param 'AND'|'OR' $whereType
+     * @return $this
+     */
+    protected function buildChunkedIntegerRawCondition(string $column, array $values, string $operator, string $whereType)
+    {
         $this->validateColumn($column);
 
         $safeValues = array_map(function ($v) {
@@ -818,8 +874,22 @@ trait HasWhereConditions
         $safeValues = array_unique($safeValues);
         sort($safeValues);
 
-        $list = implode(',', $safeValues);
-        return $this->_whereRawInternal($this->_qualifyColumn($column) . " NOT IN ($list)", [], 'AND');
+        $chunkSize = $this->getInListChunkSize();
+        if (count($safeValues) <= $chunkSize) {
+            $list = implode(',', $safeValues);
+            return $this->_whereRawInternal($this->_qualifyColumn($column) . " $operator ($list)", [], $whereType);
+        }
+
+        $qualifiedColumn = $this->_qualifyColumn($column);
+        $clauses = [];
+
+        foreach (array_chunk($safeValues, $chunkSize) as $chunk) {
+            $clauses[] = $qualifiedColumn . ' ' . $operator . ' (' . implode(',', $chunk) . ')';
+        }
+
+        $glue = $operator === 'NOT IN' ? ' AND ' : ' OR ';
+
+        return $this->_whereRawInternal('(' . implode($glue, $clauses) . ')', [], $whereType);
     }
 
     /**

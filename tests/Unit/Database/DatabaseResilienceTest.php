@@ -85,7 +85,11 @@ final class DatabaseResilienceTest extends TestCase
     {
         $probe = new DatabaseResilienceProbe();
 
-        self::assertSame(['enabled' => true, 'threshold_ms' => 750], $probe->exposeSlowQueryConfiguration());
+        self::assertSame([
+            'enabled' => true,
+            'threshold_ms' => 750,
+            'alert_ms' => 2000,
+        ], $probe->exposeSlowQueryConfiguration());
     }
 
     public function testShouldRetryThrowableDetectsDeadlockAndLockTimeoutErrors(): void

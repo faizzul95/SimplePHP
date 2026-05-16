@@ -43,24 +43,30 @@ class Worker
         $sleep   = $options['sleep']   ?? $workerDefaults['sleep']   ?? 3;
         $tries   = $options['tries']   ?? $workerDefaults['tries']   ?? 3;
         $timeout = $options['timeout'] ?? $workerDefaults['timeout'] ?? 60;
+        $maxPriority = isset($options['max_priority']) ? max(Job::PRIORITY_CRITICAL, min(Job::PRIORITY_BULK, (int) $options['max_priority'])) : null;
         $once    = $options['once']    ?? false;
 
         // Register signal handlers for graceful shutdown
-        if (function_exists('pcntl_signal')) {
-            pcntl_signal(SIGTERM, function () {
-                $this->shouldQuit = true;
-            });
-            pcntl_signal(SIGINT, function () {
-                $this->shouldQuit = true;
-            });
+        if ($this->supportsSignalHandling()) {
+            if (defined('SIGTERM')) {
+                $this->registerSignalHandler((int) constant('SIGTERM'), function () {
+                    $this->shouldQuit = true;
+                });
+            }
+
+            if (defined('SIGINT')) {
+                $this->registerSignalHandler((int) constant('SIGINT'), function () {
+                    $this->shouldQuit = true;
+                });
+            }
         }
 
         while (!$this->shouldQuit) {
-            if (function_exists('pcntl_signal_dispatch')) {
-                pcntl_signal_dispatch();
+            if ($this->supportsSignalDispatch()) {
+                $this->dispatchSignals();
             }
 
-            $job = $this->pop($queue);
+            $job = $this->pop($queue, $maxPriority);
 
             if ($job === null) {
                 if ($once) {
@@ -76,8 +82,8 @@ class Worker
                 $ticks = $sleep * 10;
                 for ($i = 0; $i < $ticks && !$this->shouldQuit; $i++) {
                     usleep(100_000); // 100 ms
-                    if (function_exists('pcntl_signal_dispatch')) {
-                        pcntl_signal_dispatch();
+                    if ($this->supportsSignalDispatch()) {
+                        $this->dispatchSignals();
                     }
                 }
                 continue;
@@ -101,7 +107,7 @@ class Worker
      * Uses a transaction with SELECT ... FOR UPDATE to atomically
      * claim a job and prevent multiple workers from processing the same job.
      */
-    private function pop(string $queue): ?array
+    private function pop(string $queue, ?int $maxPriority = null): ?array
     {
         $now = date('Y-m-d H:i:s');
         $retryAfter = $this->config['connections']['database']['retry_after'] ?? 90;
@@ -109,12 +115,11 @@ class Worker
         $table = preg_replace('/[^a-zA-Z0-9_]/', '', $this->table);
 
         try {
-            return db()->transaction(function ($db) use ($queue, $now, $expiredReservation, $table) {
+            return db()->transaction(function ($db) use ($queue, $now, $expiredReservation, $table, $maxPriority) {
+                ['sql' => $sql, 'bindings' => $bindings] = $this->buildPopQuery($table, $queue, $expiredReservation, $now, $maxPriority);
+
                 // SELECT FOR UPDATE locks the row so no other worker can claim it
-                $job = $db->query(
-                    "SELECT * FROM `{$table}` WHERE `queue` = ? AND (`reserved_at` IS NULL OR `reserved_at` <= ?) AND `available_at` <= ? ORDER BY `available_at` ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
-                    [$queue, $expiredReservation, $now]
-                )->execute();
+                $job = $db->query($sql, $bindings)->execute();
 
                 if (empty($job) || !is_array($job)) {
                     return null;
@@ -136,6 +141,7 @@ class Worker
 
                 $row['reserved_at'] = $now;
                 $row['attempts'] = ((int) ($row['attempts'] ?? 0)) + 1;
+                $row['priority'] = (int) ($row['priority'] ?? Job::PRIORITY_NORMAL);
 
                 return $row;
             });
@@ -167,18 +173,18 @@ class Worker
             // Execute with timeout (if pcntl available)
             $jobTimeout = $payload['timeout'] ?? $timeout;
 
-            if ($jobTimeout > 0 && function_exists('pcntl_alarm')) {
-                pcntl_signal(SIGALRM, function () use ($className) {
+            if ($jobTimeout > 0 && $this->supportsAlarmSignals()) {
+                $this->registerSignalHandler((int) constant('SIGALRM'), function () use ($className) {
                     throw new \RuntimeException("Job [{$className}] timed out.");
                 });
-                pcntl_alarm($jobTimeout);
+                $this->setAlarm($jobTimeout);
             }
 
             $jobInstance->handle();
 
-            if (function_exists('pcntl_alarm')) {
-                pcntl_alarm(0); // Cancel alarm
-                pcntl_signal(SIGALRM, SIG_DFL); // Restore default handler
+            if ($this->supportsAlarmSignals()) {
+                $this->setAlarm(0); // Cancel alarm
+                $this->restoreDefaultSignalHandler((int) constant('SIGALRM')); // Restore default handler
             }
 
             // Job succeeded — remove from queue
@@ -191,11 +197,11 @@ class Worker
             }
         } catch (\Throwable $e) {
             if (function_exists('pcntl_alarm')) {
-                pcntl_alarm(0);
+                $this->setAlarm(0);
             }
 
-            if (function_exists('pcntl_signal') && defined('SIGALRM')) {
-                pcntl_signal(SIGALRM, SIG_DFL);
+            if ($this->supportsAlarmSignals()) {
+                $this->restoreDefaultSignalHandler((int) constant('SIGALRM'));
             }
 
             // Attempt to call failed() on the job instance
@@ -269,6 +275,7 @@ class Worker
             db()->table($this->failedTable)->insert([
                 'queue'     => $jobRow['queue'],
                 'payload'   => $jobRow['payload'],
+                'priority'  => (int) ($jobRow['priority'] ?? Job::PRIORITY_NORMAL),
                 'attempts'  => (int) $jobRow['attempts'],
                 'error'     => mb_strimwidth($e->getMessage() . "\n" . $e->getTraceAsString(), 0, 5000),
                 'failed_at' => date('Y-m-d H:i:s'),
@@ -321,6 +328,7 @@ class Worker
             }
 
             $payload = json_decode($failed['payload'], true);
+            $priority = max(Job::PRIORITY_CRITICAL, min(Job::PRIORITY_BULK, (int) ($payload['priority'] ?? $failed['priority'] ?? Job::PRIORITY_NORMAL)));
 
             // Push back to the jobs queue
             $jobId = bin2hex(random_bytes(16));
@@ -328,6 +336,7 @@ class Worker
                 'id'           => $jobId,
                 'queue'        => $failed['queue'] ?? 'default',
                 'payload'      => $failed['payload'],
+                'priority'     => $priority,
                 'attempts'     => 0,
                 'reserved_at'  => null,
                 'available_at' => date('Y-m-d H:i:s'),
@@ -394,5 +403,63 @@ class Worker
         } catch (\Throwable $e) {
             return 0;
         }
+    }
+
+    /**
+     * Build the priority-aware SELECT statement used to claim the next job.
+     *
+     * @return array{sql:string,bindings:array<int,string|int>}
+     */
+    private function buildPopQuery(string $table, string $queue, string $expiredReservation, string $now, ?int $maxPriority = null): array
+    {
+        $sql = "SELECT * FROM `{$table}` WHERE `queue` = ? AND (`reserved_at` IS NULL OR `reserved_at` <= ?) AND `available_at` <= ?";
+        $bindings = [$queue, $expiredReservation, $now];
+
+        if ($maxPriority !== null) {
+            $sql .= ' AND `priority` <= ?';
+            $bindings[] = $maxPriority;
+        }
+
+        $sql .= ' ORDER BY `priority` ASC, `available_at` ASC, `created_at` ASC LIMIT 1 FOR UPDATE SKIP LOCKED';
+
+        return ['sql' => $sql, 'bindings' => $bindings];
+    }
+
+    private function supportsSignalHandling(): bool
+    {
+        return function_exists('pcntl_signal');
+    }
+
+    private function supportsSignalDispatch(): bool
+    {
+        return function_exists('pcntl_signal_dispatch');
+    }
+
+    private function supportsAlarmSignals(): bool
+    {
+        return function_exists('pcntl_alarm')
+            && function_exists('pcntl_signal')
+            && defined('SIGALRM')
+            && defined('SIG_DFL');
+    }
+
+    private function registerSignalHandler(int $signal, callable $handler): void
+    {
+        call_user_func('pcntl_signal', $signal, $handler);
+    }
+
+    private function restoreDefaultSignalHandler(int $signal): void
+    {
+        call_user_func('pcntl_signal', $signal, constant('SIG_DFL'));
+    }
+
+    private function dispatchSignals(): void
+    {
+        call_user_func('pcntl_signal_dispatch');
+    }
+
+    private function setAlarm(int $seconds): void
+    {
+        call_user_func('pcntl_alarm', $seconds);
     }
 }

@@ -28,6 +28,7 @@ $config['security'] = [
         // Routes excluded from CSRF verification (API uses Bearer tokens instead)
         'csrf_exclude_uris'  => [
             'api/*',
+            '_myth/csp-report',
         ],
         // Routes explicitly included for CSRF verification (supports wildcards)
         'csrf_include_uris'  => [],
@@ -86,6 +87,9 @@ $config['security'] = [
     */
     'csp' => [
         'enabled'      => true,
+        'mode'         => (string) env('CSP_MODE', 'enforce'),
+        'report_uri'   => (string) env('CSP_REPORT_URI', '/_myth/csp-report'),
+        'report_to'    => env('CSP_REPORT_TO', null),
         // Keep nonce mode opt-in until the views stop relying on inline scripts,
         // inline styles, and inline event handlers such as onclick.
         'nonce_enabled' => $cspNonceEnabled,
@@ -114,6 +118,84 @@ $config['security'] = [
         'frame-ancestors' => ["'self'"],
         'base-uri'    => ["'self'"],
         'form-action' => ["'self'"],
+        'report_only_directives' => [
+            'script-src' => ["'self'", "'nonce-{nonce}'"],
+            'style-src' => ["'self'"],
+        ],
+    ],
+
+    'trusted_types' => [
+        'enabled' => (bool) env('TRUSTED_TYPES_ENABLED', false),
+        'policies' => env_list('TRUSTED_TYPES_POLICIES', ['default']),
+        'report_only' => (bool) env('TRUSTED_TYPES_REPORT_ONLY', true),
+    ],
+
+    'http_client' => [
+        'post_connect_ip_check' => (bool) env('HTTP_CLIENT_POST_CONNECT_IP_CHECK', true),
+        'force_ipv4' => (bool) env('HTTP_CLIENT_FORCE_IPV4', true),
+        'connect_timeout_sec' => (int) env('HTTP_CLIENT_CONNECT_TIMEOUT_SEC', 5),
+        'dns_cache_timeout' => (int) env('HTTP_CLIENT_DNS_CACHE_TIMEOUT', 0),
+        'allowed_private_hosts' => env_list('HTTP_CLIENT_ALLOWED_PRIVATE_HOSTS', []),
+        // Optional SPKI pins keyed by external host. Keep this empty unless you
+        // actively manage pin rotation for a named third-party integration.
+        'pins' => [
+            // 'api.example.com' => ['sha256//base64PrimaryPin', 'sha256//base64BackupPin'],
+        ],
+        'pin_on_error' => (string) env('HTTP_CLIENT_PIN_ON_ERROR', 'block'),
+    ],
+
+    'blocklist' => [
+        'enabled' => (bool) env('IP_BLOCKLIST_ENABLED', true),
+        'cache_ttl' => (int) env('IP_BLOCKLIST_CACHE_TTL', 60),
+        'ips' => env_list('IP_BLOCKLIST_IPS', []),
+        'cidrs' => env_list('IP_BLOCKLIST_CIDRS', []),
+        'auto' => [
+            'enabled' => (bool) env('IP_BLOCKLIST_AUTO_ENABLED', true),
+            'events' => [
+                \Core\Security\AuditLogger::E_BRUTE_FORCE => [
+                    'threshold' => (int) env('IP_BLOCKLIST_BRUTE_FORCE_THRESHOLD', 3),
+                    'window_seconds' => (int) env('IP_BLOCKLIST_BRUTE_FORCE_WINDOW', 3600),
+                    'ttl_seconds' => (int) env('IP_BLOCKLIST_BRUTE_FORCE_TTL', 86400),
+                    'reason' => 'Repeated brute-force activity',
+                ],
+                \Core\Security\AuditLogger::E_CSRF_FAILURE => [
+                    'threshold' => (int) env('IP_BLOCKLIST_CSRF_THRESHOLD', 10),
+                    'window_seconds' => (int) env('IP_BLOCKLIST_CSRF_WINDOW', 300),
+                    'ttl_seconds' => (int) env('IP_BLOCKLIST_CSRF_TTL', 3600),
+                    'reason' => 'Repeated CSRF failures',
+                ],
+                \Core\Security\AuditLogger::E_SUSPICIOUS_INPUT => [
+                    'threshold' => (int) env('IP_BLOCKLIST_SUSPICIOUS_THRESHOLD', 5),
+                    'window_seconds' => (int) env('IP_BLOCKLIST_SUSPICIOUS_WINDOW', 3600),
+                    'ttl_seconds' => (int) env('IP_BLOCKLIST_SUSPICIOUS_TTL', 21600),
+                    'reason' => 'Repeated suspicious input events',
+                ],
+            ],
+        ],
+    ],
+
+    'cookies' => [
+        'session_name' => (string) env('SESSION_COOKIE_NAME', 'myth_session'),
+        'session_same_site' => (string) env('COOKIE_SESSION_SAMESITE', 'Lax'),
+        'session_secure' => env('COOKIE_SESSION_SECURE', true),
+        'session_http_only' => true,
+        'use_host_prefix' => (bool) env('COOKIE_HOST_PREFIX', false),
+        'partitioned' => (bool) env('COOKIE_PARTITIONED', false),
+    ],
+
+    'timing' => [
+        'auth_min_ms' => (int) env('AUTH_TIMING_MIN_MS', 200),
+        'api_auth_min_ms' => (int) env('API_AUTH_TIMING_MIN_MS', 100),
+    ],
+
+    'query_allowlist' => [
+        'enabled' => (bool) env('QUERY_ALLOWLIST_AUDIT_ENABLED', true),
+        'controller_paths' => [
+            'app/http/controllers',
+        ],
+        'model_paths' => [
+            'app/Models',
+        ],
     ],
 
     /*

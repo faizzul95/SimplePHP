@@ -51,6 +51,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected const DEFAULT_PAGINATE_LIMIT = 10;
     protected const MAX_PAGINATE_LIMIT = 500;
     protected const MAX_PAGINATE_FILTER_LENGTH = 255;
+    protected const DEFAULT_ITERABLE_WRITE_BATCH_SIZE = 2000;
 
     /**
      * Static instance of self
@@ -63,6 +64,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @var array<string, \PDO|null> PDO instances keyed by connection name.
      */
     protected array $pdo = [];
+
+    /** @var array<string, array{read: array<int, string>, write: string, sticky: bool}> */
+    protected array $readWriteRouting = [];
+
+    /** @var array<string, bool> */
+    protected array $stickyWriteState = [];
 
     /**
      * @var string $driver The database driver being used (e.g., 'mysql', 'oracle', etc.).
@@ -314,6 +321,16 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $_paginateAllowedSortColumns = [];
 
     /**
+     * @var array<string> Positive allowlist for dynamic ORDER BY columns.
+     */
+    protected array $sortableColumns = [];
+
+    /**
+     * @var array<string> Positive allowlist for dynamic WHERE columns.
+     */
+    protected array $filterableColumns = [];
+
+    /**
      * @var string|null The current pagination filter value.
      */
     protected $_paginateFilterValue = null;
@@ -483,7 +500,43 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     public function getPdo()
     {
-        return $this->pdo[$this->connectionName];
+        return $this->resolvePdo($this->isReadOnlyStatement($this->_query ?? null) ? 'read' : 'write');
+    }
+
+    /**
+     * Register read/write aliases for a logical connection name.
+     *
+     * @param string $connectionName
+     * @param array<int, string> $readAliases
+     * @param string $writeAlias
+     * @param bool $sticky
+     * @return $this
+     */
+    public function configureReadWriteRouting(string $connectionName, array $readAliases, string $writeAlias, bool $sticky = true): static
+    {
+        $normalized = strtolower(trim($connectionName));
+        if ($normalized === '') {
+            $normalized = 'default';
+        }
+
+        $readAliases = array_values(array_filter(array_map(static function ($alias): string {
+            return strtolower(trim((string) $alias));
+        }, $readAliases), static function (string $alias): bool {
+            return $alias !== '';
+        }));
+
+        $writeAlias = strtolower(trim($writeAlias));
+        if ($writeAlias === '') {
+            $writeAlias = $normalized;
+        }
+
+        $this->readWriteRouting[$normalized] = [
+            'read' => $readAliases,
+            'write' => $writeAlias,
+            'sticky' => $sticky,
+        ];
+
+        return $this;
     }
 
     /**
@@ -573,6 +626,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             'offset' => $this->offset,
             'query' => $this->_query,
             'lock' => $this->_lock,
+            'sortableColumns' => $this->sortableColumns,
+            'filterableColumns' => $this->filterableColumns,
         ];
     }
 
@@ -604,6 +659,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->offset = $state['offset'];
         $this->_query = $state['query'] ?? null;
         $this->_lock = $state['lock'] ?? null;
+        $this->sortableColumns = $state['sortableColumns'] ?? [];
+        $this->filterableColumns = $state['filterableColumns'] ?? [];
     }
 
     /**
@@ -615,6 +672,29 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     {
         $builder = clone $this;
         $builder->reset();
+        return $builder;
+    }
+
+    /**
+     * Create a lightweight builder that preserves write-relevant state.
+     *
+     * @return static
+     */
+    protected function createBatchedCrudBuilder()
+    {
+        $builder = clone $this;
+        $builder->reset();
+        $builder->connectionName = $this->connectionName;
+        $builder->schema = $this->schema;
+        $builder->table = $this->table;
+        $builder->driver = $this->driver;
+        $builder->fillable = $this->fillable;
+        $builder->guarded = $this->guarded;
+
+        if ($this->_secureInput) {
+            $builder->safeInput();
+        }
+
         return $builder;
     }
 
@@ -636,6 +716,264 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->rollback();
             throw $e;
         }
+    }
+
+    /**
+     * Insert rows from any iterable source in bounded batches.
+     */
+    public function insertInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int
+    {
+        return $this->processIterableWriteBatches(
+            $rows,
+            $batchSize,
+            fn(array $batch): mixed => $this->createBatchedCrudBuilder()->batchInsert($batch),
+            'insert',
+            $progress
+        );
+    }
+
+    /**
+     * Update rows from any iterable source in bounded batches.
+     */
+    public function updateInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int
+    {
+        return $this->processIterableWriteBatches(
+            $rows,
+            $batchSize,
+            fn(array $batch): mixed => $this->createBatchedCrudBuilder()->batchUpdate($batch),
+            'update',
+            $progress
+        );
+    }
+
+    /**
+     * Upsert rows from any iterable source in bounded batches.
+     *
+     * @param string|array $uniqueBy
+     * @param array|null $updateColumns
+     */
+    public function upsertInBatches(iterable $rows, string|array $uniqueBy = 'id', ?array $updateColumns = null, ?callable $progress = null, ?int $batchSize = null): int
+    {
+        return $this->processIterableWriteBatches(
+            $rows,
+            $batchSize,
+            fn(array $batch): mixed => $this->createBatchedCrudBuilder()->upsert($batch, $uniqueBy, $updateColumns),
+            'upsert',
+            $progress
+        );
+    }
+
+    /**
+     * Delete rows by column values from any iterable source in bounded batches.
+     */
+    public function deleteInBatches(iterable $values, string $column = 'id', ?callable $progress = null, ?int $batchSize = null): int
+    {
+        $this->validateColumn($column);
+
+        $resolvedBatchSize = $this->normalizeIterableWriteBatchSize($batchSize);
+        $buffer = [];
+        $processedRows = 0;
+        $processedBatches = 0;
+
+        $flush = function () use (&$buffer, &$processedRows, &$processedBatches, $column, $progress): bool {
+            if ($buffer === []) {
+                return true;
+            }
+
+            $chunk = array_values(array_unique($buffer, SORT_REGULAR));
+            $buffer = [];
+
+            if ($chunk === []) {
+                return true;
+            }
+
+            $result = $this->createBatchedCrudBuilder()->whereIn($column, $chunk)->delete();
+            if ($result === false) {
+                throw new \RuntimeException('Bulk delete batch failed.');
+            }
+
+            $processedRows += count($chunk);
+            $processedBatches++;
+
+            if ($progress !== null) {
+                $shouldContinue = $progress([
+                    'operation' => 'delete',
+                    'processed_rows' => $processedRows,
+                    'batches_processed' => $processedBatches,
+                    'last_batch_rows' => count($chunk),
+                ]);
+
+                if ($shouldContinue === false) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        foreach ($values as $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $buffer[] = $value;
+
+            if (count($buffer) >= $resolvedBatchSize && !$flush()) {
+                return $processedRows;
+            }
+        }
+
+        $flush();
+
+        return $processedRows;
+    }
+
+    protected function processIterableWriteBatches(iterable $rows, ?int $batchSize, callable $writeBatch, string $operation, ?callable $progress = null): int
+    {
+        $resolvedBatchSize = $batchSize !== null ? $this->normalizeIterableWriteBatchSize($batchSize) : null;
+        $buffer = [];
+        $processedRows = 0;
+        $processedBatches = 0;
+
+        $flush = function () use (&$buffer, &$processedRows, &$processedBatches, $writeBatch, $operation, $progress): bool {
+            if ($buffer === []) {
+                return true;
+            }
+
+            $batch = $buffer;
+            $buffer = [];
+
+            $result = $writeBatch($batch);
+            if (!$this->iterableWriteBatchSucceeded($result)) {
+                throw new \RuntimeException('Bulk ' . $operation . ' batch failed.');
+            }
+
+            $processedRows += $this->resolveIterableWriteBatchCount($result, count($batch));
+            $processedBatches++;
+
+            if ($progress !== null) {
+                $shouldContinue = $progress([
+                    'operation' => $operation,
+                    'processed_rows' => $processedRows,
+                    'batches_processed' => $processedBatches,
+                    'last_batch_rows' => count($batch),
+                ]);
+
+                if ($shouldContinue === false) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        foreach ($rows as $row) {
+            if (!is_array($row) || $row === []) {
+                continue;
+            }
+
+            if ($resolvedBatchSize === null) {
+                $resolvedBatchSize = $this->normalizeIterableWriteBatchSize(null, $row);
+            }
+
+            $buffer[] = $row;
+
+            if (count($buffer) >= $resolvedBatchSize && !$flush()) {
+                return $processedRows;
+            }
+        }
+
+        $flush();
+
+        return $processedRows;
+    }
+
+    protected function normalizeIterableWriteBatchSize(?int $batchSize, ?array $sampleRow = null): int
+    {
+        $batchSize ??= $this->recommendedIterableWriteBatchSize($sampleRow);
+
+        if ($batchSize < 1) {
+            throw new \InvalidArgumentException('Batch size must be greater than zero.');
+        }
+
+        return $batchSize;
+    }
+
+    /**
+     * Recommend an iterable write batch size based on row width.
+     *
+     * Narrow rows keep the higher default throughput. Wider rows use smaller
+     * batches to reduce statement size, memory pressure, and per-batch latency.
+     */
+    protected function recommendedIterableWriteBatchSize(?array $sampleRow = null): int
+    {
+        $default = self::DEFAULT_ITERABLE_WRITE_BATCH_SIZE;
+        if ($sampleRow === null || $sampleRow === []) {
+            return $default;
+        }
+
+        $columnCount = count($sampleRow);
+
+        return match (true) {
+            $columnCount <= 4 => $default,
+            $columnCount <= 12 => min($default, 1000),
+            $columnCount <= 24 => min($default, 500),
+            default => min($default, 250),
+        };
+    }
+
+    /**
+     * Recommend a read-side chunk size based on row width.
+     *
+     * Narrow rows keep the caller-requested throughput. Wider rows use smaller
+     * chunks to reduce memory pressure, hydration overhead, and response
+     * latency while preserving the requested size as an upper bound.
+     */
+    protected function recommendedReadChunkSize(?array $sampleRow = null, int $requestedSize = 1000): int
+    {
+        $requestedSize = max(1, $requestedSize);
+        if ($sampleRow === null || $sampleRow === []) {
+            return $requestedSize;
+        }
+
+        $columnCount = count($sampleRow);
+
+        return match (true) {
+            $columnCount <= 4 => $requestedSize,
+            $columnCount <= 12 => min($requestedSize, 1000),
+            $columnCount <= 24 => min($requestedSize, 500),
+            default => min($requestedSize, 250),
+        };
+    }
+
+    protected function iterableWriteBatchSucceeded($result): bool
+    {
+        if ($result === false) {
+            return false;
+        }
+
+        if (is_array($result) && isset($result['code']) && (int) $result['code'] >= 400) {
+            return false;
+        }
+
+        if (is_object($result) && isset($result->code) && (int) $result->code >= 400) {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function resolveIterableWriteBatchCount($result, int $fallback): int
+    {
+        if (is_array($result) && isset($result['affected_rows']) && is_numeric($result['affected_rows'])) {
+            return (int) $result['affected_rows'];
+        }
+
+        if (is_object($result) && isset($result->affected_rows) && is_numeric($result->affected_rows)) {
+            return (int) $result->affected_rows;
+        }
+
+        return $fallback;
     }
 
     # Implement BuilderStatementInterface logic
@@ -679,6 +1017,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->_paginateColumn = [];
         $this->_paginateAllowedSortColumns = [];
         $this->_paginateFilterValue = null;
+        $this->sortableColumns = [];
+        $this->filterableColumns = [];
         $this->paginateCountCacheNamespace = null;
         $this->paginateCountCacheTtl = 0;
         $this->pendingPaginateCountCacheRemovals = [];
@@ -1091,6 +1431,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         try {
+            $this->connectForOperation('read');
+
             // Prepare the query statement
             $stmt = $this->_prepareStatement($statement);
 
@@ -1193,8 +1535,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         ];
 
         $queryType = $queryTypesList[$firstWord] ?? 'SELECT';
+        $operationType = in_array($queryType, ['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN'], true) ? 'read' : 'write';
 
         try {
+            $this->connectForOperation($operationType);
 
             // Prepare the query statement
             $stmt = $this->_prepareStatement($this->_query);
@@ -1410,6 +1754,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         if ($this->enableProfiling) {
             $this->_startProfiler($methodName);
         }
+
+        $this->connectForOperation('read');
 
         $stmt = $this->_prepareStatement($this->_query);
 
@@ -1787,7 +2133,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Fallback: query the driver directly if response format differs
         try {
-            return $this->pdo[$this->connectionName]->lastInsertId($sequence);
+            return $this->resolvePdo('write')->lastInsertId($sequence);
         } catch (\Throwable $e) {
             return false;
         }
@@ -2058,6 +2404,54 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
+     * Restrict dynamic ORDER BY columns to a positive allowlist.
+     *
+     * @param array<string> $columns
+     * @return $this
+     */
+    public function setSortableColumns(array $columns = []): static
+    {
+        $this->sortableColumns = array_values(array_filter($columns, 'is_string'));
+        return $this;
+    }
+
+    /**
+     * Return the active ORDER BY allowlist.
+     *
+     * @return array<string>
+     */
+    public function getSortableColumns(): array
+    {
+        if ($this->sortableColumns !== []) {
+            return $this->sortableColumns;
+        }
+
+        return is_array($this->_paginateAllowedSortColumns) ? array_values($this->_paginateAllowedSortColumns) : [];
+    }
+
+    /**
+     * Restrict dynamic WHERE columns to a positive allowlist.
+     *
+     * @param array<string> $columns
+     * @return $this
+     */
+    public function setFilterableColumns(array $columns = []): static
+    {
+        $this->filterableColumns = array_values(array_filter($columns, 'is_string'));
+        return $this;
+    }
+
+    /**
+     * Return the active WHERE allowlist.
+     *
+     * @return array<string>
+     */
+    public function getFilterableColumns(): array
+    {
+        return $this->filterableColumns;
+    }
+
+    /**
      * Translate a DataTables request payload into paginate() arguments.
      *
      * @param array $dataPost
@@ -2269,6 +2663,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Build the final INSERT query string
         $this->_buildInsertQuery($sanitizeData);
 
+        $this->connectForOperation('write');
+
         // Prepare the query statement
         $stmt = $this->_prepareStatement($this->_query);
 
@@ -2285,7 +2681,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $affectedRows = $stmt->rowCount();
 
             // Get the last inserted ID
-            $lastInsertId = $success ? $this->pdo[$this->connectionName]->lastInsertId() : null;
+            $lastInsertId = $success ? $this->resolvePdo('write')->lastInsertId() : null;
 
             // Return information about the insertion operation
             $response = [
@@ -2572,6 +2968,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->_query .= " WHERE " . $this->where;
         }
 
+        $this->connectForOperation('write');
         $stmt = $this->_prepareStatement($this->_query);
         $this->_bindParams($stmt, array_merge($bindValues, $this->_binds));
         
@@ -2646,6 +3043,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->_query .= " WHERE " . $this->where;
         }
 
+        $this->connectForOperation('write');
         $stmt = $this->_prepareStatement($this->_query);
         $this->_bindParams($stmt, array_merge($bindValues, $this->_binds));
         
@@ -2706,6 +3104,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Build the final UPDATE query string
         $this->_buildUpdateQuery($sanitizeData);
+
+        $this->connectForOperation('write');
 
         // Prepare the query statement
         $stmt = $this->_prepareStatement($this->_query);
@@ -3326,8 +3726,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     public function beginTransaction()
     {
-        if (!$this->pdo[$this->connectionName]->inTransaction()) {
-            $this->pdo[$this->connectionName]->beginTransaction();
+        $pdo = $this->resolvePdo('write');
+        if (!$pdo->inTransaction()) {
+            $pdo->beginTransaction();
+            $this->markStickyWrite($this->connectionName);
         }
     }
 
@@ -3338,8 +3740,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     public function commit()
     {
-        if ($this->pdo[$this->connectionName]->inTransaction()) {
-            $this->pdo[$this->connectionName]->commit();
+        $pdo = $this->resolvePdo('write');
+        if ($pdo->inTransaction()) {
+            $pdo->commit();
         }
     }
 
@@ -3350,8 +3753,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     public function rollback()
     {
-        if ($this->pdo[$this->connectionName]->inTransaction()) {
-            $this->pdo[$this->connectionName]->rollBack();
+        $pdo = $this->resolvePdo('write');
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
         }
     }
 
@@ -3440,9 +3844,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 } elseif (is_numeric($value)) {
                     $quotedValue = $value;
                 } elseif (is_string($value)) {
-                    $quotedValue = $this->pdo[$this->connectionName]->quote($value, \PDO::PARAM_STR);
+                    $quotedValue = $this->quoteDebugBinding($query, $value);
                 } else {
-                    $quotedValue = $this->pdo[$this->connectionName]->quote((string)$value, \PDO::PARAM_STR);
+                    $quotedValue = $this->quoteDebugBinding($query, (string) $value);
                 }
 
                 if ($hasPositional) {
@@ -3466,6 +3870,20 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         return $query;
+    }
+
+    protected function quoteDebugBinding(string $query, string $value): string
+    {
+        try {
+            $quoted = $this->resolvePdo($this->isReadOnlyStatement($query) ? 'read' : 'write')->quote($value, \PDO::PARAM_STR);
+            if ($quoted !== false) {
+                return $quoted;
+            }
+        } catch (\Throwable) {
+            // Fall back to local escaping for diagnostic-only query previews.
+        }
+
+        return "'" . str_replace(["\\", "'"], ["\\\\", "\\'"], $value) . "'";
     }
 
     /**
@@ -3788,11 +4206,96 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     protected function _prepareStatement($query)
     {
+        $operation = $this->isReadOnlyStatement($query) ? 'read' : 'write';
+
         return StatementCache::get(
-            $this->pdo[$this->connectionName],
+            $this->resolvePdo($operation),
             $query,
-            $this->connectionName
+            $this->resolveConnectionName($operation)
         );
+    }
+
+    protected function connectForOperation(string $operation): void
+    {
+        $connectionName = $this->resolveConnectionName($operation);
+
+        if (isset($this->pdo[$connectionName]) && $this->pdo[$connectionName] instanceof \PDO) {
+            return;
+        }
+
+        if (!isset($this->config[$connectionName]) && isset($this->pdo[$this->connectionName]) && $this->pdo[$this->connectionName] instanceof \PDO) {
+            return;
+        }
+
+        $this->connect($connectionName);
+    }
+
+    protected function resolvePdo(string $operation = 'write'): \PDO
+    {
+        $connectionName = $this->resolveConnectionName($operation);
+        if (!isset($this->pdo[$connectionName]) || !$this->pdo[$connectionName] instanceof \PDO) {
+            if (isset($this->pdo[$this->connectionName]) && $this->pdo[$this->connectionName] instanceof \PDO && !isset($this->config[$connectionName])) {
+                return $this->pdo[$this->connectionName];
+            }
+
+            $this->connect($connectionName);
+        }
+
+        return $this->pdo[$connectionName];
+    }
+
+    protected function resolveConnectionName(string $operation = 'write'): string
+    {
+        $baseConnection = $this->baseConnectionName($this->connectionName);
+        $routing = $this->readWriteRouting[$baseConnection] ?? null;
+
+        if (!is_array($routing)) {
+            return $this->connectionName;
+        }
+
+        if ($operation === 'read') {
+            if (($routing['sticky'] ?? true) && ($this->stickyWriteState[$baseConnection] ?? false) === true) {
+                return (string) ($routing['write'] ?? $this->connectionName);
+            }
+
+            $reads = (array) ($routing['read'] ?? []);
+            if ($reads !== []) {
+                return (string) $reads[array_rand($reads)];
+            }
+        }
+
+        return (string) ($routing['write'] ?? $this->connectionName);
+    }
+
+    protected function markStickyWrite(string $connectionName): void
+    {
+        $this->stickyWriteState[$this->baseConnectionName($connectionName)] = true;
+    }
+
+    protected function baseConnectionName(string $connectionName): string
+    {
+        $normalized = strtolower(trim($connectionName));
+        if ($normalized === '') {
+            return 'default';
+        }
+
+        if (str_contains($normalized, '::')) {
+            return (string) strstr($normalized, '::', true);
+        }
+
+        return $normalized;
+    }
+
+    protected function isReadOnlyStatement(?string $statement): bool
+    {
+        $statement = trim((string) $statement);
+        if ($statement === '') {
+            return false;
+        }
+
+        $firstWord = strtoupper((string) strtok($statement, " \t\n\r"));
+
+        return in_array($firstWord, ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN'], true);
     }
 
     /**

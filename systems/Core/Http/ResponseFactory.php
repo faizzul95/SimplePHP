@@ -3,6 +3,7 @@
 namespace Core\Http;
 
 use Core\View\BladeEngine;
+use Traversable;
 
 class ResponseFactory
 {
@@ -28,6 +29,60 @@ class ResponseFactory
     public function stream(callable $callback, int $status = 200, array $headers = []): StreamedResponse
     {
         return new StreamedResponse($callback, $status, $headers);
+    }
+
+    /**
+     * Stream a JSON array response from any iterable data source.
+     *
+     * @param iterable<mixed> $items
+     */
+    public function streamJson(iterable $items, int $status = 200, array $headers = [], int $encodingFlags = 0, int $flushEvery = 100): StreamedResponse
+    {
+        $flags = $encodingFlags | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE;
+        $flushEvery = max(1, $flushEvery);
+
+        $headers = array_merge([
+            'Content-Type' => 'application/json; charset=UTF-8',
+            'X-Accel-Buffering' => 'no',
+        ], $headers);
+
+        return $this->stream(static function () use ($items, $flags, $flushEvery): void {
+            echo '[';
+
+            $first = true;
+            $written = 0;
+
+            foreach ($items as $item) {
+                $encoded = json_encode($item, $flags);
+                if ($encoded === false) {
+                    $encoded = 'null';
+                }
+
+                if (!$first) {
+                    echo ',';
+                }
+
+                echo $encoded;
+                $first = false;
+                $written++;
+
+                if (($written % $flushEvery) === 0) {
+                    if (ob_get_level() > 0) {
+                        ob_flush();
+                    }
+
+                    flush();
+                }
+            }
+
+            echo ']';
+
+            if (ob_get_level() > 0) {
+                ob_flush();
+            }
+
+            flush();
+        }, $status, $headers);
     }
 
     public function streamDownload(callable $callback, string $name, array $headers = []): StreamedResponse

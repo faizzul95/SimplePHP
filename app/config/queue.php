@@ -12,6 +12,9 @@
  *
  * Sync driver: Jobs execute immediately in the current process (useful
  * for development/testing). No worker needed.
+ *
+ * Priority scale: 0 = highest priority, 10 = lowest priority.
+ * Jobs default to priority 5 unless overridden.
  */
 
 $config['queue'] = [
@@ -57,6 +60,7 @@ $config['queue'] = [
         'sleep'   => 3,    // seconds to wait when no jobs available
         'tries'   => 3,    // max attempts before marking as failed
         'timeout' => 60,   // max seconds a single job may run
+        'max_priority' => null, // null = process all lanes; 0..10 = only process up to this priority
     ],
 
 ];

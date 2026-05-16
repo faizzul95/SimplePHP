@@ -19,10 +19,21 @@ namespace Core\Queue;
  */
 abstract class Job
 {
+    public const PRIORITY_CRITICAL = 0;
+    public const PRIORITY_HIGH = 2;
+    public const PRIORITY_NORMAL = 5;
+    public const PRIORITY_LOW = 8;
+    public const PRIORITY_BULK = 10;
+
     /**
      * The queue this job should be dispatched to.
      */
     public string $queue = 'default';
+
+    /**
+     * Numeric priority for this job. Lower numbers are processed first.
+     */
+    public int $priority = self::PRIORITY_NORMAL;
 
     /**
      * Number of seconds to delay before the job becomes available.
@@ -62,6 +73,40 @@ abstract class Job
     }
 
     /**
+     * Set a numeric priority between 0 (highest) and 10 (lowest).
+     */
+    public function priority(int $priority): static
+    {
+        $this->priority = $this->normalizePriority($priority);
+        return $this;
+    }
+
+    public function critical(): static
+    {
+        return $this->priority(self::PRIORITY_CRITICAL);
+    }
+
+    public function high(): static
+    {
+        return $this->priority(self::PRIORITY_HIGH);
+    }
+
+    public function normal(): static
+    {
+        return $this->priority(self::PRIORITY_NORMAL);
+    }
+
+    public function low(): static
+    {
+        return $this->priority(self::PRIORITY_LOW);
+    }
+
+    public function bulk(): static
+    {
+        return $this->priority(self::PRIORITY_BULK);
+    }
+
+    /**
      * Set the delay in seconds.
      */
     public function delay(int $seconds): static
@@ -73,7 +118,7 @@ abstract class Job
     /**
      * Serialize the job payload for storage.
      *
-     * @return array{class: string, data: string, queue: string, delay: int, tries: int|null, timeout: int|null}
+     * @return array{class: string, data: string, queue: string, delay: int, tries: int|null, timeout: int|null, priority: int}
      */
     public function toPayload(): array
     {
@@ -84,6 +129,7 @@ abstract class Job
             'delay'   => $this->delay,
             'tries'   => $this->tries,
             'timeout' => $this->timeout,
+            'priority' => $this->normalizePriority($this->priority),
         ];
     }
 
@@ -114,6 +160,13 @@ abstract class Job
             throw new \RuntimeException('Job class mismatch between payload and serialized data.');
         }
 
+        $job->priority = $job->normalizePriority((int) ($payload['priority'] ?? $job->priority ?? self::PRIORITY_NORMAL));
+
         return $job;
+    }
+
+    protected function normalizePriority(int $priority): int
+    {
+        return max(self::PRIORITY_CRITICAL, min(self::PRIORITY_BULK, $priority));
     }
 }

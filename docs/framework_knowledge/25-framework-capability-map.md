@@ -35,11 +35,14 @@
 - Full CRUD with fluent chainable API
 - **Two-layer mass-assignment guard:** schema-level column filter (always on) + `$fillable` allowlist + `$guarded` denylist; runtime setters `setFillable()`/`setGuarded()` for ad-hoc scoping
 - Where clauses: basic, or, not, between, in, null, date, JSON, fulltext, raw, nested
+- Large `IN` / `NOT IN` lists are chunked automatically; integer raw variants exist for trusted ID lists
 - Joins: inner, left, right, cross, lateral, subquery
 - Eager loading: `with`, `withOne`, `withCount`, `withSum`, `withAvg`, `withMin`, `withMax`
-- Aggregates, pagination, cursor iteration, union, subselect
+- Aggregates, pagination, cursor iteration, adaptive chunked streaming, streamed JSON responses, union, subselect
 - Soft deletes, transactions, connection management
-- Performance tracking via `getPerformanceReport()`
+- Iterable batch writes for inserts, updates, upserts, and deletes with progress callbacks
+- Debug inspection via `toSql()`, `toRawSql()`, `toDebugSql()`, and `toDebugSnapshot()` in CLI/debug mode
+- Performance tracking via `getPerformanceReport()` plus adaptive chunk-decision reporting and redacted slow-query logging
 
 ### Controller Base
 - Abstract base with CRUD helpers: `findOrFail`, `restoreByEncodedId`, `destroyByEncodedId`

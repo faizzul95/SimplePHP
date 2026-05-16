@@ -3,7 +3,7 @@
 namespace Core\Database\Concerns;
 
 use Core\Database\PerformanceMonitor;
-use Components\Logger;
+use Core\Database\SlowQueryLogger;
 
 /**
  * Trait HasProfiling
@@ -210,6 +210,45 @@ trait HasProfiling
     }
 
     /**
+     * Append profiler metadata to the active bucket without starting a full
+     * timed profiling lifecycle.
+     *
+     * Used by adaptive iteration paths that want observability around runtime
+     * tuning decisions but do not execute through the regular query-profiler
+     * start/stop flow.
+     *
+     * @param string $key
+     * @param array $metadata
+     * @return void
+     */
+    protected function _appendProfilerMetadata(string $key, array $metadata): void
+    {
+        if (!$this->enableProfiling) {
+            return;
+        }
+
+        if ($key === 'adaptive_chunk_decisions') {
+            PerformanceMonitor::recordAdaptiveChunkDecision($metadata);
+        }
+
+        if (!isset($this->_profiler['profiling'][$this->_profilerActive]) || !is_array($this->_profiler['profiling'][$this->_profilerActive])) {
+            $this->_profiler['profiling'][$this->_profilerActive] = [
+                'method' => null,
+                'query' => null,
+                'binds' => null,
+                'execution_time' => null,
+                'execution_status' => null,
+            ];
+        }
+
+        if (!isset($this->_profiler['profiling'][$this->_profilerActive][$key]) || !is_array($this->_profiler['profiling'][$this->_profilerActive][$key])) {
+            $this->_profiler['profiling'][$this->_profilerActive][$key] = [];
+        }
+
+        $this->_profiler['profiling'][$this->_profilerActive][$key][] = $metadata;
+    }
+
+    /**
      * Persist a slow-query log entry when runtime exceeds the configured threshold.
      *
      * @param float $executionTime
@@ -229,19 +268,18 @@ trait HasProfiling
         }
 
         try {
-            $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR;
-            $logger  = new Logger($rootDir . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'slow.log');
-            $logger->log_error(json_encode([
+            SlowQueryLogger::record([
                 'event'        => 'slow_query',
                 'connection'   => $this->connectionName,
                 'table'        => $this->table,
                 'duration_ms'  => round($executionTime * 1000, 2),
                 'threshold_ms' => $thresholdMs,
+                'alert_ms'     => (int) ($configuration['alert_ms'] ?? 2000),
                 'query'        => $profilerEntry['query'] ?? null,
                 'binds'        => $profilerEntry['binds'] ?? [],
                 'full_query'   => $profilerEntry['full_query'] ?? null,
                 'request_uri'  => $_SERVER['REQUEST_URI'] ?? 'CLI',
-            ], JSON_UNESCAPED_SLASHES));
+            ]);
         } catch (\Throwable $e) {
             // Slow-query logging must not break the query lifecycle.
         }
@@ -259,6 +297,7 @@ trait HasProfiling
         return [
             'enabled'      => ($configuration['enabled'] ?? false) === true,
             'threshold_ms' => max(1, (int) ($configuration['threshold_ms'] ?? 750)),
+            'alert_ms'     => max(1, (int) ($configuration['alert_ms'] ?? 2000)),
         ];
     }
 

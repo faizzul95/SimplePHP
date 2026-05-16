@@ -311,9 +311,37 @@ if (!function_exists('shouldBootstrapSession')) {
 if (!function_exists('bootstrapConfigureSessionIni')) {
     function bootstrapConfigureSessionIni(): void
     {
-        ini_set('session.cookie_httponly', '1');
-        ini_set('session.cookie_secure', ENVIRONMENT === 'production' ? '1' : '0');
-        ini_set('session.cookie_samesite', 'Lax');
+        \Core\Session\SessionBootstrapper::configure($GLOBALS['config'] ?? []);
+
+        $cookieConfig = (array) config('security.cookies', []);
+        $secure = (($cookieConfig['session_secure'] ?? true) === true) && bootstrapIsHttpsRequest();
+        $sameSite = bootstrapNormalizeSameSite((string) ($cookieConfig['session_same_site'] ?? 'Lax'));
+        $httpOnly = ($cookieConfig['session_http_only'] ?? true) === true;
+        $sessionName = trim((string) ($cookieConfig['session_name'] ?? 'myth_session'));
+        $sessionName = bootstrapApplyCookiePrefix(
+            $sessionName,
+            $secure,
+            '/',
+            '',
+            ($cookieConfig['use_host_prefix'] ?? false) === true
+        );
+
+        if ($sessionName !== '') {
+            session_name($sessionName);
+        }
+
+        @session_set_cookie_params([
+            'lifetime' => (int) ini_get('session.cookie_lifetime'),
+            'path' => '/',
+            'domain' => '',
+            'secure' => $secure,
+            'httponly' => $httpOnly,
+            'samesite' => $sameSite,
+        ]);
+
+        ini_set('session.cookie_httponly', $httpOnly ? '1' : '0');
+        ini_set('session.cookie_secure', $secure ? '1' : '0');
+        ini_set('session.cookie_samesite', $sameSite);
         ini_set('session.use_strict_mode', '1');
         ini_set('session.use_only_cookies', '1');
 
@@ -324,6 +352,111 @@ if (!function_exists('bootstrapConfigureSessionIni')) {
     }
 }
 
+if (!function_exists('bootstrapIsHttpsRequest')) {
+    function bootstrapIsHttpsRequest(): bool
+    {
+        return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || (!empty($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443)
+            || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+            || (defined('ENVIRONMENT') && ENVIRONMENT === 'production');
+    }
+}
+
+if (!function_exists('bootstrapNormalizeSameSite')) {
+    function bootstrapNormalizeSameSite(string $sameSite, string $default = 'Lax'): string
+    {
+        $sameSite = ucfirst(strtolower(trim($sameSite)));
+        if (!in_array($sameSite, ['Lax', 'Strict', 'None'], true)) {
+            return ucfirst(strtolower($default));
+        }
+
+        return $sameSite;
+    }
+}
+
+if (!function_exists('bootstrapApplyCookiePrefix')) {
+    function bootstrapApplyCookiePrefix(string $name, bool $secure, string $path = '/', string $domain = '', bool $preferHostPrefix = false): string
+    {
+        $name = trim($name);
+        if ($name === '' || str_starts_with($name, '__Host-') || str_starts_with($name, '__Secure-')) {
+            return $name;
+        }
+
+        if ($preferHostPrefix && $secure && trim($domain) === '' && rtrim($path, '/') === '') {
+            return '__Host-' . $name;
+        }
+
+        return $secure ? '__Secure-' . $name : $name;
+    }
+}
+
+if (!function_exists('bootstrapSendCookieHeader')) {
+    function bootstrapSendCookieHeader(string $name, string $value, int $expireSeconds = 0, string $path = '/', string $domain = '', bool $secure = true, bool $httpOnly = true, string $sameSite = 'Lax', bool $partitioned = false): bool
+    {
+        if (headers_sent()) {
+            return false;
+        }
+
+        $sameSite = bootstrapNormalizeSameSite($sameSite);
+        if ($partitioned && (!$secure || $sameSite !== 'None')) {
+            $partitioned = false;
+        }
+
+        $parts = [rawurlencode($name) . '=' . rawurlencode($value)];
+        if ($expireSeconds > 0) {
+            $parts[] = 'Expires=' . gmdate('D, d M Y H:i:s \G\M\T', time() + $expireSeconds);
+            $parts[] = 'Max-Age=' . $expireSeconds;
+        }
+
+        $parts[] = 'Path=' . ($path !== '' ? $path : '/');
+        if (trim($domain) !== '') {
+            $parts[] = 'Domain=' . trim($domain);
+        }
+        if ($secure) {
+            $parts[] = 'Secure';
+        }
+        if ($httpOnly) {
+            $parts[] = 'HttpOnly';
+        }
+        $parts[] = 'SameSite=' . $sameSite;
+        if ($partitioned) {
+            $parts[] = 'Partitioned';
+        }
+
+        header('Set-Cookie: ' . implode('; ', $parts), false);
+        return true;
+    }
+}
+
+if (!function_exists('bootstrapRefreshSessionCookie')) {
+    function bootstrapRefreshSessionCookie(): void
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE || headers_sent()) {
+            return;
+        }
+
+        $cookieConfig = (array) config('security.cookies', []);
+        $params = session_get_cookie_params();
+        $sameSite = bootstrapNormalizeSameSite((string) ($params['samesite'] ?? ($cookieConfig['session_same_site'] ?? 'Lax')));
+        $partitioned = ($cookieConfig['partitioned'] ?? false) === true;
+        if ($partitioned && $sameSite !== 'None') {
+            $partitioned = false;
+        }
+
+        bootstrapSendCookieHeader(
+            session_name(),
+            session_id(),
+            (int) ($params['lifetime'] ?? 0),
+            (string) ($params['path'] ?? '/'),
+            (string) ($params['domain'] ?? ''),
+            ($params['secure'] ?? false) === true,
+            ($params['httponly'] ?? true) === true,
+            $sameSite,
+            $partitioned
+        );
+    }
+}
+
 if (!function_exists('bootstrapStartSession')) {
     function bootstrapStartSession(array $config): void
     {
@@ -331,6 +464,7 @@ if (!function_exists('bootstrapStartSession')) {
 
         if (session_status() === PHP_SESSION_NONE) {
             session_start();
+            bootstrapRefreshSessionCookie();
             if (!isset($_SESSION['last_regeneration'])) {
                 $_SESSION['last_regeneration'] = time();
             }

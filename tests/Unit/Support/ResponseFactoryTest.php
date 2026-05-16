@@ -59,6 +59,20 @@ final class ResponseFactoryTest extends TestCase
         self::assertStringContainsString('export.csv', $streamed->headers()['Content-Disposition']);
     }
 
+    public function testResponseFactoryCanCreateStreamedJsonResponses(): void
+    {
+        $streamed = response()->streamJson((function (): Generator {
+            yield ['id' => 1, 'name' => 'alpha'];
+            yield ['id' => 2, 'name' => 'beta'];
+        })(), 200, ['X-Test' => 'stream-json'], 0, 1);
+
+        self::assertInstanceOf(StreamedResponse::class, $streamed);
+        self::assertSame('application/json; charset=UTF-8', $streamed->headers()['Content-Type']);
+        self::assertSame('no', $streamed->headers()['X-Accel-Buffering']);
+        self::assertSame('stream-json', $streamed->headers()['X-Test']);
+        self::assertSame('[{"id":1,"name":"alpha"},{"id":2,"name":"beta"}]', $this->captureStreamedOutput($streamed));
+    }
+
     public function testHtmlResponsesSanitizeHeaderNamesAndValues(): void
     {
         $response = response()->make('ok', 200, [
@@ -81,5 +95,19 @@ final class ResponseFactoryTest extends TestCase
         self::assertSame([
             'X-StreamHeader' => 'valuesecond',
         ], $streamed->headers());
+    }
+
+    private function captureStreamedOutput(StreamedResponse $streamed): string
+    {
+        $reflection = new ReflectionClass($streamed);
+        $property = $reflection->getProperty('callback');
+        $property->setAccessible(true);
+        $callback = $property->getValue($streamed);
+
+        ob_start();
+        ob_start();
+        $callback();
+        ob_end_clean();
+        return (string) ob_get_clean();
     }
 }

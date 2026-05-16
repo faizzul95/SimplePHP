@@ -46,6 +46,23 @@ abstract class Model implements JsonSerializable
     public const UPDATED_AT = 'updated_at';
     public const DELETED_AT = 'deleted_at';
 
+    /** @var string[] */
+    private const OBSERVABLE_EVENTS = [
+        'retrieved',
+        'saving',
+        'saved',
+        'creating',
+        'created',
+        'updating',
+        'updated',
+        'deleting',
+        'deleted',
+        'restoring',
+        'restored',
+        'forceDeleting',
+        'forceDeleted',
+    ];
+
     // ── Model configuration (override in subclasses) ──────────────────────
 
     /**
@@ -101,6 +118,27 @@ abstract class Model implements JsonSerializable
     /** Default records-per-page for paginate(). */
     protected int $perPage = 15;
 
+    /** Default chunk size for model iteration over large result sets. */
+    protected int $chunkSize = 1000;
+
+    /** Default batch size for bulk writes. */
+    protected int $bulkWriteBatchSize = 2000;
+
+    /** @var array<string, true> Attributes explicitly marked to bypass write guards for the next save cycle. */
+    protected array $forceFilled = [];
+
+    /**
+     * Columns explicitly permitted for dynamic ORDER BY clauses.
+     * @var string[]
+     */
+    protected array $sortable = [];
+
+    /**
+     * Columns explicitly permitted for dynamic user-driven WHERE clauses.
+     * @var string[]
+     */
+    protected array $filterable = [];
+
     // ── Row-level state ──────────────────────────────────────────────────
 
     /**
@@ -121,11 +159,73 @@ abstract class Model implements JsonSerializable
     /** True immediately after a successful insert via save(). */
     public bool $wasRecentlyCreated = false;
 
+    /** @var array<class-string, bool> */
+    protected static array $bootedModels = [];
+
+    /** @var array<class-string, array<string, array<int, callable>>> */
+    protected static array $modelEventListeners = [];
+
+    /** @var array<class-string, array<int, string>> */
+    protected static array $traitInitializers = [];
+
+    /** @var array<class-string, int> */
+    protected static array $mutedEventDepth = [];
+
     // ── Constructor ───────────────────────────────────────────────────
 
     public function __construct(array $attributes = [])
     {
+        static::bootIfNotBooted();
+        $this->initializeTraits();
         $this->fill($attributes);
+    }
+
+    protected static function boot(): void
+    {
+    }
+
+    protected static function booted(): void
+    {
+    }
+
+    protected static function bootIfNotBooted(): void
+    {
+        $class = static::class;
+        if (isset(static::$bootedModels[$class])) {
+            return;
+        }
+
+        static::$bootedModels[$class] = true;
+        static::bootTraits();
+        static::boot();
+        static::booted();
+    }
+
+    protected static function bootTraits(): void
+    {
+        $class = static::class;
+        static::$traitInitializers[$class] = [];
+
+        foreach (static::classUsesRecursive($class) as $traitName) {
+            $baseName = static::classBasename($traitName);
+            $bootMethod = 'boot' . $baseName;
+            $initializeMethod = 'initialize' . $baseName;
+
+            if (method_exists($class, $bootMethod)) {
+                forward_static_call([$class, $bootMethod]);
+            }
+
+            if (method_exists($class, $initializeMethod)) {
+                static::$traitInitializers[$class][] = $initializeMethod;
+            }
+        }
+    }
+
+    protected function initializeTraits(): void
+    {
+        foreach (static::$traitInitializers[static::class] ?? [] as $method) {
+            $this->{$method}();
+        }
     }
 
     // ── Table resolution ──────────────────────────────────────────────
@@ -217,7 +317,11 @@ abstract class Model implements JsonSerializable
      */
     protected function newQuery(bool $withTrashed = false, bool $onlyTrashed = false): ModelQuery
     {
+        static::bootIfNotBooted();
+
         $builder = db($this->getConnectionName())->table($this->getTable());
+        $builder->setSortableColumns($this->getSortableColumns());
+        $builder->setFilterableColumns($this->getFilterableColumns());
 
         if ($this->softDeletes) {
             if (!$withTrashed && !$onlyTrashed) {
@@ -229,6 +333,32 @@ abstract class Model implements JsonSerializable
         }
 
         return new ModelQuery($builder, static::class);
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getSortableColumns(): array
+    {
+        return array_values($this->sortable);
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getFilterableColumns(): array
+    {
+        return array_values($this->filterable);
+    }
+
+    public function getChunkSize(): int
+    {
+        return $this->chunkSize;
+    }
+
+    public function getBulkWriteBatchSize(): int
+    {
+        return $this->bulkWriteBatchSize;
     }
 
     // ── Static query API ─────────────────────────────────────────────────
@@ -314,11 +444,174 @@ abstract class Model implements JsonSerializable
         if (empty($rows)) {
             return true;
         }
+
         $instance = new static();
-        $result   = db($instance->getConnectionName())
-            ->table($instance->getTable())
-            ->insert($rows);
-        return $result !== false;
+        $preparedRows = $instance->prepareBulkWriteRows($rows, false);
+        if ($preparedRows === []) {
+            return true;
+        }
+
+        foreach (array_chunk($preparedRows, $instance->normalizeBulkBatchSize(null, $preparedRows[0] ?? null)) as $chunk) {
+            $result = $instance->newBulkWriteBuilder()->batchInsert($chunk);
+            if (!$instance->bulkWriteSucceeded($result)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Bulk upsert rows in batches using the driver's write-optimized path.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @param string|string[] $uniqueBy
+     * @param string[]|null $updateColumns
+     */
+    public static function bulkUpsert(array $rows, string|array $uniqueBy = 'id', ?array $updateColumns = null): bool
+    {
+        if (empty($rows)) {
+            return true;
+        }
+
+        $instance = new static();
+        $preparedRows = $instance->prepareBulkWriteRows($rows, true);
+        if ($preparedRows === []) {
+            return true;
+        }
+
+        $preparedUpdateColumns = $instance->prepareBulkUpsertUpdateColumns($updateColumns);
+
+        foreach (array_chunk($preparedRows, $instance->normalizeBulkBatchSize(null, $preparedRows[0] ?? null)) as $chunk) {
+            $result = $instance->newBulkWriteBuilder()->upsert($chunk, $uniqueBy, $preparedUpdateColumns);
+            if (!$instance->bulkWriteSucceeded($result)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Bulk update rows in batches using the model primary key as the row identifier.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     */
+    public static function bulkUpdate(array $rows): bool
+    {
+        if (empty($rows)) {
+            return true;
+        }
+
+        $instance = new static();
+        $preparedRows = $instance->prepareBulkUpdateRows($rows);
+        if ($preparedRows === []) {
+            return true;
+        }
+
+        foreach (array_chunk($preparedRows, $instance->normalizeBulkBatchSize(null, $preparedRows[0] ?? null)) as $chunk) {
+            $result = $instance->newBulkWriteBuilder()->batchUpdate($chunk);
+            if (!$instance->bulkWriteSucceeded($result)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Insert rows from any iterable source in bounded batches.
+     */
+    public static function importInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int
+    {
+        $instance = new static();
+
+        return $instance->processBulkStream(
+            $rows,
+            $batchSize,
+            fn(array $batch): array => $instance->prepareBulkWriteRows($batch, false),
+            fn(array $batch): mixed => $instance->newBulkWriteBuilder()->batchInsert($batch),
+            'insert',
+            $progress
+        );
+    }
+
+    /**
+     * Upsert rows from any iterable source in bounded batches.
+     *
+     * @param string|string[] $uniqueBy
+     * @param string[]|null $updateColumns
+     */
+    public static function upsertInBatches(iterable $rows, string|array $uniqueBy = 'id', ?array $updateColumns = null, ?callable $progress = null, ?int $batchSize = null): int
+    {
+        $instance = new static();
+        $preparedUpdateColumns = $instance->prepareBulkUpsertUpdateColumns($updateColumns);
+
+        return $instance->processBulkStream(
+            $rows,
+            $batchSize,
+            fn(array $batch): array => $instance->prepareBulkWriteRows($batch, true),
+            fn(array $batch): mixed => $instance->newBulkWriteBuilder()->upsert($batch, $uniqueBy, $preparedUpdateColumns),
+            'upsert',
+            $progress
+        );
+    }
+
+    /**
+     * Update rows from any iterable source in bounded batches.
+     */
+    public static function updateInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int
+    {
+        $instance = new static();
+
+        return $instance->processBulkStream(
+            $rows,
+            $batchSize,
+            fn(array $batch): array => $instance->prepareBulkUpdateRows($batch),
+            fn(array $batch): mixed => $instance->newBulkWriteBuilder()->batchUpdate($batch),
+            'update',
+            $progress
+        );
+    }
+
+    public static function each(callable $callback, ?int $chunkSize = null): bool
+    {
+        $instance = new static();
+        $chunkSize ??= $instance->getChunkSize();
+        $completed = true;
+
+        $instance->newQuery()->chunk($chunkSize, static function (array $models) use ($callback, &$completed) {
+            foreach ($models as $model) {
+                if ($callback($model) === false) {
+                    $completed = false;
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        return $completed;
+    }
+
+    public static function eachById(callable $callback, ?int $chunkSize = null, string $column = 'id', ?string $alias = null): bool
+    {
+        $instance = new static();
+        $chunkSize ??= $instance->getChunkSize();
+        $completed = true;
+
+        $instance->newQuery()->chunkById($chunkSize, static function (array $models) use ($callback, &$completed) {
+            foreach ($models as $model) {
+                if ($callback($model) === false) {
+                    $completed = false;
+                    return false;
+                }
+            }
+
+            return true;
+        }, $column, $alias);
+
+        return $completed;
     }
 
     /**
@@ -388,12 +681,167 @@ abstract class Model implements JsonSerializable
         if (empty($ids)) {
             return 0;
         }
+
+        static::bootIfNotBooted();
+
         $instance = new static();
-        $result   = db($instance->getConnectionName())
-            ->table($instance->getTable())
-            ->whereIn($instance->primaryKey, $ids)
-            ->delete();
-        return ($result !== false) ? count($ids) : 0;
+
+        if (!$instance->requiresPerModelDeleteLifecycle()) {
+            $deleted = 0;
+
+            foreach (array_chunk($ids, $instance->getBulkWriteBatchSize()) as $chunk) {
+                $result = db($instance->getConnectionName())
+                    ->table($instance->getTable())
+                    ->whereIn($instance->primaryKey, $chunk)
+                    ->delete();
+
+                if ($result === false) {
+                    break;
+                }
+
+                $deleted += count($chunk);
+            }
+
+            return $deleted;
+        }
+
+        $deleted = 0;
+
+        foreach (array_chunk($ids, $instance->getBulkWriteBatchSize()) as $chunk) {
+            $models = $instance->softDeletes
+                ? static::withTrashed()->find($chunk)
+                : static::findById($chunk);
+
+            if (!is_array($models) || $models === []) {
+                continue;
+            }
+
+            foreach ($models as $model) {
+                if ($model instanceof static && $model->delete()) {
+                    $deleted++;
+                }
+            }
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * Restore soft-deleted rows by primary key(s). Returns the number of rows restored.
+     *
+     * @param int|string|array<int|string> $ids
+     */
+    public static function restoreMany(int|string|array $ids): int
+    {
+        $ids = array_values(array_unique((array) $ids));
+        if ($ids === []) {
+            return 0;
+        }
+
+        static::bootIfNotBooted();
+
+        $instance = new static();
+        if (!$instance->softDeletes) {
+            return 0;
+        }
+
+        if (!$instance->requiresPerModelRestoreLifecycle()) {
+            $restored = 0;
+            $now = $instance->timestamps ? $instance->freshTimestamp() : null;
+
+            foreach (array_chunk($ids, $instance->getBulkWriteBatchSize()) as $chunk) {
+                $updateData = [static::DELETED_AT => null];
+                if ($now !== null) {
+                    $updateData[static::UPDATED_AT] = $now;
+                }
+
+                $result = db($instance->getConnectionName())
+                    ->table($instance->getTable())
+                    ->whereIn($instance->primaryKey, $chunk)
+                    ->update($updateData);
+
+                if ($result === false) {
+                    break;
+                }
+
+                $restored += count($chunk);
+            }
+
+            return $restored;
+        }
+
+        $restored = 0;
+
+        foreach (array_chunk($ids, $instance->getBulkWriteBatchSize()) as $chunk) {
+            $models = static::withTrashed()->find($chunk);
+            if (!is_array($models) || $models === []) {
+                continue;
+            }
+
+            foreach ($models as $model) {
+                if ($model instanceof static && $model->restore()) {
+                    $restored++;
+                }
+            }
+        }
+
+        return $restored;
+    }
+
+    /**
+     * Force-delete rows by primary key(s). Returns the number of rows deleted.
+     *
+     * @param int|string|array<int|string> $ids
+     */
+    public static function forceDestroy(int|string|array $ids): int
+    {
+        $ids = array_values(array_unique((array) $ids));
+        if ($ids === []) {
+            return 0;
+        }
+
+        static::bootIfNotBooted();
+
+        $instance = new static();
+
+        if (!$instance->requiresPerModelForceDeleteLifecycle()) {
+            $deleted = 0;
+
+            foreach (array_chunk($ids, $instance->getBulkWriteBatchSize()) as $chunk) {
+                $result = db($instance->getConnectionName())
+                    ->table($instance->getTable())
+                    ->whereIn($instance->primaryKey, $chunk)
+                    ->delete();
+
+                if ($result === false) {
+                    break;
+                }
+
+                $deleted += count($chunk);
+            }
+
+            return $deleted;
+        }
+
+        $deleted = 0;
+
+        foreach (array_chunk($ids, $instance->getBulkWriteBatchSize()) as $chunk) {
+            $models = $instance->softDeletes
+                ? static::withTrashed()->find($chunk)
+                : static::findById($chunk);
+
+            if (!is_array($models) || $models === []) {
+                continue;
+            }
+
+            foreach ($models as $model) {
+                if ($model instanceof static && $model->forceDelete()) {
+                    $deleted++;
+                }
+            }
+        }
+
+        return $deleted;
     }
 
     /**
@@ -421,7 +869,17 @@ abstract class Model implements JsonSerializable
      */
     public static function __callStatic(string $method, array $args): mixed
     {
+        if (in_array($method, static::observableEvents(), true) && isset($args[0]) && is_callable($args[0])) {
+            static::registerModelEvent($method, $args[0]);
+            return null;
+        }
+
         return (new static())->newQuery()->{$method}(...$args);
+    }
+
+    public function __call(string $method, array $args): mixed
+    {
+        return $this->newQuery()->{$method}(...$args);
     }
 
     // ── Attribute access ─────────────────────────────────────────────
@@ -512,7 +970,9 @@ abstract class Model implements JsonSerializable
     public function forceFill(array $attributes): static
     {
         foreach ($attributes as $key => $value) {
-            $this->setAttribute((string) $key, $value);
+            $key = (string) $key;
+            $this->setAttribute($key, $value);
+            $this->forceFilled[$key] = true;
         }
         return $this;
     }
@@ -590,6 +1050,7 @@ abstract class Model implements JsonSerializable
     public function syncOriginal(): static
     {
         $this->original = $this->attributes;
+        $this->forceFilled = [];
         return $this;
     }
 
@@ -642,7 +1103,7 @@ abstract class Model implements JsonSerializable
         if (!$this->exists) {
             return false;
         }
-        return $this->performHardDelete();
+        return $this->performHardDelete(true);
     }
 
     /**
@@ -653,6 +1114,11 @@ abstract class Model implements JsonSerializable
         if (!$this->softDeletes || !$this->exists) {
             return false;
         }
+
+        if (!$this->fireModelEvent('restoring', true)) {
+            return false;
+        }
+
         $now = $this->freshTimestamp();
         $this->attributes[static::DELETED_AT] = null;
         if ($this->timestamps) {
@@ -668,6 +1134,7 @@ abstract class Model implements JsonSerializable
             ->update($updateData);
         if ($result !== false) {
             $this->syncOriginal();
+            $this->fireModelEvent('restored');
         }
         return $result !== false;
     }
@@ -686,23 +1153,41 @@ abstract class Model implements JsonSerializable
         if ($fresh instanceof static) {
             $this->attributes = $fresh->attributes;
             $this->original   = $fresh->original;
+            $this->exists = $fresh->exists;
+            $this->wasRecentlyCreated = false;
         }
         return $this;
     }
 
+    public static function hydrateRecord(array $attributes): static
+    {
+        $model = new static();
+        $model->forceFill($attributes);
+        $model->syncOriginal();
+        $model->exists = true;
+        $model->wasRecentlyCreated = false;
+        $model->fireModelEvent('retrieved');
+
+        return $model;
+    }
+
     protected function performInsert(): bool
     {
+        if (!$this->fireModelEvent('saving', true) || !$this->fireModelEvent('creating', true)) {
+            return false;
+        }
+
         $this->touchTimestamps(isCreate: true);
 
         $builder = db($this->getConnectionName())->table($this->getTable());
-        if (!empty($this->fillable)) {
+        if (!empty($this->fillable) && !$this->hasForceFilledAttributes()) {
             $builder->setFillable($this->fillable);
         }
-        if (!empty($this->guarded)) {
+        if (!empty($this->guarded) && !$this->hasForceFilledAttributes()) {
             $builder->setGuarded($this->guarded);
         }
 
-        $id = $builder->insertGetId($this->attributes);
+        $id = $builder->insertGetId($this->filterPersistableAttributes($this->attributes, false));
 
         if ($id === null || $id === false) {
             return false;
@@ -715,6 +1200,8 @@ abstract class Model implements JsonSerializable
         $this->exists             = true;
         $this->wasRecentlyCreated = true;
         $this->syncOriginal();
+        $this->fireModelEvent('created');
+        $this->fireModelEvent('saved');
         return true;
     }
 
@@ -725,8 +1212,17 @@ abstract class Model implements JsonSerializable
             return true;
         }
 
+        if (!$this->fireModelEvent('saving', true) || !$this->fireModelEvent('updating', true)) {
+            return false;
+        }
+
         $this->touchTimestamps();
-        $dirty = $this->getDirty(); // re-read after touching timestamps
+        $dirty = $this->filterPersistableAttributes($this->getDirty(), true); // re-read after touching timestamps
+
+        if (empty($dirty)) {
+            $this->syncOriginal();
+            return true;
+        }
 
         $pkValue = $this->attributes[$this->primaryKey] ?? null;
         if ($pkValue === null) {
@@ -735,19 +1231,30 @@ abstract class Model implements JsonSerializable
             );
         }
 
-        $result = db($this->getConnectionName())
-            ->table($this->getTable())
-            ->where($this->primaryKey, $pkValue)
-            ->update($dirty);
+        $builder = db($this->getConnectionName())->table($this->getTable());
+        if (!empty($this->fillable) && !$this->hasForceFilledAttributes()) {
+            $builder->setFillable($this->fillable);
+        }
+        if (!empty($this->guarded) && !$this->hasForceFilledAttributes()) {
+            $builder->setGuarded($this->guarded);
+        }
+
+        $result = $builder->where($this->primaryKey, $pkValue)->update($dirty);
 
         if ($result !== false) {
             $this->syncOriginal();
+            $this->fireModelEvent('updated');
+            $this->fireModelEvent('saved');
         }
         return $result !== false;
     }
 
     protected function performSoftDelete(): bool
     {
+        if (!$this->fireModelEvent('deleting', true)) {
+            return false;
+        }
+
         $now = $this->freshTimestamp();
         $this->attributes[static::DELETED_AT] = $now;
         if ($this->timestamps) {
@@ -766,14 +1273,71 @@ abstract class Model implements JsonSerializable
 
         if ($result !== false) {
             $this->syncOriginal();
+            $this->fireModelEvent('deleted');
         }
         return $result !== false;
     }
 
-    protected function performHardDelete(): bool
+    protected function hasForceFilledAttributes(): bool
+    {
+        return $this->forceFilled !== [];
+    }
+
+    /**
+     * @param array<string, mixed> $attributes
+     * @return array<string, mixed>
+     */
+    protected function filterPersistableAttributes(array $attributes, bool $forUpdate): array
+    {
+        $filtered = [];
+
+        foreach ($attributes as $key => $value) {
+            $key = (string) $key;
+            if ($this->shouldPersistAttribute($key, $forUpdate)) {
+                $filtered[$key] = $value;
+            }
+        }
+
+        return $filtered;
+    }
+
+    protected function shouldPersistAttribute(string $key, bool $forUpdate): bool
+    {
+        if ($key === $this->primaryKey) {
+            return $forUpdate ? false : !$this->incrementing;
+        }
+
+        if (isset($this->forceFilled[$key])) {
+            return true;
+        }
+
+        if ($key === static::UPDATED_AT) {
+            return $this->timestamps;
+        }
+
+        if ($key === static::CREATED_AT) {
+            return $this->timestamps && !$forUpdate;
+        }
+
+        if ($key === static::DELETED_AT) {
+            return $this->softDeletes;
+        }
+
+        return $this->isFillable($key);
+    }
+
+    protected function performHardDelete(bool $force = false): bool
     {
         $pkValue = $this->attributes[$this->primaryKey] ?? null;
         if ($pkValue === null) {
+            return false;
+        }
+
+        if (!$this->fireModelEvent('deleting', true)) {
+            return false;
+        }
+
+        if ($force && !$this->fireModelEvent('forceDeleting', true)) {
             return false;
         }
 
@@ -784,8 +1348,456 @@ abstract class Model implements JsonSerializable
 
         if ($result !== false) {
             $this->exists = false;
+            $this->wasRecentlyCreated = false;
+            if ($force) {
+                $this->fireModelEvent('forceDeleted');
+            }
+            $this->fireModelEvent('deleted');
         }
         return $result !== false;
+    }
+
+    public static function observe(object|string $observer): void
+    {
+        static::bootIfNotBooted();
+
+        if (is_string($observer)) {
+            if (!class_exists($observer)) {
+                throw new RuntimeException('Observer class not found: ' . $observer);
+            }
+            $observer = new $observer();
+        }
+
+        foreach (static::observableEvents() as $event) {
+            if (is_callable([$observer, $event])) {
+                static::registerModelEvent($event, [$observer, $event]);
+            }
+        }
+    }
+
+    public static function flushEventListeners(): void
+    {
+        unset(static::$modelEventListeners[static::class]);
+    }
+
+    public static function clearBootedModelState(): void
+    {
+        unset(
+            static::$bootedModels[static::class],
+            static::$modelEventListeners[static::class],
+            static::$traitInitializers[static::class],
+            static::$mutedEventDepth[static::class]
+        );
+    }
+
+    public static function withoutEvents(callable $callback): mixed
+    {
+        static::bootIfNotBooted();
+        static::$mutedEventDepth[static::class] = (static::$mutedEventDepth[static::class] ?? 0) + 1;
+
+        try {
+            return $callback();
+        } finally {
+            $remaining = (static::$mutedEventDepth[static::class] ?? 1) - 1;
+            if ($remaining <= 0) {
+                unset(static::$mutedEventDepth[static::class]);
+            } else {
+                static::$mutedEventDepth[static::class] = $remaining;
+            }
+        }
+    }
+
+    protected static function registerModelEvent(string $event, callable $listener): void
+    {
+        if (!in_array($event, static::observableEvents(), true)) {
+            throw new RuntimeException('Unsupported model event: ' . $event);
+        }
+
+        static::$modelEventListeners[static::class][$event] ??= [];
+        static::$modelEventListeners[static::class][$event][] = $listener;
+    }
+
+    protected static function observableEvents(): array
+    {
+        return self::OBSERVABLE_EVENTS;
+    }
+
+    protected function newBulkWriteBuilder(): mixed
+    {
+        $builder = db($this->getConnectionName())->table($this->getTable());
+
+        if (!empty($this->fillable)) {
+            $builder->setFillable($this->fillable);
+        }
+
+        if (!empty($this->guarded)) {
+            $builder->setGuarded($this->guarded);
+        }
+
+        return $builder;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    protected function prepareBulkWriteRows(array $rows, bool $forUpsert): array
+    {
+        $timestamp = $this->timestamps ? $this->freshTimestamp() : null;
+        $prepared = [];
+
+        foreach ($rows as $row) {
+            if (!is_array($row) || $row === []) {
+                continue;
+            }
+
+            $row = $this->filterBulkWriteRow($row);
+            if ($row === []) {
+                continue;
+            }
+
+            if ($timestamp !== null) {
+                if (!$forUpsert || !array_key_exists(static::CREATED_AT, $row)) {
+                    $row[static::CREATED_AT] = $row[static::CREATED_AT] ?? $timestamp;
+                }
+
+                $row[static::UPDATED_AT] = $timestamp;
+            }
+
+            if ($row !== []) {
+                $prepared[] = $row;
+            }
+        }
+
+        return $prepared;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    protected function prepareBulkUpdateRows(array $rows): array
+    {
+        $timestamp = $this->timestamps ? $this->freshTimestamp() : null;
+        $prepared = [];
+
+        foreach ($rows as $row) {
+            if (!is_array($row) || $row === []) {
+                continue;
+            }
+
+            $primaryKeyValue = $row[$this->primaryKey] ?? null;
+            if ($primaryKeyValue === null || $primaryKeyValue === '') {
+                continue;
+            }
+
+            $filteredRow = $this->filterBulkWriteRow($row, preserveKeys: [$this->primaryKey]);
+            $filteredRow[$this->primaryKey] = $primaryKeyValue;
+
+            if ($timestamp !== null) {
+                $filteredRow[static::UPDATED_AT] = $timestamp;
+            }
+
+            if (count($filteredRow) <= 1) {
+                continue;
+            }
+
+            $prepared[] = $filteredRow;
+        }
+
+        return $prepared;
+    }
+
+    protected function processBulkStream(iterable $rows, ?int $batchSize, callable $prepareBatch, callable $writeBatch, string $operation, ?callable $progress = null): int
+    {
+        $resolvedBatchSize = $batchSize !== null ? $this->normalizeBulkBatchSize($batchSize) : null;
+        $buffer = [];
+        $processedRows = 0;
+        $processedBatches = 0;
+
+        $flush = function () use (&$buffer, &$processedRows, &$processedBatches, $prepareBatch, $writeBatch, $operation, $progress): bool {
+            if ($buffer === []) {
+                return true;
+            }
+
+            $preparedBatch = $prepareBatch($buffer);
+            $buffer = [];
+
+            if ($preparedBatch === []) {
+                return true;
+            }
+
+            $result = $writeBatch($preparedBatch);
+            if (!$this->bulkWriteSucceeded($result)) {
+                throw new RuntimeException('Bulk ' . $operation . ' batch failed.');
+            }
+
+            $processedRows += count($preparedBatch);
+            $processedBatches++;
+
+            if ($progress !== null) {
+                $shouldContinue = $progress([
+                    'operation' => $operation,
+                    'processed_rows' => $processedRows,
+                    'batches_processed' => $processedBatches,
+                    'last_batch_rows' => count($preparedBatch),
+                ]);
+
+                if ($shouldContinue === false) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        foreach ($rows as $row) {
+            if (!is_array($row) || $row === []) {
+                continue;
+            }
+
+            if ($resolvedBatchSize === null) {
+                $resolvedBatchSize = $this->normalizeBulkBatchSize(null, $row);
+            }
+
+            $buffer[] = $row;
+
+            if (count($buffer) >= $resolvedBatchSize && !$flush()) {
+                return $processedRows;
+            }
+        }
+
+        $flush();
+
+        return $processedRows;
+    }
+
+    protected function normalizeBulkBatchSize(?int $batchSize, ?array $sampleRow = null): int
+    {
+        $batchSize ??= $this->recommendedBulkWriteBatchSize($sampleRow);
+
+        if ($batchSize < 1) {
+            throw new RuntimeException('Bulk batch size must be greater than zero.');
+        }
+
+        return $batchSize;
+    }
+
+    protected function recommendedBulkWriteBatchSize(?array $sampleRow = null): int
+    {
+        $default = $this->getBulkWriteBatchSize();
+        if ($sampleRow === null || $sampleRow === []) {
+            return $default;
+        }
+
+        $columnCount = count($sampleRow);
+
+        return match (true) {
+            $columnCount <= 4 => $default,
+            $columnCount <= 12 => min($default, 1000),
+            $columnCount <= 24 => min($default, 500),
+            default => min($default, 250),
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param string[] $preserveKeys
+     * @return array<string, mixed>
+     */
+    protected function filterBulkWriteRow(array $row, array $preserveKeys = []): array
+    {
+        if (!empty($this->fillable)) {
+            $allowed = array_fill_keys($this->fillable, true);
+            $allowed[static::CREATED_AT] = true;
+            $allowed[static::UPDATED_AT] = true;
+            foreach ($preserveKeys as $key) {
+                $allowed[$key] = true;
+            }
+            $row = array_intersect_key($row, $allowed);
+        }
+
+        if (!empty($this->guarded)) {
+            $blocked = array_fill_keys($this->guarded, true);
+            foreach ($preserveKeys as $key) {
+                unset($blocked[$key]);
+            }
+            $row = array_diff_key($row, $blocked);
+        }
+
+        return $row;
+    }
+
+    /**
+     * @param string[]|null $updateColumns
+     * @return string[]|null
+     */
+    protected function prepareBulkUpsertUpdateColumns(?array $updateColumns): ?array
+    {
+        if ($updateColumns === null) {
+            return null;
+        }
+
+        $columns = array_values(array_unique($updateColumns));
+        $columns = array_values(array_filter($columns, fn(string $column): bool => !$this->isBulkWriteColumnGuarded($column)));
+
+        if ($this->timestamps && !in_array(static::UPDATED_AT, $columns, true)) {
+            $columns[] = static::UPDATED_AT;
+        }
+
+        return $columns;
+    }
+
+    protected function isBulkWriteColumnGuarded(string $column): bool
+    {
+        if (!empty($this->fillable)) {
+            return !in_array($column, $this->fillable, true)
+                && $column !== static::CREATED_AT
+                && $column !== static::UPDATED_AT;
+        }
+
+        return in_array($column, $this->guarded, true);
+    }
+
+    protected function bulkWriteSucceeded(mixed $result): bool
+    {
+        if ($result === false) {
+            return false;
+        }
+
+        if (is_array($result) && isset($result['code']) && (int) $result['code'] >= 400) {
+            return false;
+        }
+
+        if (is_object($result) && isset($result->code) && (int) $result->code >= 400) {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function fireModelEvent(string $event, bool $halt = false): bool
+    {
+        static::bootIfNotBooted();
+
+        if ((static::$mutedEventDepth[static::class] ?? 0) > 0) {
+            return true;
+        }
+
+        foreach (static::$modelEventListeners[static::class][$event] ?? [] as $listener) {
+            if ($listener($this) === false && $halt) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected function requiresPerModelDeleteLifecycle(): bool
+    {
+        if ($this->softDeletes) {
+            return true;
+        }
+
+        foreach (['deleting', 'deleted', 'forceDeleting', 'forceDeleted'] as $event) {
+            if (!empty(static::$modelEventListeners[static::class][$event] ?? [])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function requiresPerModelRestoreLifecycle(): bool
+    {
+        foreach (['restoring', 'restored'] as $event) {
+            if (!empty(static::$modelEventListeners[static::class][$event] ?? [])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function requiresPerModelForceDeleteLifecycle(): bool
+    {
+        foreach (['deleting', 'deleted', 'forceDeleting', 'forceDeleted'] as $event) {
+            if (!empty(static::$modelEventListeners[static::class][$event] ?? [])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function saveQuietly(): bool
+    {
+        return static::withoutEvents(fn() => $this->save()) === true;
+    }
+
+    public function deleteQuietly(): bool
+    {
+        return static::withoutEvents(fn() => $this->delete()) === true;
+    }
+
+    public function restoreQuietly(): bool
+    {
+        return static::withoutEvents(fn() => $this->restore()) === true;
+    }
+
+    public function forceDeleteQuietly(): bool
+    {
+        return static::withoutEvents(fn() => $this->forceDelete()) === true;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected static function classUsesRecursive(string $class): array
+    {
+        $results = [];
+
+        foreach (array_reverse(class_parents($class) ?: []) as $parent) {
+            foreach (class_uses($parent) ?: [] as $trait) {
+                $results[$trait] = $trait;
+                foreach (static::traitUsesRecursive($trait) as $nestedTrait) {
+                    $results[$nestedTrait] = $nestedTrait;
+                }
+            }
+        }
+
+        foreach (class_uses($class) ?: [] as $trait) {
+            $results[$trait] = $trait;
+            foreach (static::traitUsesRecursive($trait) as $nestedTrait) {
+                $results[$nestedTrait] = $nestedTrait;
+            }
+        }
+
+        return array_values($results);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected static function traitUsesRecursive(string $trait): array
+    {
+        $traits = class_uses($trait) ?: [];
+        $results = [];
+
+        foreach ($traits as $nestedTrait) {
+            $results[$nestedTrait] = $nestedTrait;
+            foreach (static::traitUsesRecursive($nestedTrait) as $deepTrait) {
+                $results[$deepTrait] = $deepTrait;
+            }
+        }
+
+        return array_values($results);
+    }
+
+    protected static function classBasename(string $class): string
+    {
+        $position = strrpos($class, '\\');
+        return $position === false ? $class : substr($class, $position + 1);
     }
 
     // ── Serialization ─────────────────────────────────────────────────────

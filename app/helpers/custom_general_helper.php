@@ -352,7 +352,7 @@ function base_url($path = null)
  * echo asset('uploads/document.pdf', false); // Output: http://example.com/uploads/document.pdf
  */
 if (!function_exists('asset')) {
-	function asset($param, $public = true)
+	function asset($param, $public = true, $versioned = null)
 	{
 		// Validate input parameter
 		if (empty($param) || !is_string($param)) {
@@ -372,9 +372,23 @@ if (!function_exists('asset')) {
 
 		// Determine the public directory based on the $public parameter
 		$directory = $public ? 'public/' : '';
+		$url = base_url($directory . $param);
 
-		// Return the complete asset URL using the safe base_url function
-		return base_url($directory . $param);
+		$shouldVersion = $versioned;
+		if ($shouldVersion === null) {
+			$shouldVersion = $public && ((bool) config('assets.versioning', true));
+		}
+
+		if (!$shouldVersion || !$public) {
+			return $url;
+		}
+
+		$version = \Core\Assets\AssetVersioner::versionForPublicAsset($param);
+		if ($version === '') {
+			return $url;
+		}
+
+		return $url . (str_contains($url, '?') ? '&' : '?') . 'v=' . rawurlencode($version);
 	}
 }
 

@@ -2359,6 +2359,7 @@ PHP;
             $sleep = isset($options['sleep']) ? (int) $options['sleep'] : 3;
             $tries = isset($options['tries']) ? (int) $options['tries'] : 3;
             $timeout = isset($options['timeout']) ? (int) $options['timeout'] : 60;
+            $maxPriority = isset($options['max-priority']) ? (int) $options['max-priority'] : null;
             $once = isset($options['once']);
 
             $console->newLine();
@@ -2371,6 +2372,7 @@ PHP;
                 'sleep'   => $sleep,
                 'tries'   => $tries,
                 'timeout' => $timeout,
+                'max_priority' => $maxPriority,
                 'once'    => $once,
             ], function (string $status, string $message) use ($console) {
                 match ($status) {
@@ -2380,7 +2382,7 @@ PHP;
                     default     => $console->line("  {$message}"),
                 };
             });
-        }, 'Process jobs on the queue [queue_name] [--sleep=3] [--tries=3] [--timeout=60] [--once]');
+        }, 'Process jobs on the queue [queue_name] [--sleep=3] [--tries=3] [--timeout=60] [--max-priority=2] [--once]');
 
         $console->command('queue:retry', function (array $args = [], array $options = []) use ($console) {
             $id = $args[0] ?? null;
@@ -2419,13 +2421,14 @@ PHP;
                     $job['id'] ?? '—',
                     $job['queue'] ?? 'default',
                     $job['payload']['class'] ?? 'Unknown',
+                    $job['priority'] ?? \Core\Queue\Job::PRIORITY_NORMAL,
                     $job['attempts'] ?? 0,
                     $job['failed_at'] ?? '—',
                     mb_strimwidth($job['error'] ?? '', 0, 50, '...'),
                 ];
             }
 
-            $console->table(['ID', 'Queue', 'Job', 'Attempts', 'Failed At', 'Error'], $rows);
+            $console->table(['ID', 'Queue', 'Job', 'Priority', 'Attempts', 'Failed At', 'Error'], $rows);
             $console->info("  Showing " . count($rows) . " failed job(s).");
             $console->newLine();
         }, 'List all failed queue jobs');

@@ -2,6 +2,8 @@
 
 namespace Components;
 
+use Core\Http\CookieFactory;
+
 class Maintenance
 {
     private array $config;
@@ -135,13 +137,17 @@ class Maintenance
             $sameSite = 'Lax';
         }
 
-        setcookie($this->bypassCookieName(), $this->bypassCookieValue($secret), [
-            'expires' => time() + $this->bypassCookieTtl(),
-            'path' => $cookiePath === '/' ? '/' : rtrim($cookiePath, '/') . '/',
-            'secure' => $this->isHttpsRequest(),
-            'httponly' => true,
-            'samesite' => $sameSite,
-        ]);
+        CookieFactory::send(
+            $this->bypassCookieName(),
+            $this->bypassCookieValue($secret),
+            $this->bypassCookieTtl(),
+            $cookiePath === '/' ? '/' : rtrim($cookiePath, '/') . '/',
+            '',
+            $this->isHttpsRequest(),
+            true,
+            $sameSite,
+            false
+        );
     }
 
     private function hasValidBypassCookie(array $payload): bool

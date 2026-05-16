@@ -18,11 +18,13 @@
 - `HasEagerLoading` owns batched eager-load processing and incremental relation attachment.
 - `HasStreaming` owns `chunk`, `cursor`, `lazy`, `chunkById`, and `lazyById` large-data iteration helpers.
 - `HasProfiling` owns query profiling, slow-query logging, retry behavior, and per-session performance rules.
-- `HasDebugHelpers` owns SQL/debug rendering helpers such as `toSql`, `toRawSql`, `dump`, `dd`, and `toDebugSql`.
+- `HasDebugHelpers` owns SQL/debug rendering helpers such as `toSql`, `toRawSql`, `dump`, `dd`, `toDebugSql`, and `toDebugSnapshot`.
 - `HasPaginateCountCache` owns count-only paginate caching, cache-group invalidation, and successful-write cache flush behavior.
 - Primary-key lookup helpers now include `find`, `findMany`, and `findOrFail` in addition to `fetch`, `firstOrFail`, and `sole`.
 - Record-creation helpers now include `firstOrNew`, `firstOrCreate`, `insertOrUpdate`, `updateOrInsert`, and `updateOrCreate`.
 - Soft-delete flows now expose `softDelete`, `delete`, `forceDelete`, and `restore` explicitly.
+- Iterable write helpers now include `insertInBatches`, `updateInBatches`, `upsertInBatches`, and `deleteInBatches`, which accept iterables, chunk work in bounded batches, and optionally emit progress callbacks.
+- Read- and eager-load paths share adaptive chunk heuristics so wide rows automatically reduce follow-up chunk sizes while the caller-provided size remains the ceiling.
 
 ### Paginate Count Cache
 
@@ -85,6 +87,8 @@
 | `orWhereIn` | `orWhereIn(string $column, array $value = []): self` |
 | `whereNotIn` | `whereNotIn(string $column, array $value = []): self` |
 | `orWhereNotIn` | `orWhereNotIn(string $column, array $value = []): self` |
+
+Large `IN` / `NOT IN` value lists are split into grouped predicates internally so callers do not have to hand-chunk arrays to stay under driver placeholder limits. Empty `whereIn([])` compiles to a false predicate; empty `whereNotIn([])` is treated as a no-op.
 
 #### BETWEEN
 
@@ -337,6 +341,12 @@ For deep pagination (search results, API feeds, infinite scroll), use `cursorPag
 | `upsert` | `upsert(array $values, string\|array $uniqueBy = 'id', array\|null $updateColumns = null, int $batchSize = 2000)` | Bulk INSERT ... ON DUPLICATE KEY UPDATE. Auto-chunks large datasets. For ≥100 rows: disables autocommit, unique checks, foreign key checks, increases buffer. Returns `['code', 'affected_rows', 'message', 'batches_processed', 'total_records']`. |
 | `batchInsert` | `batchInsert(array $data): self` | Batch insert (driver implementation) |
 | `batchUpdate` | `batchUpdate(array $data): self` | Batch update (driver implementation) |
+| `insertInBatches` | `insertInBatches(iterable $rows, ?int $batchSize = null, ?callable $progress = null): array` | Iterable insert helper with bounded chunks, optional adaptive batch sizing, and progress callbacks |
+| `updateInBatches` | `updateInBatches(iterable $rows, string $key = 'id', ?int $batchSize = null, ?callable $progress = null): array` | Iterable batch update helper for large maintenance jobs |
+| `upsertInBatches` | `upsertInBatches(iterable $rows, string\|array $uniqueBy = 'id', array\|null $updateColumns = null, ?int $batchSize = null, ?callable $progress = null): array` | Iterable upsert helper with bounded memory and adaptive sizing |
+| `deleteInBatches` | `deleteInBatches(iterable $ids, string $key = 'id', ?int $batchSize = null, ?callable $progress = null): array` | Iterable delete helper for large ID streams |
+
+When no explicit batch size is provided, iterable write helpers adapt the effective chunk size downward for wider rows so throughput remains high on narrow tables without exhausting memory on wider payloads.
 
 ### Aggregate
 
@@ -363,8 +373,11 @@ For deep pagination (search results, API feeds, infinite scroll), use `cursorPag
 | `toSql` | `toSql()` | `['query' => string, 'binds' => array, 'full_query' => string]` | Get SQL with placeholders and full interpolated query |
 | `toRawSql` | `toRawSql()` | `string` | Get SQL with values interpolated |
 | `toDebugSql` | `toDebugSql()` | `['main_query' => string, 'with_*' => ...]` | Debug SQL for main query + all eager loaded relation queries |
+| `toDebugSnapshot` | `toDebugSnapshot(array $reportOptions = []): array` | `array` | Unified inspection payload combining SQL, debug SQL, local profiler data, and the global performance report |
 | `dump` | `dump(): self` | Prints query, binds, and full query to output as preformatted HTML. Returns `$this` for chaining. |
 | `dd` | `dd(): never` | Dump and die (`exit(1)`) |
+
+Debug inspection helpers are restricted to CLI or `APP_DEBUG=true`. In non-debug HTTP contexts, they throw instead of exposing SQL text. Full-query interpolation also falls back to local escaping when no PDO handle is available, so diagnostic rendering does not require an already-open connection.
 
 ### Raw Query Execution
 
@@ -378,6 +391,10 @@ For deep pagination (search results, API feeds, infinite scroll), use `cursorPag
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
+
+- Slow-query logging writes NDJSON entries to `logs/database/slow.log`, redacts bind values, omits expanded `full_query` text, and sanitizes `request_uri` before storage or alert escalation.
+- `whereIntegerInRaw()` and `whereIntegerNotInRaw()` are performance tools for trusted integer lists only; never pass unvalidated user input because those helpers do not use bound parameters.
+- Debug helpers are for local diagnostics and CLI tooling, not public HTTP response payloads.
 | `safeInput` | `safeInput(): self` | Enable input sanitization on INSERT/UPDATE data |
 | `safeOutput` | `safeOutput(bool $enable = true): self` | Enable HTML entity encoding on query results |
 | `safeOutputWithException` | `safeOutputWithException(array $data = []): self` | Enable safe output but exclude specific columns from encoding |

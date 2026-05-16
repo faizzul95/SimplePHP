@@ -4,7 +4,7 @@ namespace Core\View;
 
 class BladeEngine
 {
-    private const COMPILER_CACHE_VERSION = '2026-05-09-a';
+    private const COMPILER_CACHE_VERSION = '2026-05-16-a';
 
     private string $viewPath;
     private string $cachePath;
@@ -643,6 +643,7 @@ class BladeEngine
         $content = preg_replace('/@prepend\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php \$__blade->startPrepend('$1'); ?>", $content) ?? $content;
         $content = preg_replace('/@stack\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php echo \$__blade->yieldStack('$1'); ?>", $content) ?? $content;
         $content = preg_replace('/@json\(\s*(.+?)\s*\)/', '<?php echo json_encode($1, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>', $content) ?? $content;
+        $content = $this->compileSriDirectives($content);
 
         $content = preg_replace('/@auth/', '<?php if (auth()->check()): ?>', $content) ?? $content;
         $content = preg_replace('/@guest/', '<?php if (auth()->guest()): ?>', $content) ?? $content;
@@ -713,17 +714,6 @@ class BladeEngine
         $content = preg_replace('/@break\s*\((.*?)\)/', '<?php if ($1) break; ?>', $content) ?? $content;
         $content = preg_replace('/@continue\s*\((.*?)\)/', '<?php if ($1) continue; ?>', $content) ?? $content;
 
-        // @sri('url', 'sha384-hash') → integrity="sha384-hash" crossorigin="anonymous"
-        // The hash is output verbatim — it must be a trusted literal in the template, not user input.
-        $content = preg_replace_callback(
-            '/@sri\(\s*(?:[\'"][^\'"]*[\'"]\s*,\s*)?[\'"](sha(?:256|384|512)-[A-Za-z0-9+\/=]+)[\'"]\s*\)/',
-            static function (array $m): string {
-                $hash = htmlspecialchars($m[1], ENT_QUOTES, 'UTF-8');
-                return 'integrity="' . $hash . '" crossorigin="anonymous"';
-            },
-            $content
-        ) ?? $content;
-
         $content = preg_replace('/\{!!\s*(.+?)\s*!!\}/s', '<?php echo $1; ?>', $content) ?? $content;
         $content = preg_replace('/\{{\s*(.+?)\s*\}}/s', '<?php echo htmlspecialchars((string)($1), ENT_QUOTES, "UTF-8"); ?>', $content) ?? $content;
 
@@ -732,6 +722,26 @@ class BladeEngine
         }
 
         return $content;
+    }
+
+    private function compileSriDirectives(string $content): string
+    {
+        return $this->replaceDirectiveCalls($content, 'sri', function (string $expression): string {
+            $expression = trim($expression);
+            if ($expression === '') {
+                return '';
+            }
+
+            $args = $this->splitTopLevelArguments($expression, 2);
+            $asset = trim($args[0] ?? '');
+            if ($asset === '') {
+                return '@sri(' . $expression . ')';
+            }
+
+            $manualHash = isset($args[1]) ? trim($args[1]) : 'null';
+
+            return "<?php echo \\Core\\Assets\\AssetIntegrity::attributes((string) ({$asset}), {$manualHash}); ?>";
+        });
     }
 
     private function compileSectionDirectives(string $content): string

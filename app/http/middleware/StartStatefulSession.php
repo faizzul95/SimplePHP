@@ -44,7 +44,15 @@ class StartStatefulSession implements MiddlewareInterface
             return;
         }
 
+        if (function_exists('bootstrapConfigureSessionIni')) {
+            bootstrapConfigureSessionIni();
+        }
+
         @session_start();
+
+        if (function_exists('bootstrapRefreshSessionCookie')) {
+            bootstrapRefreshSessionCookie();
+        }
 
         if (function_exists('initializeFlashSessionState')) {
             initializeFlashSessionState();

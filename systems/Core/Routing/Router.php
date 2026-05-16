@@ -487,6 +487,11 @@ class Router
 
         [$route, $params] = $match;
         $request->setRouteParams($params);
+        $request->setAttributes([
+            'route.uri' => $route->uri,
+            'route.name' => $route->name,
+            'route.middleware' => $route->middleware,
+        ]);
 
         $middleware = $this->resolveMiddleware($route->middleware);
 

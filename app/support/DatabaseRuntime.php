@@ -13,6 +13,7 @@ class DatabaseRuntime
     protected array $managers = [];
     protected array $loadedScopeMacros = [];
     protected bool $registryInitialized = false;
+    protected array $routingRegistry = [];
 
     public function __construct(array $config = [])
     {
@@ -42,6 +43,20 @@ class DatabaseRuntime
         $manager = $database->raw();
 
         $manager->addConnection($normalizedName, (array) $connection['config']);
+
+        foreach (($this->routingRegistry[$normalizedName]['aliases'] ?? []) as $alias => $aliasConfig) {
+            $manager->addConnection((string) $alias, (array) $aliasConfig);
+        }
+
+        if (method_exists($manager, 'configureReadWriteRouting') && isset($this->routingRegistry[$normalizedName])) {
+            $routing = $this->routingRegistry[$normalizedName];
+            $manager->configureReadWriteRouting(
+                $normalizedName,
+                (array) ($routing['read'] ?? []),
+                (string) ($routing['write'] ?? $normalizedName),
+                (bool) ($routing['sticky'] ?? true)
+            );
+        }
 
         if (!empty($this->config['db']['profiling']['enabled'])) {
             $manager->setProfilingEnabled(true);
@@ -79,15 +94,17 @@ class DatabaseRuntime
                 continue;
             }
 
-            $driver = strtolower(trim((string) ($envConfigs[$environment]['driver'] ?? '')));
+            $normalizedName = strtolower((string) $connectionName);
+            $normalizedConfig = $this->normalizeConnectionConfig($normalizedName, $envConfigs[$environment]);
+            $driver = strtolower(trim((string) ($normalizedConfig['driver'] ?? '')));
             if ($driver === '') {
                 $this->logError('Database driver missing for connection: ' . $connectionName);
                 continue;
             }
 
-            $this->connectionRegistry[strtolower((string) $connectionName)] = [
+            $this->connectionRegistry[$normalizedName] = [
                 'driver' => $driver,
-                'config' => $envConfigs[$environment],
+                'config' => $normalizedConfig,
             ];
         }
 
@@ -118,6 +135,103 @@ class DatabaseRuntime
         $normalizedName = strtolower(trim($connectionName));
 
         return $normalizedName !== '' ? $normalizedName : 'default';
+    }
+
+    protected function normalizeConnectionConfig(string $connectionName, array $config): array
+    {
+        $readPool = $this->normalizeReplicaPool($config['read'] ?? null);
+        $writeConfig = $this->normalizeReplicaEndpoint($config['write'] ?? null);
+        $sticky = array_key_exists('sticky', $config) ? (bool) $config['sticky'] : true;
+
+        unset($config['read'], $config['write'], $config['sticky']);
+
+        if ($writeConfig !== null) {
+            $config = array_replace($config, $writeConfig);
+        }
+
+        if ($connectionName === 'default' && $readPool === []) {
+            $legacyRead = $this->legacyReplicaConfig();
+            if ($legacyRead !== null) {
+                $readPool[] = $legacyRead;
+                $sticky = true;
+            }
+        }
+
+        if ($readPool !== []) {
+            $writeAlias = $connectionName . '::write';
+            $readAliases = [];
+            $aliases = [
+                $writeAlias => $config,
+            ];
+
+            foreach (array_values($readPool) as $index => $readConfig) {
+                $alias = $connectionName . '::read:' . ($index + 1);
+                $aliases[$alias] = array_replace($config, $readConfig);
+                $readAliases[] = $alias;
+            }
+
+            $this->routingRegistry[$connectionName] = [
+                'aliases' => $aliases,
+                'read' => $readAliases,
+                'write' => $writeAlias,
+                'sticky' => $sticky,
+            ];
+        }
+
+        return $config;
+    }
+
+    protected function normalizeReplicaPool(mixed $readConfig): array
+    {
+        if (!is_array($readConfig)) {
+            return [];
+        }
+
+        $pool = [];
+        foreach ($readConfig as $key => $value) {
+            if (is_array($value)) {
+                $normalized = $this->normalizeReplicaEndpoint($value);
+                if ($normalized !== null) {
+                    $pool[] = $normalized;
+                }
+                continue;
+            }
+
+            if (is_string($key)) {
+                $normalized = $this->normalizeReplicaEndpoint($readConfig);
+                if ($normalized !== null) {
+                    $pool[] = $normalized;
+                }
+                break;
+            }
+        }
+
+        return $pool;
+    }
+
+    protected function normalizeReplicaEndpoint(mixed $config): ?array
+    {
+        if (!is_array($config)) {
+            return null;
+        }
+
+        $normalized = [];
+        foreach ($config as $key => $value) {
+            if (in_array($key, ['read', 'write', 'sticky'], true)) {
+                continue;
+            }
+
+            $normalized[$key] = $value;
+        }
+
+        return $normalized === [] ? null : $normalized;
+    }
+
+    protected function legacyReplicaConfig(): ?array
+    {
+        $legacy = $this->connectionRegistry['slave']['config'] ?? null;
+
+        return is_array($legacy) ? $legacy : null;
     }
 
     protected function loadScopeMacros($connection, string $connectionName): void

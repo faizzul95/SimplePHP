@@ -183,6 +183,16 @@ interface QueryInterface
      */
     public function lazy(int $chunkSize);
 
+   /**
+    * Return a streamed JSON response backed by chunked/cursor iteration.
+    *
+    * @param int $chunkSize The size of each chunk.
+    * @param array $headers Additional response headers.
+    * @param int $encodingFlags Additional json_encode flags.
+    * @return mixed
+    */
+   public function streamJsonResponse(int $chunkSize = 1000, array $headers = [], int $encodingFlags = 0);
+
     /**
      * Paginates the result set.
      *
@@ -215,6 +225,15 @@ interface QueryInterface
      * @return array The SQL query as an array.
      */
     public function toDebugSql();
+
+   /**
+    * Return a unified debug snapshot containing SQL, profiler payload, and
+    * performance report information.
+    *
+    * @param array $reportOptions Optional performance report options.
+    * @return array<string, mixed>
+    */
+   public function toDebugSnapshot(array $reportOptions = []);
 
     /**
      * Run an aggregate function on the query.

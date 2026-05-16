@@ -229,8 +229,10 @@ class MariaDBDriver extends BaseDatabase
                 throw new \RuntimeException('Generated count query is empty');
             }
 
+            $this->connectForOperation('read');
+
             // Execute the total count query
-            $stmtTotal = $this->pdo[$this->connectionName]->prepare($sqlTotal);
+            $stmtTotal = $this->resolvePdo('read')->prepare($sqlTotal);
 
             if ($stmtTotal === false) {
                 throw new \RuntimeException('Failed to prepare count query');
@@ -319,7 +321,8 @@ class MariaDBDriver extends BaseDatabase
                 $existsSql = "SELECT EXISTS(SELECT 1 FROM {$this->table} LIMIT 1) AS row_exists";
             }
 
-            $stmt = $this->pdo[$this->connectionName]->prepare($existsSql);
+            $this->connectForOperation('read');
+            $stmt = $this->resolvePdo('read')->prepare($existsSql);
 
             // Bind parameters if any
             $bindings = $this->getSelectQueryBindings();
@@ -441,16 +444,17 @@ class MariaDBDriver extends BaseDatabase
                     ];
 
                     foreach ($settingsQueries as $key => $query) {
-                        $stmt = $this->pdo[$this->connectionName]->query($query);
+                        $this->connectForOperation('write');
+                        $stmt = $this->resolvePdo('write')->query($query);
                         $originalSettings[$key] = $stmt->fetchColumn();
                     }
 
                     // Optimize for bulk operations
-                    $this->pdo[$this->connectionName]->exec('SET autocommit = 0');
-                    $this->pdo[$this->connectionName]->exec('SET unique_checks = 0');
-                    $this->pdo[$this->connectionName]->exec('SET foreign_key_checks = 0');
-                    $this->pdo[$this->connectionName]->exec('SET bulk_insert_buffer_size = 268435456');
-                    $this->pdo[$this->connectionName]->beginTransaction();
+                    $this->resolvePdo('write')->exec('SET autocommit = 0');
+                    $this->resolvePdo('write')->exec('SET unique_checks = 0');
+                    $this->resolvePdo('write')->exec('SET foreign_key_checks = 0');
+                    $this->resolvePdo('write')->exec('SET bulk_insert_buffer_size = 268435456');
+                    $this->resolvePdo('write')->beginTransaction();
                 } catch (\Exception $e) {
                     error_log("Database optimization failed: " . $e->getMessage());
                 }
@@ -525,7 +529,8 @@ class MariaDBDriver extends BaseDatabase
                         $sql .= " ON DUPLICATE KEY UPDATE " . implode(', ', $updates);
                     }
 
-                    $stmt = $this->pdo[$this->connectionName]->prepare($sql);
+                    $this->connectForOperation('write');
+                    $stmt = $this->resolvePdo('write')->prepare($sql);
 
                     // Flatten values for binding
                     $bindValues = [];
@@ -547,7 +552,7 @@ class MariaDBDriver extends BaseDatabase
                 }
 
                 // Commit transaction
-                if ($this->pdo[$this->connectionName]->inTransaction()) {
+                if ($this->resolvePdo('write')->inTransaction()) {
                     $this->commit();
                 }
 
@@ -559,7 +564,7 @@ class MariaDBDriver extends BaseDatabase
                     'total_records' => $totalRecords
                 ]);
             } catch (\Exception $e) {
-                if ($this->pdo[$this->connectionName]->inTransaction()) {
+                if ($this->resolvePdo('write')->inTransaction()) {
                     $this->rollback();
                 }
                 throw $e;
@@ -574,10 +579,10 @@ class MariaDBDriver extends BaseDatabase
                 // Restore original database settings only if they were changed
                 try {
                     if (!$skipOptimization) {
-                        $this->pdo[$this->connectionName]->exec("SET autocommit = {$originalSettings['autocommit']}");
-                        $this->pdo[$this->connectionName]->exec("SET unique_checks = {$originalSettings['unique_checks']}");
-                        $this->pdo[$this->connectionName]->exec("SET foreign_key_checks = {$originalSettings['foreign_key_checks']}");
-                        $this->pdo[$this->connectionName]->exec("SET bulk_insert_buffer_size = {$originalSettings['bulk_insert_buffer_size']}");
+                        $this->resolvePdo('write')->exec("SET autocommit = {$originalSettings['autocommit']}");
+                        $this->resolvePdo('write')->exec("SET unique_checks = {$originalSettings['unique_checks']}");
+                        $this->resolvePdo('write')->exec("SET foreign_key_checks = {$originalSettings['foreign_key_checks']}");
+                        $this->resolvePdo('write')->exec("SET bulk_insert_buffer_size = {$originalSettings['bulk_insert_buffer_size']}");
                     }
                 } catch (\Exception $e) {
                     error_log("Failed to restore database settings: " . $e->getMessage());

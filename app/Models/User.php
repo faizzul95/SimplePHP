@@ -99,4 +99,21 @@ class User extends Model
 
     /** Default per-page for paginate(). */
     protected int $perPage = 20;
+
+    /** Columns permitted for user-driven ORDER BY clauses. */
+    protected array $sortable = [
+        'users.name',
+        'users.email',
+        'users.phone',
+        'users.is_active',
+        'users.created_at',
+    ];
+
+    /** Columns permitted for user-driven filters. */
+    protected array $filterable = [
+        'users.email',
+        'users.phone',
+        'users.is_active',
+        'users.created_at',
+    ];
 }

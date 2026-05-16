@@ -316,3 +316,130 @@ final class KeysetLimitPreservingTest extends TestCase
         self::assertSame([1, 2, 3], array_column($rows, 'id'));
     }
 }
+
+final class AdaptiveStreamingChunkProbe extends BaseDatabase
+{
+    /** @var array<int, array<string, mixed>> */
+    private array $records;
+
+    /** @var array<int, int> */
+    public array $limitHistory = [];
+
+    public bool $hasIdColumn = true;
+
+    public function __construct()
+    {
+        $this->table = 'users';
+        $this->column = '*';
+        $this->records = array_map(static fn (int $id): array => [
+            'id' => $id,
+            'name' => 'User ' . $id,
+            'email' => 'user' . $id . '@example.test',
+            'status' => $id % 2 === 0 ? 'active' : 'inactive',
+            'role' => 'member',
+            'city' => 'Kuala Lumpur',
+        ], range(1, 6));
+    }
+
+    public function connect($connectionID = null) { return $this; }
+    public function whereDate($column, $operator = null, $value = null) { return $this; }
+    public function orWhereDate($column, $operator = null, $value = null) { return $this; }
+    public function whereDay($column, $operator = null, $value = null) { return $this; }
+    public function orWhereDay($column, $operator = null, $value = null) { return $this; }
+    public function whereMonth($column, $operator = null, $value = null) { return $this; }
+    public function orWhereMonth($column, $operator = null, $value = null) { return $this; }
+    public function whereYear($column, $operator = null, $value = null) { return $this; }
+    public function orWhereYear($column, $operator = null, $value = null) { return $this; }
+    public function whereTime($column, $operator = null, $value = null) { return $this; }
+    public function orWhereTime($column, $operator = null, $value = null) { return $this; }
+    public function whereJsonContains($columnName, $jsonPath, $value) { return $this; }
+    public function count($table = null) { return count($this->records); }
+    public function exists($table = null) { return !empty($this->records); }
+    public function _getLimitOffsetPaginate($query, $limit, $offset) { return $query; }
+    public function batchInsert($data) { return []; }
+    public function batchUpdate($data) { return []; }
+    public function upsert($values, $uniqueBy = 'id', $updateColumns = null) { return []; }
+    protected function sanitizeColumn($data): array { return is_array($data) ? $data : []; }
+
+    public function limit($limit)
+    {
+        $limit = (int) $limit;
+        $this->limitHistory[] = $limit;
+        $this->limit = 'LIMIT ' . $limit;
+        return $this;
+    }
+
+    public function offset($offset)
+    {
+        $this->offset = 'OFFSET ' . (int) $offset;
+        return $this;
+    }
+
+    public function hasColumn($column)
+    {
+        return $column === 'id' && $this->hasIdColumn;
+    }
+
+    public function get($table = null)
+    {
+        preg_match('/LIMIT\s+(\d+)/i', (string) $this->limit, $limitMatches);
+        $limit = isset($limitMatches[1]) ? (int) $limitMatches[1] : count($this->records);
+
+        preg_match('/OFFSET\s+(\d+)/i', (string) $this->offset, $offsetMatches);
+        $offset = isset($offsetMatches[1]) ? (int) $offsetMatches[1] : 0;
+
+        $lastId = null;
+        if (!empty($this->_binds)) {
+            $lastId = (int) end($this->_binds);
+            reset($this->_binds);
+        }
+
+        $rows = $this->records;
+        if ($lastId !== null) {
+            $rows = array_values(array_filter(
+                $rows,
+                static fn (array $row): bool => $row['id'] > $lastId
+            ));
+            return array_slice($rows, 0, $limit);
+        }
+
+        return array_slice($rows, $offset, $limit);
+    }
+
+    protected function recommendedStreamingChunkSize(?array $sampleRow = null, int $requestedSize = 1000): int
+    {
+        if ($sampleRow === null) {
+            return $requestedSize;
+        }
+
+        return 2;
+    }
+}
+
+final class AdaptiveStreamingChunkTest extends TestCase
+{
+    public function testChunkShrinksFollowUpOffsetBatchesForWideRows(): void
+    {
+        $database = new AdaptiveStreamingChunkProbe();
+        $database->select('name');
+
+        $chunks = [];
+        $database->chunk(5, function (array $rows) use (&$chunks) {
+            $chunks[] = array_column($rows, 'id');
+            return true;
+        });
+
+        self::assertSame([[1, 2, 3, 4, 5], [6]], $chunks);
+        self::assertSame([5, 2], array_slice($database->limitHistory, 0, 2));
+    }
+
+    public function testLazyByIdShrinksFollowUpKeysetBatchesForWideRows(): void
+    {
+        $database = new AdaptiveStreamingChunkProbe();
+
+        $rows = iterator_to_array($database->lazyById(5), false);
+
+        self::assertSame([1, 2, 3, 4, 5, 6], array_column($rows, 'id'));
+        self::assertSame([5, 2], array_slice($database->limitHistory, 0, 2));
+    }
+}

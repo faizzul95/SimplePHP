@@ -2,6 +2,7 @@
 
 namespace Components;
 
+use Core\Http\CookieFactory;
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -590,14 +591,17 @@ class CSRF
      */
     private function setCookie(string $name, string $value, int $expire, bool $secure, bool $httpOnly, string $sameSite): bool
     {
-        return setcookie($name, $value, [
-            'expires' => $expire,
-            'path' => '/',
-            'domain' => '',
-            'secure' => $secure,
-            'httponly' => $httpOnly,
-            'samesite' => $sameSite
-        ]);
+        return CookieFactory::send(
+            $name,
+            $value,
+            max(0, $expire - time()),
+            '/',
+            '',
+            $secure,
+            $httpOnly,
+            $sameSite,
+            false
+        );
     }
 
     /**

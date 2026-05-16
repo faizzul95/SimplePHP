@@ -524,7 +524,13 @@ class Auth
 
         // Ensure session exists before rotation; rotate ID on every successful login.
         if (session_status() !== PHP_SESSION_ACTIVE) {
+            if (function_exists('bootstrapConfigureSessionIni')) {
+                bootstrapConfigureSessionIni();
+            }
             @session_start();
+            if (function_exists('bootstrapRefreshSessionCookie')) {
+                bootstrapRefreshSessionCookie();
+            }
         }
 
         if (session_status() === PHP_SESSION_ACTIVE) {

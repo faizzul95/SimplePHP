@@ -87,7 +87,17 @@ trait HasEagerLoading
         $rowIndexByPk = $this->buildEagerRowIndex($data, $pk_id, $alias, $method);
 
         $chunkNumber = 0;
-        foreach (EagerLoadOptimizer::yieldOptimalChunks($primaryKeys, $table) as $chunk) {
+        $offset = 0;
+        $totalPrimaryKeys = count($primaryKeys);
+        $requestedChunkSize = max(1, (int) EagerLoadOptimizer::getOptimalChunkSize($totalPrimaryKeys, $table));
+        $effectiveChunkSize = $requestedChunkSize;
+
+        while ($offset < $totalPrimaryKeys) {
+            $chunk = array_slice($primaryKeys, $offset, $effectiveChunkSize);
+            if ($chunk === []) {
+                break;
+            }
+
             $chunkNumber++;
 
             $this->_setProfilerIdentifier('with_' . $alias . '_' . $chunkNumber);
@@ -108,6 +118,9 @@ trait HasEagerLoading
             }
 
             EagerLoadOptimizer::recordPerformance($table, $chunkSize, $executionTime);
+            $nextChunkSize = $this->adaptEagerLoadingChunkSizeAfterFetch($effectiveChunkSize, $requestedChunkSize, $chunkRelatedRecords);
+            $this->recordAdaptiveEagerLoadingChunkDecision($table, $alias, $requestedChunkSize, $effectiveChunkSize, $nextChunkSize, $chunkRelatedRecords);
+            $effectiveChunkSize = $nextChunkSize;
 
             foreach ($chunkRelatedRecords as $relatedRow) {
                 $fkValue = $relatedRow[$fk_id] ?? null;
@@ -127,7 +140,74 @@ trait HasEagerLoading
             }
 
             unset($chunkRelatedRecords);
+            $offset += $chunkSize;
         }
+    }
+
+    /**
+     * Shrink subsequent eager-load batches for wide related rows while keeping
+     * the initial optimizer choice as the upper bound.
+     *
+     * @param int $currentSize
+     * @param int $requestedSize
+     * @param array $relatedRecords
+     * @return int
+     */
+    protected function adaptEagerLoadingChunkSizeAfterFetch(int $currentSize, int $requestedSize, array $relatedRecords): int
+    {
+        if ($relatedRecords === []) {
+            return $currentSize;
+        }
+
+        $sampleRow = $relatedRecords[0];
+        if (is_object($sampleRow)) {
+            $sampleRow = get_object_vars($sampleRow);
+        }
+
+        if (!is_array($sampleRow)) {
+            return $currentSize;
+        }
+
+        return max(1, min($currentSize, $this->recommendedReadChunkSize($sampleRow, $requestedSize)));
+    }
+
+    /**
+     * Record a profiler-visible adaptive eager-loading decision when a relation
+     * batch is reduced for wider related rows.
+     *
+     * @param string $table
+     * @param string $alias
+     * @param int $requestedSize
+     * @param int $previousSize
+     * @param int $nextSize
+     * @param array $relatedRecords
+     * @return void
+     */
+    protected function recordAdaptiveEagerLoadingChunkDecision(string $table, string $alias, int $requestedSize, int $previousSize, int $nextSize, array $relatedRecords): void
+    {
+        if ($nextSize >= $previousSize || $relatedRecords === []) {
+            return;
+        }
+
+        $sampleRow = $relatedRecords[0];
+        if (is_object($sampleRow)) {
+            $sampleRow = get_object_vars($sampleRow);
+        }
+
+        if (!is_array($sampleRow)) {
+            return;
+        }
+
+        $this->_appendProfilerMetadata('adaptive_chunk_decisions', [
+            'phase' => 'eager_loading',
+            'table' => $table,
+            'relation' => $alias,
+            'requested_size' => $requestedSize,
+            'previous_size' => $previousSize,
+            'next_size' => $nextSize,
+            'observed_rows' => count($relatedRecords),
+            'observed_columns' => count($sampleRow),
+        ]);
     }
 
     /**

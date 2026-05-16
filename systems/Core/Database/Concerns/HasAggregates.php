@@ -2,6 +2,8 @@
 
 namespace Core\Database\Concerns;
 
+use Core\Database\QueryAllowlist;
+
 /**
  * Trait HasAggregates
  *
@@ -132,6 +134,21 @@ trait HasAggregates
         }
 
         return $this->orderBy($column, $direction);
+    }
+
+    /**
+     * Order by a user-controlled column after validating it against a positive allowlist.
+     *
+     * @param string $column
+     * @param string $direction
+     * @param array<string>|null $allowedColumns
+     * @return $this
+     */
+    public function orderBySafe(string $column, string $direction = 'ASC', ?array $allowedColumns = null): static
+    {
+        $allowed = $allowedColumns ?? $this->getSortableColumns();
+        $resolved = QueryAllowlist::assertSortable($this->table ?? null, $column, $allowed);
+        return $this->orderBy($resolved, QueryAllowlist::sanitizeDirection($direction));
     }
 
     /**

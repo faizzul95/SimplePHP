@@ -30,12 +30,14 @@ final class AuditLogger
     public const E_FILE_UPLOAD       = 'file.upload';
     public const E_FILE_DOWNLOAD     = 'file.download';
     public const E_SLOW_QUERY        = 'db.slow_query';
+    public const E_CSP_VIOLATION     = 'security.csp.violation';
     public const E_PROFILE_SWITCH    = 'rbac.profile.switched';
     public const E_ROLE_GRANTED      = 'rbac.role.granted';
     public const E_ROLE_REVOKED      = 'rbac.role.revoked';
     public const E_ADMIN_ACTION      = 'admin.action';
     public const E_DATA_EXPORT       = 'data.export';
     public const E_SESSION_FIXATION  = 'security.session_fixation';
+    public const E_IP_BLOCKED        = 'security.ip_blocked';
 
     private const LOG_FILE = ROOT_DIR . 'storage/logs/audit.log';
 
@@ -119,6 +121,12 @@ final class AuditLogger
         }
 
         @file_put_contents(self::LOG_FILE, $entry . PHP_EOL, FILE_APPEND | LOCK_EX);
+
+        try {
+            (new IpBlocklist())->observeAuditEvent($eventType, $ip);
+        } catch (\Throwable) {
+            // Automatic blocklist escalation is best effort only.
+        }
     }
 
     // ── Semantic helpers ────────────────────────────────────────────────────
@@ -209,6 +217,11 @@ final class AuditLogger
             ['field' => $field, 'reason' => $reason],
             'error'
         );
+    }
+
+    public static function cspViolation(array $context): void
+    {
+        self::log(self::E_CSP_VIOLATION, $context, 'warning');
     }
 
     public static function dataExport(int $userId, string $model, int $rowCount): void

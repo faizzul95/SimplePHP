@@ -234,6 +234,50 @@ final class BaseDatabaseReviewRegressionTest extends TestCase
         self::assertSame([], $database->currentBinds());
     }
 
+    public function testWhereInSplitsLargeListsIntoGroupedClauses(): void
+    {
+        $database = new BaseDatabaseSqlProbe();
+
+        $database->whereIn('id', range(1, 1001));
+
+        self::assertStringContainsString(' OR ', (string) $database->currentWhere());
+        self::assertStringContainsString('`users`.`id` IN (', (string) $database->currentWhere());
+        self::assertSame(range(1, 1001), $database->currentBinds());
+    }
+
+    public function testWhereNotInSplitsLargeListsIntoGroupedClauses(): void
+    {
+        $database = new BaseDatabaseSqlProbe();
+
+        $database->whereNotIn('id', range(1, 1001));
+
+        self::assertStringContainsString(' AND ', (string) $database->currentWhere());
+        self::assertStringContainsString('`users`.`id` NOT IN (', (string) $database->currentWhere());
+        self::assertSame(range(1, 1001), $database->currentBinds());
+    }
+
+    public function testWhereIntegerInRawSplitsLargeListsIntoGroupedClauses(): void
+    {
+        $database = new BaseDatabaseSqlProbe();
+
+        $database->whereIntegerInRaw('id', range(1, 1001));
+
+        self::assertStringContainsString(' OR ', (string) $database->currentWhere());
+        self::assertStringContainsString('`users`.`id` IN (', (string) $database->currentWhere());
+        self::assertSame([], $database->currentBinds());
+    }
+
+    public function testWhereIntegerNotInRawSplitsLargeListsIntoGroupedClauses(): void
+    {
+        $database = new BaseDatabaseSqlProbe();
+
+        $database->whereIntegerNotInRaw('id', range(1, 1001));
+
+        self::assertStringContainsString(' AND ', (string) $database->currentWhere());
+        self::assertStringContainsString('`users`.`id` NOT IN (', (string) $database->currentWhere());
+        self::assertSame([], $database->currentBinds());
+    }
+
     public function testBuildInsertQueryEscapesIdentifiers(): void
     {
         $database = new BaseDatabaseSqlProbe();

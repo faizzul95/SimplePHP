@@ -4,6 +4,9 @@ namespace Core\Http;
 
 class Response
 {
+    /** @var array<int, string> */
+    private static array $pendingLinkHeaders = [];
+
     public static function sanitizeRedirectTarget(string $url, bool $allowExternal = false): string
     {
         $target = trim(str_replace(["\r", "\n", "\0"], '', $url));
@@ -210,6 +213,7 @@ class Response
     public static function json(array $data, int $status = 200): void
     {
         http_response_code($status);
+        self::flushPendingLinkHeaders();
         header('Content-Type: application/json; charset=UTF-8');
         echo json_encode($data);
         exit;
@@ -219,6 +223,60 @@ class Response
     {
         self::sendRedirectHeaders($url, $status);
         exit;
+    }
+
+    public static function preload(string $url, string $as, ?string $type = null, bool $crossOrigin = false): void
+    {
+        $header = self::buildLinkHeaderValue($url, 'preload', $as, $type, $crossOrigin);
+        if ($header === '') {
+            return;
+        }
+
+        self::$pendingLinkHeaders[] = $header;
+        header('Link: ' . $header, false);
+    }
+
+    public static function prefetch(string $url): void
+    {
+        $header = self::buildLinkHeaderValue($url, 'prefetch');
+        if ($header === '') {
+            return;
+        }
+
+        self::$pendingLinkHeaders[] = $header;
+        header('Link: ' . $header, false);
+    }
+
+    public static function buildLinkHeaderValue(string $url, string $rel, ?string $as = null, ?string $type = null, bool $crossOrigin = false): string
+    {
+        $url = trim(str_replace(["\r", "\n", "\0"], '', $url));
+        $rel = trim($rel);
+        if ($url === '' || $rel === '') {
+            return '';
+        }
+
+        $parts = ['<' . $url . '>', 'rel=' . $rel];
+        if ($as !== null && trim($as) !== '') {
+            $parts[] = 'as=' . trim($as);
+        }
+        if ($type !== null && trim($type) !== '') {
+            $parts[] = 'type="' . str_replace('"', '', trim($type)) . '"';
+        }
+        if ($crossOrigin) {
+            $parts[] = 'crossorigin';
+        }
+
+        return implode('; ', $parts);
+    }
+
+    public static function pendingLinkHeaders(): array
+    {
+        return self::$pendingLinkHeaders;
+    }
+
+    public static function resetLinkHeaders(): void
+    {
+        self::$pendingLinkHeaders = [];
     }
 
     private static function normalizedCurrentHost(): string
@@ -244,5 +302,12 @@ class Response
 
         $host = preg_replace('/:\d+$/', '', strtolower($host));
         return preg_match('/^[a-z0-9.-]+$/', $host) === 1 ? $host : '';
+    }
+
+    private static function flushPendingLinkHeaders(): void
+    {
+        foreach (self::$pendingLinkHeaders as $headerValue) {
+            header('Link: ' . $headerValue, false);
+        }
     }
 }

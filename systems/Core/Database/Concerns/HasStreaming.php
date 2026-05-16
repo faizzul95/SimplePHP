@@ -3,6 +3,7 @@
 namespace Core\Database\Concerns;
 
 use Core\LazyCollection;
+use Core\Http\StreamedResponse;
 
 /**
  * HasStreaming Trait
@@ -32,6 +33,7 @@ trait HasStreaming
     public function chunk($size, callable $callback)
     {
         $size = $this->normalizeStreamingChunkSize($size, __FUNCTION__);
+        $effectiveChunkSize = $size;
         $originalState = $this->_saveQueryState();
         if ($this->canAutoUseChunkById($originalState)) {
             return $this->chunkById($size, $callback);
@@ -56,13 +58,13 @@ trait HasStreaming
                 $this->_setProfilerIdentifier('chunk_size' . $size . '_offset' . $offset);
 
                 // Calculate the chunk size based on max limit if set
-                $currentChunkSize = $size;
+                $currentChunkSize = $effectiveChunkSize;
                 if ($maxLimit !== null) {
                     $remaining = $maxLimit - $totalFetched;
                     if ($remaining <= 0) {
                         break; // Reached the limit
                     }
-                    $currentChunkSize = min($size, $remaining);
+                    $currentChunkSize = min($effectiveChunkSize, $remaining);
                 }
 
                 // Apply limit and offset
@@ -76,6 +78,9 @@ trait HasStreaming
                 }
 
                 $totalFetched += count($results);
+                $nextChunkSize = $this->adaptStreamingChunkSizeAfterFetch($effectiveChunkSize, $size, $results);
+                $this->recordAdaptiveStreamingChunkDecision(__FUNCTION__, $size, $effectiveChunkSize, $nextChunkSize, $results);
+                $effectiveChunkSize = $nextChunkSize;
 
                 if (call_user_func($callback, $results) === false) {
                     break;
@@ -99,7 +104,7 @@ trait HasStreaming
             }
 
             // Unset the variables to free memory
-            unset($originalState, $maxLimit, $totalFetched, $currentChunkSize, $offset);
+            unset($originalState, $maxLimit, $totalFetched, $currentChunkSize, $effectiveChunkSize, $offset);
 
             // Reset internal properties for next query
             $this->reset();
@@ -119,6 +124,7 @@ trait HasStreaming
     public function cursor($chunkSize = 1000)
     {
         $chunkSize = $this->normalizeStreamingChunkSize($chunkSize, __FUNCTION__);
+        $effectiveChunkSize = $chunkSize;
         $originalState = $this->_saveQueryState();
         if ($this->canAutoUseChunkById($originalState)) {
             yield from $this->lazyById($chunkSize);
@@ -144,13 +150,13 @@ trait HasStreaming
                 $this->_setProfilerIdentifier('cursor_size' . $chunkSize . '_offset' . $offset);
 
                 // Calculate the chunk size based on max limit if set
-                $currentChunkSize = $chunkSize;
+                $currentChunkSize = $effectiveChunkSize;
                 if ($maxLimit !== null) {
                     $remaining = $maxLimit - $totalFetched;
                     if ($remaining <= 0) {
                         break; // Reached the limit
                     }
-                    $currentChunkSize = min($chunkSize, $remaining);
+                    $currentChunkSize = min($effectiveChunkSize, $remaining);
                 }
 
                 // Apply limit and offset
@@ -162,6 +168,10 @@ trait HasStreaming
                 if (empty($results)) {
                     break;
                 }
+
+                $nextChunkSize = $this->adaptStreamingChunkSizeAfterFetch($effectiveChunkSize, $chunkSize, $results);
+                $this->recordAdaptiveStreamingChunkDecision(__FUNCTION__, $chunkSize, $effectiveChunkSize, $nextChunkSize, $results);
+                $effectiveChunkSize = $nextChunkSize;
 
                 foreach ($results as $row) {
                     yield $row;
@@ -207,6 +217,7 @@ trait HasStreaming
     {
         try {
             $chunkSize = $this->normalizeStreamingChunkSize($chunkSize, __FUNCTION__);
+            $effectiveChunkSize = $chunkSize;
 
             // Store the original query state before lazy loading
             $originalState = $this->_saveQueryState();
@@ -220,22 +231,23 @@ trait HasStreaming
             $totalFetched = 0;
 
             // Data source function
-            $source = function ($size, $offset) use ($originalState, $maxLimit, &$totalFetched) {
+            $source = function ($size, $offset) use ($originalState, $maxLimit, &$effectiveChunkSize, &$totalFetched) {
                 $previousSuppressQueryCache = $this->suppressQueryCache;
                 $this->suppressQueryCache = true;
 
                 try {
                     // Restore the original query state
                     $this->_restoreQueryState($originalState);
+                    $this->_setProfilerIdentifier('lazy_size' . (int) $size . '_offset' . $offset);
 
                     // Calculate the chunk size based on max limit if set
-                    $currentChunkSize = $size;
+                    $currentChunkSize = $effectiveChunkSize;
                     if ($maxLimit !== null) {
                         $remaining = $maxLimit - $totalFetched;
                         if ($remaining <= 0) {
                             return []; // No more data to fetch
                         }
-                        $currentChunkSize = min($size, $remaining);
+                        $currentChunkSize = min($effectiveChunkSize, $remaining);
                     }
 
                     // Apply limit and offset
@@ -249,8 +261,12 @@ trait HasStreaming
                     }
 
                     $totalFetched += count($results);
+                    $rows = is_array($results) ? $results : [$results];
+                    $nextChunkSize = $this->adaptStreamingChunkSizeAfterFetch($effectiveChunkSize, (int) $size, $rows);
+                    $this->recordAdaptiveStreamingChunkDecision('lazy', (int) $size, $effectiveChunkSize, $nextChunkSize, $rows);
+                    $effectiveChunkSize = $nextChunkSize;
 
-                    return is_array($results) ? $results : [$results];
+                    return $rows;
                 } finally {
                     $this->suppressQueryCache = $previousSuppressQueryCache;
                 }
@@ -283,6 +299,7 @@ trait HasStreaming
     public function chunkById(int $size, callable $callback, string $column = 'id', ?string $alias = null)
     {
         $size = $this->normalizeStreamingChunkSize($size, __FUNCTION__);
+        $effectiveChunkSize = $size;
         $this->validateColumn($column, 'Chunk column');
         $this->_forbidRawQuery($column, 'Raw SQL is not allowed in chunkById() column names.');
 
@@ -301,7 +318,7 @@ trait HasStreaming
                 $this->_restoreQueryState($originalState);
                 $this->_setProfilerIdentifier('chunkById_size' . $size . '_lastId' . ($lastId ?? '0'));
 
-                $currentChunkSize = $this->resolveStreamingChunkSize($size, $maxLimit, $totalFetched);
+                $currentChunkSize = $this->resolveStreamingChunkSize($effectiveChunkSize, $maxLimit, $totalFetched);
                 if ($currentChunkSize === null) {
                     break;
                 }
@@ -327,6 +344,9 @@ trait HasStreaming
                 }
 
                 $totalFetched += $count;
+                $nextChunkSize = $this->adaptStreamingChunkSizeAfterFetch($effectiveChunkSize, $size, $results);
+                $this->recordAdaptiveStreamingChunkDecision(__FUNCTION__, $size, $effectiveChunkSize, $nextChunkSize, $results);
+                $effectiveChunkSize = $nextChunkSize;
 
                 if (call_user_func($callback, $results) === false) {
                     unset($results);
@@ -346,7 +366,7 @@ trait HasStreaming
                 }
             }
 
-            unset($originalState, $maxLimit, $totalFetched);
+            unset($originalState, $maxLimit, $totalFetched, $effectiveChunkSize);
             $this->reset();
             return $this;
         } finally {
@@ -368,6 +388,7 @@ trait HasStreaming
     {
         try {
             $chunkSize = $this->normalizeStreamingChunkSize($chunkSize, __FUNCTION__);
+            $effectiveChunkSize = $chunkSize;
             $this->validateColumn($column, 'Lazy keyset column');
             $this->_forbidRawQuery($column, 'Raw SQL is not allowed in lazyById() column names.');
 
@@ -378,15 +399,16 @@ trait HasStreaming
             $lastId = null;
             $totalFetched = 0;
 
-            $source = function ($size, $offset) use ($originalState, $column, $alias, $maxLimit, &$lastId, &$totalFetched) {
+            $source = function ($size, $offset) use ($originalState, $column, $alias, $maxLimit, &$effectiveChunkSize, &$lastId, &$totalFetched) {
                 // $offset is ignored for keyset pagination; kept for LazyCollection signature
                 $previousSuppressQueryCache = $this->suppressQueryCache;
                 $this->suppressQueryCache = true;
 
                 try {
                     $this->_restoreQueryState($originalState);
+                    $this->_setProfilerIdentifier('lazyById_size' . (int) $size . '_lastId' . ($lastId ?? '0'));
 
-                    $currentChunkSize = $this->resolveStreamingChunkSize((int) $size, $maxLimit, $totalFetched);
+                    $currentChunkSize = $this->resolveStreamingChunkSize($effectiveChunkSize, $maxLimit, $totalFetched);
                     if ($currentChunkSize === null) {
                         return [];
                     }
@@ -412,6 +434,9 @@ trait HasStreaming
                     }
 
                     $totalFetched += count($results);
+                    $nextChunkSize = $this->adaptStreamingChunkSizeAfterFetch($effectiveChunkSize, (int) $size, $results);
+                    $this->recordAdaptiveStreamingChunkDecision('lazyById', (int) $size, $effectiveChunkSize, $nextChunkSize, $results);
+                    $effectiveChunkSize = $nextChunkSize;
 
                     return $results;
                 } finally {
@@ -487,6 +512,82 @@ trait HasStreaming
         }
 
         return min($defaultSize, $remaining);
+    }
+
+    /**
+     * Shrink subsequent streaming batches for wide rows while preserving the
+     * caller-provided chunk size as the upper bound.
+     *
+     * @param int $currentSize
+     * @param int $requestedSize
+     * @param array $results
+     * @return int
+     */
+    protected function adaptStreamingChunkSizeAfterFetch(int $currentSize, int $requestedSize, array $results): int
+    {
+        if (empty($results)) {
+            return $currentSize;
+        }
+
+        $sampleRow = $results[0];
+        if (is_object($sampleRow)) {
+            $sampleRow = get_object_vars($sampleRow);
+        }
+
+        if (!is_array($sampleRow)) {
+            return $currentSize;
+        }
+
+        return max(1, min($currentSize, $this->recommendedStreamingChunkSize($sampleRow, $requestedSize)));
+    }
+
+    /**
+     * Record a profiler-visible adaptive streaming decision when a batch size is
+     * reduced for wider rows.
+     *
+     * @param string $methodName
+     * @param int $requestedSize
+     * @param int $previousSize
+     * @param int $nextSize
+     * @param array $results
+     * @return void
+     */
+    protected function recordAdaptiveStreamingChunkDecision(string $methodName, int $requestedSize, int $previousSize, int $nextSize, array $results): void
+    {
+        if ($nextSize >= $previousSize || $results === []) {
+            return;
+        }
+
+        $sampleRow = $results[0];
+        if (is_object($sampleRow)) {
+            $sampleRow = get_object_vars($sampleRow);
+        }
+
+        if (!is_array($sampleRow)) {
+            return;
+        }
+
+        $this->_appendProfilerMetadata('adaptive_chunk_decisions', [
+            'phase' => 'streaming',
+            'method' => $methodName,
+            'requested_size' => $requestedSize,
+            'previous_size' => $previousSize,
+            'next_size' => $nextSize,
+            'observed_rows' => count($results),
+            'observed_columns' => count($sampleRow),
+        ]);
+    }
+
+    /**
+     * Recommend a safe streaming chunk size for the observed row shape.
+     *
+     * @param array|null $sampleRow
+     * @param int $requestedSize
+     * @return int
+     */
+    protected function recommendedStreamingChunkSize(?array $sampleRow = null, int $requestedSize = 1000): int
+    {
+        return $this->recommendedReadChunkSize($sampleRow, $requestedSize);
     }
 
     /**
@@ -693,5 +794,27 @@ trait HasStreaming
         } finally {
             fclose($output);
         }
+    }
+
+    /**
+     * Return a streamed JSON response backed by cursor iteration.
+     *
+     * @param int $chunkSize Rows fetched per round-trip.
+     */
+    public function streamJsonResponse(int $chunkSize = 1000, array $headers = [], int $encodingFlags = 0): StreamedResponse
+    {
+        $chunkSize = $this->normalizeStreamingChunkSize($chunkSize, __FUNCTION__);
+        $builder = $this;
+        $originalReturnType = $this->returnType;
+
+        $rows = (function () use ($builder, $chunkSize, $originalReturnType) {
+            if ($originalReturnType === 'json') {
+                $builder->toArray();
+            }
+
+            yield from $builder->cursor($chunkSize);
+        })();
+
+        return response()->streamJson($rows, 200, $headers, $encodingFlags, $chunkSize);
     }
 }

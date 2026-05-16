@@ -12,13 +12,19 @@ final class SecurityAuditRunner
         $this->requestClient = $requestClient;
     }
 
-    public function run(string $environment, array $security, array $api, ?string $url = null, int $timeout = 5, array $probe = []): array
+    public function run(string $environment, array $security, array $api, ?string $url = null, int $timeout = 5, array $probe = [], array $requestedChecks = []): array
     {
         $checks = [];
 
-        $this->auditConfig($checks, strtolower(trim($environment)), $security, $api);
+        if ($this->matchesRequestedCheck($requestedChecks, 'config')) {
+            $this->auditConfig($checks, strtolower(trim($environment)), $security, $api);
+        }
 
-        if ($url !== null && trim($url) !== '') {
+        if ($this->matchesRequestedCheck($requestedChecks, 'query-allowlist')) {
+            $this->auditQueryAllowlist($checks, $security);
+        }
+
+        if ($this->matchesRequestedCheck($requestedChecks, 'target') && $url !== null && trim($url) !== '') {
             $requestOptions = [];
             $authMode = strtolower(trim((string) ($probe['auth_mode'] ?? '')));
 
@@ -35,6 +41,34 @@ final class SecurityAuditRunner
             'summary' => $this->summarize($checks),
             'checks' => $checks,
         ];
+    }
+
+    private function auditQueryAllowlist(array &$checks, array $security): void
+    {
+        $audit = new \App\Support\QueryAllowlistAudit();
+        foreach ($audit->run($security) as $check) {
+            $checks[] = $check;
+        }
+    }
+
+    /**
+     * @param array<int, string> $requestedChecks
+     */
+    private function matchesRequestedCheck(array $requestedChecks, string $candidate): bool
+    {
+        if ($requestedChecks === []) {
+            return true;
+        }
+
+        $normalizedCandidate = str_replace('_', '-', strtolower(trim($candidate)));
+        foreach ($requestedChecks as $requestedCheck) {
+            $normalizedRequested = str_replace('_', '-', strtolower(trim((string) $requestedCheck)));
+            if ($normalizedRequested === $normalizedCandidate) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function auditConfig(array &$checks, string $environment, array $security, array $api): void

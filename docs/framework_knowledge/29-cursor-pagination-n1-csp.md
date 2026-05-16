@@ -1,4 +1,4 @@
-# 29. Cursor Pagination, CSV Export, N+1 Detection & CSP Nonce
+# 29. Cursor Pagination, Streaming, N+1 Detection & CSP Nonce
 
 ## 1. Cursor Pagination (`cursorPaginate`)
 
@@ -73,7 +73,7 @@ Cursors are base64url-encoded JSON objects (no padding):
 
 ### Limitations
 
-- Only works correctly on **unique, orderable columns** (primary keys, UUIDs, timestamps with tie-break).
+- Only works correctly on a **single unique, orderable column**. Primary keys are the safest choice.
 - Cannot jump to an arbitrary page number — only forward/backward navigation.
 - Does not support non-indexed columns without adding an index first.
 
@@ -99,7 +99,7 @@ public function exportCsv(
 - Sanitizes `$filename`: `/[^A-Za-z0-9_\-.]/ → '_'`; appends `.csv` when missing.
 - Automatically uses `chunkById()` (keyset, O(1) per chunk) when the query shape is eligible.
 - Falls back to `chunk()` (OFFSET-based) for non-keyset-eligible queries.
-- Calls `gc_collect_cycles()` per chunk when `$chunkSize >= 500`.
+- Calls `gc_collect_cycles()` per chunk when `$chunkSize >= 100`.
 
 ### Usage
 
@@ -130,6 +130,28 @@ return ['code' => 202, 'message' => 'Export queued'];
 db()->table('orders')->where($filters)->exportCsv(...);
 // Or write to storage: use chunk() + fputcsv() into a Storage::put() stream
 ```
+
+### Adaptive Read Scaling
+
+`chunk()`, `cursor()`, `lazy()`, `chunkById()`, and `lazyById()` now adapt follow-up chunk sizes downward when observed rows are very wide. The size you pass remains the upper bound, but the framework can reduce later fetch sizes to avoid large transient allocations during long scans.
+
+The same read-side heuristic is reused by batched eager loading and streamed JSON responses, so deep exports and relation-heavy payloads do not need separate manual tuning for wide rows.
+
+### Streamed JSON Responses
+
+```php
+return db()->table('orders')
+    ->where('status', 'completed')
+    ->orderBy('id')
+    ->streamJsonResponse(1000, [
+        'Cache-Control' => 'no-store',
+    ]);
+```
+
+- `streamJsonResponse()` bridges database cursor iteration into `response()->streamJson(...)`.
+- Signature: `streamJsonResponse(int $chunkSize = 1000, array $headers = [], int $encodingFlags = 0): StreamedResponse`
+- Output is emitted incrementally as a JSON array instead of materializing the full result set first.
+- If the builder had been switched to `toJson()`, the helper temporarily falls back to array rows so the streamed response still yields valid JSON array items.
 
 ---
 
@@ -169,15 +191,26 @@ PerformanceMonitor::setN1DetectionEnabled(true);
 $suspects = PerformanceMonitor::getN1Suspects();
 // Returns: [['sql' => 'SELECT * FROM orders WHERE user_id = ?', 'count' => 45], ...]
 
-// Reset per-request state (call at start of each request in long-running workers)
+// Reset all monitoring state for a fresh per-request report
 PerformanceMonitor::reset();
+
+// Or only clear fingerprint/timer state if you intentionally keep aggregate logs
+PerformanceMonitor::resetQueryLog();
+
+// Report adaptive chunk-size decisions captured during the request
+$report = PerformanceMonitor::generateReport();
+// Includes adaptive chunk stats and recent adaptive decisions when profiling ran
 ```
+
+`setProfilingEnabled(true)` on the builder enables full monitoring and also enables N+1 detection. Turning profiling back off keeps N+1 detection enabled automatically when `APP_DEBUG=true`.
 
 ### Log Format
 
 ```
 [N+1 DETECTED] Query pattern executed 30 times in one request. SQL: SELECT * FROM orders WHERE user_id = ?...
 ```
+
+`PerformanceMonitor` also caps stored query fingerprints to avoid unbounded growth inside long-lived workers. That reduces memory pressure, but persistent runtimes should still call `PerformanceMonitor::reset()` at request boundaries.
 
 ### Fix: Use Eager Loading
 
@@ -190,7 +223,7 @@ foreach ($users as $user) {
 
 // ✅ Eager loading — 2 queries total
 $users = db()->table('users')
-    ->with(['orders' => ['table' => 'orders', 'foreign_key' => 'user_id', 'local_key' => 'id']])
+    ->with('orders', 'orders', 'user_id', 'id')
     ->get();
 ```
 
@@ -222,6 +255,8 @@ and template values always match.
 // app/config/security.php
 'csp' => [
     'enabled'       => true,
+    'mode'          => 'enforce',   // also supports 'report-only' and 'both'
+    'report_uri'    => '/_myth/csp-report',
     'nonce_enabled' => true,   // ← enable for production; false = backward-compat default
 
     // 'unsafe-inline' is automatically removed from script-src and style-src when nonce_enabled
@@ -250,9 +285,10 @@ In Swoole/RoadRunner/ReactPHP workers, reset the nonce between requests:
 ```php
 // In your request lifecycle hook
 \Core\Security\CspNonce::reset();
-```
 
-Also call `SecurityHeadersTrait::resetNonce()` (delegates to the same class).
+// Equivalent helper on the middleware trait
+\Middleware\Traits\SecurityHeadersTrait::resetNonce();
+```
 
 ### CSP Header Example (nonce_enabled=true)
 
