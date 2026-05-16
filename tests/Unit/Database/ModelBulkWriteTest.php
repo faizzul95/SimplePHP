@@ -245,8 +245,8 @@ final class ModelBulkWriteTest extends TestCase
 
         $seen = [];
         $result = $model::each(function (Model $row) use (&$seen): bool {
-            $seen[] = $row->name;
-            return $row->name !== 'Beta';
+            $seen[] = (string) $row->getAttribute('name');
+            return $row->getAttribute('name') !== 'Beta';
         });
 
         self::assertFalse($result);
@@ -493,8 +493,8 @@ final class ModelBulkWriteTest extends TestCase
 
             protected static function boot(): void
             {
-                static::forceDeleted(static function (): void {
-                });
+                static::__callStatic('forceDeleted', [static function (): void {
+                }]);
             }
         };
         $class = $model::class;

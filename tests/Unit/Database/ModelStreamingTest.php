@@ -241,8 +241,8 @@ final class ModelStreamingTest extends TestCase
 
         self::assertCount(2, $batches);
         self::assertInstanceOf($class, $batches[0][0]);
-        self::assertTrue((bool) $batches[0][0]->hydrated_flag);
-        self::assertSame('Gamma', $batches[1][0]->name);
+        self::assertTrue((bool) $batches[0][0]->getAttribute('hydrated_flag'));
+        self::assertSame('Gamma', $batches[1][0]->getAttribute('name'));
     }
 
     public function testCursorStreamsHydratedModels(): void
@@ -318,7 +318,7 @@ final class ModelStreamingTest extends TestCase
 
         self::assertSame([[2500, 'id', 'id']], $builder->chunkByIdCalls);
         self::assertInstanceOf($class, $batches[0][1]);
-        self::assertSame('Beta', $batches[0][1]->name);
+        self::assertSame('Beta', $batches[0][1]->getAttribute('name'));
     }
 
     public function testLazyByIdReturnsHydratedLazyCollection(): void

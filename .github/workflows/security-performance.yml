@@ -58,7 +58,7 @@ jobs:
         run: vendor/bin/phpunit --configuration phpunit.xml.dist
 
       - name: Run PHPStan
-        run: vendor/bin/phpstan analyse app systems tests --no-progress
+        run: vendor/bin/phpstan analyse app systems tests --configuration=phpstan.neon --no-progress
 
       - name: Reset migration deploy state
         shell: bash

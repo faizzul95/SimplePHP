@@ -1,6 +1,6 @@
 ﻿# Framework Security & Performance Comparison Report
 
-**Generated:** May 2026 — **Last reviewed:** June 2026 v3 (Phase 10: ApcuStore get TOCTOU+false-value, FileStore put dir perms, BladeEngine non-atomic compile write, RedisDriver TTL=0 SETEX error, RedisDriver add ex=0 invalid, Worker sleep signal gap, CacheManager remember TOCTOU, PwnedPasswordChecker connect timeout)  
+**Generated:** May 2026 — **Last reviewed:** May 2026 v4 (deep source re-audit: XSS GET scanning, HttpClient post-connect IP validation + pinning, database streaming/adaptive batching, score reconciliation)  
 **PHP Baseline:** PHP 8.3 (runtime tested) / PHP 8.4 (target)  
 **Scope:** MythPHP vs Native PHP, Laravel 12, Yii2, CodeIgniter 3, CodeIgniter 4, CakePHP 5  
 **Evaluation Areas:** Security (OWASP Top 10 attack vectors) + Large-Dataset Database Performance + Cache & HTTP Performance  
@@ -130,7 +130,7 @@ Models that accept direct user input must declare `$fillable`. The schema-only g
 ### 2.3 XSS Protection
 
 **Verified MythPHP mechanisms:**
-- `XssProtection` middleware scans `$_POST`, `$_GET`, JSON body, and uploaded **file names**. **Limitation: only fires on POST / PUT / PATCH / DELETE — reflected XSS via GET parameters is not blocked at middleware layer.**
+- `XssProtection` middleware scans `$_POST`, `$_GET`, JSON body, and uploaded **file names** on all request methods except `HEAD` / `OPTIONS`
 - Blade `{{ $var }}` auto-escapes via `htmlspecialchars(ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')`
 - `@nonce` directive outputs `nonce="{{ $csp_nonce }}"` HTML-escaped
 - `@sri('url', 'sha384-...')` compile-time Blade directive generates `integrity="..." crossorigin="anonymous"` — blocks CDN code tampering
@@ -147,7 +147,7 @@ Models that accept direct user input must declare `$fillable`. The schema-only g
 | CI4          | ✅ `esc()`; no auto-escape | ❌ | ❌ | ❌ | ❌ | ⭐⭐⭐½ (3.5) |
 | CakePHP      | ✅ `h()` auto-escapes | ❌ | ❌ | ❌ | ❌ | ⭐⭐⭐⭐ (4.0) |
 
-**Fixed:** `XssProtection::handle()` now scans all HTTP methods (GET included) except HEAD/OPTIONS. `request()->detectXss()` merges `$_GET` + `$_POST` + input stream — the reflected-XSS-via-GET gap is closed.
+`XssProtection::handle()` now scans all HTTP methods except `HEAD` / `OPTIONS`. `request()->detectXss()` merges `$_GET` + `$_POST` + input stream, so the earlier reflected-XSS-via-GET gap is closed in the current code.
 
 ---
 
@@ -343,15 +343,18 @@ MythPHP provides two independent rate-limiting tiers:
 ### 2.12 SSRF Protection
 
 **Verified implementation (`systems/Core/Support/HttpClient.php`):**
-- Blocks outbound requests to private/loopback ranges **before connection** — no TOCTOU race
+- Blocks outbound requests to private/loopback ranges **before connection**
 - IPv4: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`
 - IPv6: `::1`, `fe80::/10`, `fc00::/7`
 - IPv6 bracket notation `[::1]` detected and rejected — prevents URL parsing bypass
+- Strict host allowlist via `allowHosts()` / `security.http_client.allowed_hosts`
+- Optional post-connect primary-IP validation via `assertConnectedIpIsSafe()` catches DNS rebinding when cURL reports a private/reserved connected IP
+- Optional SPKI certificate pinning via `security.http_client.pins` and `pin_on_error`
 - `filter_var()` + `inet_pton()` bitwise CIDR — no string-comparison bypass
 
 | Framework     | Pre-Connect Block | IPv6 Covered | Strict Allowlist | Built-in | Rating |
 |--------------|-----------------|-------------|-----------------|---------|--------|
-| **MythPHP**  | ✅ | ✅ Brackets + CIDR | ✅ `allowHosts()` deny-all mode | ✅ | ⭐⭐⭐⭐½ **(4.5)** |
+| **MythPHP**  | ✅ + post-connect IP check / optional pinning | ✅ Brackets + CIDR | ✅ `allowHosts()` deny-all mode | ✅ | ⭐⭐⭐⭐½ **(4.5)** |
 | Native PHP   | ❌ | ❌ | ❌ | ⭐ (1.0) |
 | Laravel      | ❌ No built-in | ❌ | ❌ | ⭐⭐ (2.0) |
 | Yii2         | ❌ | ❌ | ❌ | ⭐⭐ (2.0) |
@@ -440,7 +443,7 @@ MythPHP provides two independent rate-limiting tiers:
 | Signed URLs / Token Security| **4.5** | 5.0 | 3.0 | 2.0 | 3.0 | 1.0 | 1.0 |
 | Column Encryption           | **5.0** | 3.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | Pwned Password Detection    | **5.0** | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
-| **Security Average**        | **4.67** | **4.07** | **3.37** | **2.50** | **3.1** | **1.67** | **1.17** |
+| **Security Average**        | **4.60** | **4.07** | **3.37** | **2.50** | **3.10** | **1.67** | **1.17** |
 
 ---
 
@@ -454,11 +457,11 @@ All figures are theoretical estimates for 1 M–2 M row datasets on a standard V
 |----------|--------|-----------|-------------------------------|
 | Offset | `paginate()` | `LIMIT x OFFSET y` | Page 1: ~0.05s / 8 MB; Page 50k: ~6–8s / 25 MB |
 | Keyset / Cursor | `cursorPaginate()` | `WHERE id > :last ORDER BY id LIMIT x` | All pages: ~0.03–0.05s / 5 MB |
-| Streaming chunk | `chunk()` / `chunkById()` | Keyset cursor, yields N rows | Memory ~5–8 MB regardless of dataset |
+| Streaming / lazy iteration | `chunk()`, `cursor()`, `lazy()`, `chunkById()`, `lazyById()`, model `each()` / `eachById()` | Chunked generator flow; adaptive chunk shrink on wide rows | Memory stays bounded on large exports / maintenance runs |
 
 | Framework    | Offset | Cursor Paginate | Streaming | Rating |
 |-------------|--------|----------------|----------|--------|
-| **MythPHP** | ✅ | ✅ `cursorPaginate()` | ✅ `chunk()` / `chunkById()` | ⭐⭐⭐⭐½ (4.5) |
+| **MythPHP** | ✅ | ✅ `cursorPaginate()` | ✅ `chunk()` / `cursor()` / `lazy()` / `chunkById()` / `lazyById()` | ⭐⭐⭐⭐½ (4.5) |
 | Laravel | ✅ | ✅ `cursorPaginate()` | ✅ `chunk()` | ⭐⭐⭐⭐⭐ (5.0) |
 | Yii2 | ✅ | ❌ | ✅ `batch()` | ⭐⭐⭐ (3.0) |
 | CI3 | ✅ | ❌ | ❌ | ⭐⭐ (2.0) |
@@ -473,11 +476,13 @@ All figures are theoretical estimates for 1 M–2 M row datasets on a standard V
 - Auto-detects N+1 patterns (same SQL template, different binds) when `APP_DEBUG=true`
 - `DB_SLOW_QUERY_THRESHOLD_MS=750` — slow queries logged automatically
 - `resetQueryLog()` for per-request reset in worker mode — prevents log growth across requests
-- Eager loading: `->with()`, `->withOne()`, `->withMany()` eliminate N+1 at ORM level
+- Adaptive chunk decisions are recorded in the performance report for wide-row streaming
+- Eager loading: `->with()`, `->withOne()`, plus aggregate eager-load helpers eliminate common N+1 patterns at ORM level
+- `toDebugSnapshot()` exposes SQL, profiler data, and the current performance report for debug-only query triage
 
 | Framework    | N+1 Detection | Eager Loading | Worker-Safe Reset | Rating |
 |-------------|--------------|--------------|------------------|--------|
-| **MythPHP** | ✅ `PerformanceMonitor` | ✅ `with()` / `withOne()` | ✅ | ⭐⭐⭐⭐½ (4.5) |
+| **MythPHP** | ✅ `PerformanceMonitor` | ✅ `with()` / `withOne()` / aggregate eager loads | ✅ | ⭐⭐⭐⭐½ (4.5) |
 | Laravel | ✅ Telescope | ✅ `with()` | ✅ | ⭐⭐⭐⭐⭐ (5.0) |
 | Yii2 | ⚠️ Debug toolbar | ✅ `with()` | ⚠️ | ⭐⭐⭐⭐ (4.0) |
 | CI3 | ❌ | ❌ | ❌ | ⭐ (1.0) |
@@ -531,15 +536,16 @@ Write-through invalidation: `QueryCache::invalidateTable('users')` bumps a per-t
 
 ### 3.5 Read/Write Splitting
 
-**Verified (`app/config/database.php`, `systems/Core/Database/ConnectionPool.php`):**
-- `slave` block activated by `DB_READ_HOST` env var
-- `SELECT` → replica; `INSERT`/`UPDATE`/`DELETE` → primary
-- Falls back to primary if `DB_READ_HOST` not set — zero-config single-server deployments
-- `ConnectionPool::getConnectionWithFallback('slave', 'default')` — automatic replica health check; if the replica connection throws, the broken socket is evicted and primary is used instantly; a 60-second APCu health-failure flag prevents sibling workers from piling on a dead replica
+**Verified (`app/config/database.php`, `app/support/DatabaseRuntime.php`, `systems/Core/Database/ConnectionPool.php`):**
+- Read/write routing is configured inside `default.read[]`, `default.write`, and `sticky` rather than being switched by the legacy `slave` block
+- `DatabaseRuntime` normalizes replica aliases such as `default::read:1` and `default::write`, then wires them into framework-level read/write routing
+- `SELECT` routes to replicas; `INSERT` / `UPDATE` / `DELETE` route to primary; sticky reads keep read-after-write consistency when enabled
+- Falls back to primary when no read replicas are configured; `slave` remains available as a separate named connection for explicitly different usage
+- `ConnectionPool::getConnectionWithFallback()` still provides replica health fallback when a configured replica becomes unavailable
 
 | Framework    | Read Replica | Auto-Route SELECT | Fallback | Rating |
 |-------------|-------------|------------------|---------|--------|
-| **MythPHP** | ✅ `DB_READ_HOST` | ✅ | ✅ Health check | ⭐⭐⭐⭐½ (4.5) |
+| **MythPHP** | ✅ `default.read[]` | ✅ | ✅ Sticky + health fallback | ⭐⭐⭐⭐½ (4.5) |
 | Laravel | ✅ `read`/`write` config | ✅ | ✅ | ⭐⭐⭐⭐⭐ (5.0) |
 | Yii2 | ✅ `slaves` | ✅ | ✅ | ⭐⭐⭐⭐ (4.0) |
 | CI3 | ❌ | ❌ | N/A | ⭐ (1.0) |
@@ -556,11 +562,11 @@ Write-through invalidation: `QueryCache::invalidateTable('users')` bumps a per-t
 | Cursor / Keyset Paginate   | **4.5** | 5.0 | 2.0 | 1.0 | 2.5 | 1.0 | 1.0 |
 | N+1 Prevention             | **4.5** | 5.0 | 4.5 | 2.0 | 4.5 | 1.5 | 1.0 |
 | Query Cache (multi-tier)   | **4.5** | 4.0 | 3.5 | 2.0 | 3.0 | 1.5 | 1.0 |
-| Connection / SSL           | **4.2** | 4.0 | 4.0 | 3.0 | 3.5 | 2.0 | 1.0 |
+| Connection / SSL           | **4.25** | 4.0 | 4.0 | 3.0 | 3.5 | 2.0 | 1.0 |
 | Read/Write Splitting       | **4.5** | 5.0 | 4.0 | 1.0 | 4.0 | 1.0 | 1.0 |
-| Streaming Export / Chunking| **4.2** | 5.0 | 4.0 | 2.5 | 3.0 | 1.5 | 1.5 |
-| Memory Efficiency          | **4.2** | 5.0 | 4.0 | 2.5 | 3.5 | 1.5 | 1.5 |
-| **Database Average**       | **4.39** | **4.75** | **3.69** | **2.06** | **3.44** | **1.5** | **1.19** |
+| Streaming Export / Chunking| **4.5** | 5.0 | 4.0 | 2.5 | 3.0 | 1.5 | 1.5 |
+| Memory Efficiency          | **4.5** | 5.0 | 4.0 | 2.5 | 3.5 | 1.5 | 1.5 |
+| **Database Average**       | **4.47** | **4.75** | **3.69** | **2.06** | **3.44** | **1.50** | **1.19** |
 
 ---
 
@@ -702,13 +708,13 @@ Path traversal blocked at `normalizeRelativePath()` — `..` → `InvalidArgumen
 
 | Category                  | **MythPHP** | **Laravel** | Yii2 | CI4 | CakePHP | CI3 | Native PHP |
 |--------------------------|------------|------------|------|-----|---------|-----|-----------|
-| **Security Average**      | **4.80** | 4.07 | 3.37 | 2.50 | 3.10 | 1.67 | 1.17 |
-| **Database Average**      | **4.65** | 4.75 | 3.69 | 2.06 | 3.44 | 1.50 | 1.19 |
+| **Security Average**      | **4.60** | 4.07 | 3.37 | 2.50 | 3.10 | 1.67 | 1.17 |
+| **Database Average**      | **4.47** | 4.75 | 3.69 | 2.06 | 3.44 | 1.50 | 1.19 |
 | **Cache & HTTP Average**  | **4.60** | 4.63 | 4.13 | 2.50 | 3.25 | 1.75 | 1.00 |
-| **Worker Mode**           | **4.90** | 5.00 | 2.50 | 2.00 | 2.00 | 1.00 | 1.00 |
+| **Worker Mode**           | **4.50** | 5.00 | 2.50 | 2.00 | 2.00 | 1.00 | 1.00 |
 | **Event System**          | **5.00** | 5.00 | 4.00 | 3.00 | 4.00 | 1.50 | 1.00 |
-| **Queue System**          | **4.80** | 5.00 | 3.00 | 1.00 | 2.00 | 1.00 | 1.00 |
-| **Overall Average**       | **4.79** | **4.86** | **3.53** | **2.34** | **3.09** | **1.36** | **1.06** |
+| **Queue System**          | **4.75** | 5.00 | 3.00 | 1.00 | 2.00 | 1.00 | 1.00 |
+| **Overall Average**       | **4.65** | **4.74** | **3.45** | **2.18** | **2.96** | **1.49** | **1.06** |
 
 ### MythPHP vs Laravel — Gap Analysis
 
@@ -722,8 +728,8 @@ Path traversal blocked at `normalizeRelativePath()` — `..` → `InvalidArgumen
 | SQL injection (strictness) | 4.5/5 | 5.0/5 | **Laravel** (fillable is secure-by-default; MythPHP requires explicit opt-in) |
 | XSS (GET params) | ✅ All methods scanned (GET included) | Blade output escaping handles it | **Tied** |
 | CSRF (auto-apply) | ✅ Applied to all web routes via `web` middleware group | Also applied to all web routes | **Tied** |
-| Database ORM maturity | 4.2/5 | 4.75/5 | **Laravel** |
-| Worker/Octane maturity | 4.0/5 | 5.0/5 | **Laravel** (battle-tested) |
+| Database ORM maturity | 4.4/5 | 4.75/5 | **Laravel** |
+| Worker/Octane maturity | 4.5/5 | 5.0/5 | **Laravel** (battle-tested) |
 | Package ecosystem | Custom — growing | Massive Packagist ecosystem | **Laravel** far ahead |
 
 ---
@@ -738,12 +744,14 @@ Path traversal blocked at `normalizeRelativePath()` — `..` → `InvalidArgumen
 | `$fillable` / `$guarded` mass-assignment guard | `BaseDatabase::sanitizeColumn()` — two-layer: schema guard always active; `$fillable` restricts to declared columns; `$guarded` hard-blocks sensitive columns |
 | AES-256-GCM column encryption | `Encryptor` — libsodium authenticated; blind-index searchability; key zeroed after use |
 | k-Anonymity breach detection | `PwnedPasswordChecker` — SHA-1 prefix only to HIBP; audit logged; SSRF-protected call |
-| SSRF protection | `HttpClient` — RFC 1918 + loopback + IPv6 all blocked before connection; bracket detection |
+| SSRF protection | `HttpClient` — RFC 1918 + loopback + IPv6 blocked before connection; post-connect IP validation and optional SPKI pinning available |
 | Atomic rate limiting | APCu `apcu_inc()` or flock + temp-rename — no read-modify-write race in either path |
 | IDOR detection | `DetectIdor` — route-param ownership check; `AuditLogger` writes DB row + flat file |
 | Full security header suite | 9 headers via `SecurityHeadersTrait` including CSP nonce, Permissions-Policy (array format), COOP, CORP |
 | Signed URLs | `SignedUrl` — HMAC-SHA256; `hash_equals()`; no external service required |
 | Keyset pagination | `cursorPaginate()` — O(1) deep pages regardless of dataset size |
+| Large-dataset iteration & maintenance | `chunk()`, `cursor()`, `lazy()`, `chunkById()`, `lazyById()`, model `each()` / `eachById()`, `importInBatches()`, `upsertInBatches()`, `updateInBatches()` |
+| Safe query triage | `toDebugSnapshot()` is gated to CLI / `APP_DEBUG`; slow-query logs redact binds and omit expanded full SQL |
 | Content-Disposition safety | `FileUploadGuard::serve()` CRLF-sanitizes filename before header output |
 | Worker mode | `WorkerState` + `RoadRunnerWorker` — per-request singleton reset; OPcache preload |
 | Shared hosting | APCu → file graceful degrade; all security features work without Redis or root access |
@@ -752,9 +760,9 @@ Path traversal blocked at `normalizeRelativePath()` — `..` → `InvalidArgumen
 
 | Priority | Gap | Impact | Mitigation |
 |----------|-----|--------|-----------|
-| **HIGH** | XSS middleware does not fire on GET requests | Reflected XSS in GET params not blocked at middleware | **Fixed:** `XssProtection::handle()` now scans all methods including GET |
 | **MEDIUM** | `temporaryUrl()` not implemented for S3/GDrive adapters | Remote disk: no signed temp URLs | Local disk fully covered; remote adapters return plain URL |
-| **LOW** | DNS rebinding not protected | `HttpClient` blocks IP ranges; DNS rebinding bypasses this | Requires external DNS pinning or response-IP re-validation |
+| **LOW** | Certificate pinning is opt-in per host | HTTPS outbound calls fall back to CA validation unless pins are configured | Add `security.http_client.pins` for high-value upstreams; `pin_on_error` can block or log-only |
+| **LOW** | App-defined worker state still needs manual registration | Long-lived workers can retain userland static state outside framework-managed classes | Register custom classes with `WorkerState::register()` |
 | **LOW** | No built-in GraphQL rate limiting | REST rate limiting solid; GraphQL depth/complexity unguarded | Add custom query complexity middleware |
 
 ---
@@ -1040,39 +1048,39 @@ if (PwnedPasswordChecker::isPwned($password)) {
 
 ## 15. Extended Aggregate Scorecard
 
-> **Updated after Phase 10 deep scan** (ApcuStore get TOCTOU+false-value fix, FileStore dir perms, BladeEngine atomic compile write, RedisDriver TTL=0 / add ex=0 fixes, Worker signal-aware sleep, CacheManager remember TOCTOU, PwnedPasswordChecker connect timeout).
+> Updated after a May 2026 source re-audit covering score reconciliation, XSS middleware behaviour, HttpClient hardening, and database streaming / batching capabilities.
 
 | Category                     | **MythPHP** | **Laravel** | Yii2 | CI4 | CakePHP | CI3 | Native PHP |
 |-----------------------------|------------|------------|------|-----|---------|-----|-----------|
-| **Security Average**         | **4.80** | 4.07 | 3.37 | 2.50 | 3.10 | 1.67 | 1.17 |
-| **Database Average**         | **4.65** | 4.75 | 3.69 | 2.06 | 3.44 | 1.50 | 1.19 |
+| **Security Average**         | **4.60** | 4.07 | 3.37 | 2.50 | 3.10 | 1.67 | 1.17 |
+| **Database Average**         | **4.47** | 4.75 | 3.69 | 2.06 | 3.44 | 1.50 | 1.19 |
 | **Cache & HTTP Average**     | **4.60** | 4.63 | 4.13 | 2.50 | 3.25 | 1.75 | 1.00 |
-| **Worker Mode**              | **4.90** | 5.00 | 2.50 | 2.00 | 2.00 | 1.00 | 1.00 |
-| **Queue System**             | **4.80** | 5.00 | 3.00 | 1.00 | 2.00 | 1.00 | 1.00 |
+| **Worker Mode**              | **4.50** | 5.00 | 2.50 | 2.00 | 2.00 | 1.00 | 1.00 |
+| **Queue System**             | **4.75** | 5.00 | 3.00 | 1.00 | 2.00 | 1.00 | 1.00 |
 | **Event System**             | **5.00** | 5.00 | 4.00 | 3.00 | 4.00 | 1.50 | 1.00 |
 | **Routing**                  | **4.75** | 5.00 | 4.00 | 3.00 | 4.00 | 2.00 | 1.00 |
 | **CLI / Console**            | **4.75** | 5.00 | 4.00 | 3.00 | 4.00 | 1.00 | 1.00 |
 | **Validation**               | **4.75** | 5.00 | 4.00 | 3.00 | 4.00 | 2.00 | 1.00 |
 | **View / Templating**        | **4.75** | 5.00 | 3.50 | 3.00 | 3.50 | 2.00 | 1.00 |
-| **Error Handling / Logging** | **4.75** | 5.00 | 4.00 | 4.00 | 4.00 | 2.00 | 1.00 |
-| **Extended Overall Average** | **4.78** | **4.86** | **3.65** | **2.64** | **3.39** | **1.58** | **1.03** |
+| **Error Handling / Logging** | **4.50** | 5.00 | 4.00 | 4.00 | 4.00 | 2.00 | 1.00 |
+| **Extended Overall Average** | **4.67** | **4.86** | **3.65** | **2.64** | **3.39** | **1.58** | **1.03** |
 
 ### Gap Summary vs Laravel (Phase 11)
 
 | Area | MythPHP | Laravel | Who Leads |
 |------|---------|---------|-----------|
-| Security | **4.80** | 4.07 | **MythPHP** +0.73 |
-| Database | **4.65** | **4.75** | Laravel +0.10 |
+| Security | **4.60** | 4.07 | **MythPHP** +0.53 |
+| Database | **4.47** | **4.75** | Laravel +0.28 |
 | Cache & HTTP | 4.60 | **4.63** | Laravel +0.03 (near parity) |
-| Worker Mode | 4.90 | **5.00** | Laravel +0.10 |
-| Queue System | 4.80 | **5.00** | Laravel +0.20 |
+| Worker Mode | 4.50 | **5.00** | Laravel +0.50 |
+| Queue System | 4.75 | **5.00** | Laravel +0.25 |
 | Event System | **5.00** | **5.00** | **Tied** |
 | Routing | 4.75 | **5.00** | Laravel +0.25 |
 | CLI / Console | 4.75 | **5.00** | Laravel +0.25 |
 | Validation | 4.75 | **5.00** | Laravel +0.25 |
-| View / Templating | 4.60 | **5.00** | Laravel +0.40 |
+| View / Templating | 4.75 | **5.00** | Laravel +0.25 |
 | Error Handling | 4.50 | **5.00** | Laravel +0.50 |
-| **Extended Overall** | **4.78** | **4.86** | Laravel +0.08 |
+| **Extended Overall** | **4.67** | **4.86** | Laravel +0.19 |
 
 ---
 
@@ -1082,9 +1090,9 @@ if (PwnedPasswordChecker::isPwned($password)) {
 
 **Remaining improvement roadmap for full parity:**
 1. ~~View: add component system (Blade components / slots)~~ **✅ Done (Phase 12)** — `@component('view', [props])` / `@slot('name')` / `@endslot` / `@endcomponent` added to `BladeEngine`; named slots become individual variables; default content exposed as `$slot`
-2. ~~Database: add eager-loading relationship definitions and scope methods~~ **✅ Done (prior phase)** — `Scopeable` trait provides `scope()`, `withGlobalScope()`, `withoutGlobalScopes()`; eager loading via `with()` / `withOne()` / `withMany()`
+2. ~~Database: add eager-loading relationship definitions and scope methods~~ **✅ Done (prior phase)** — `Scopeable` trait provides `scope()`, `withGlobalScope()`, `withoutGlobalScopes()`; eager loading via `with()` / `withOne()` plus aggregate eager-load helpers
 3. ~~Error handling: add structured exception rendering with HTTP status mapping per exception type~~ **✅ Done (Phase 12)** — `ExceptionHandler::$httpExceptionMap` maps 12 exception classes → HTTP status codes; `resolveStatusCode()` checks exact class, then instanceof hierarchy, then `$e->getCode()` fallback
 
 ---
 
-*All MythPHP claims based on direct source inspection, May 2026. Phase 10 deep scan covered: `ApcuStore`, `FileStore`, `CacheManager`, `RedisDriver`, `BladeEngine`, `Worker`, `PwnedPasswordChecker`, `FileUploadGuard`, `Encryptor`, `SignedUrl`, `RateLimiter`, `AuditLogger`, `ConnectionPool`, `Model`, `Job`. PHPUnit test suite: 67 tests, 74 assertions, 15 skipped (ext-sodium not loaded in test environment — sodium tests expected to skip). Performance figures are algorithm-analysis estimates; measure on target hardware.*
+*All MythPHP claims are based on direct source inspection, May 2026. This re-audit covered `HttpClient`, `XssProtection`, `DatabaseRuntime`, `PerformanceMonitor`, `SlowQueryLogger`, `Model`, `HasStreaming`, `BladeEngine`, `WorkerState`, `Worker`, `Job`, and the surrounding security / database subsystems. Local verification during this review included green reruns of the previously failing HttpClient and model-related test slices plus focused PHPStan reruns for the affected test files. Performance figures remain algorithm-analysis estimates; measure on target hardware.*

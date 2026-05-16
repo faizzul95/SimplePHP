@@ -153,7 +153,7 @@ final class ModelObserverTest extends TestCase
         $result = $class::findById(7);
 
         self::assertInstanceOf($class, $result);
-        self::assertTrue((bool) $result->hydrated_flag);
+        self::assertTrue((bool) $result->getAttribute('hydrated_flag'));
     }
 
     public function testSavingAndCreatedObserversWrapInsertLifecycle(): void
@@ -171,7 +171,7 @@ final class ModelObserverTest extends TestCase
         $class::clearBootedModelState();
         $class::saving(function (Model $model) use (&$events): void {
             $events[] = 'saving';
-            $model->name = strtoupper((string) $model->name);
+            $model->setAttribute('name', strtoupper((string) $model->getAttribute('name')));
         });
         $class::created(function (Model $model) use (&$events): void {
             $events[] = 'created';
@@ -186,7 +186,7 @@ final class ModelObserverTest extends TestCase
         self::assertTrue($instance->save());
         self::assertSame(['saving', 'created', 'saved'], $events);
         self::assertSame('ALICE', $runtime->builder->updateCalls[0][1]['name']);
-        self::assertTrue((bool) $instance->created_flag);
+        self::assertTrue((bool) $instance->getAttribute('created_flag'));
         self::assertSame(12, $instance->getKey());
     }
 
@@ -219,7 +219,7 @@ final class ModelObserverTest extends TestCase
             protected string $table = 'users';
         };
 
-        $result = $model->where('email', 'alice@example.test')->fetch();
+        $result = $model->__call('where', ['email', 'alice@example.test'])->fetch();
 
         self::assertSame([['email', '=', 'alice@example.test']], $runtime->builder->whereCalls);
         self::assertInstanceOf($model::class, $result);
@@ -265,8 +265,8 @@ final class ModelObserverTest extends TestCase
         };
 
         $instance = $model::hydrateRecord(['id' => 5, 'name' => 'Alice', 'is_admin' => 0]);
-        $instance->name = 'Bob';
-        $instance->is_admin = 1;
+        $instance->setAttribute('name', 'Bob');
+        $instance->setAttribute('is_admin', 1);
 
         self::assertTrue($instance->save());
         self::assertSame('update', $runtime->builder->updateCalls[0][0]);

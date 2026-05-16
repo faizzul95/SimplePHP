@@ -6,3 +6,5 @@ parameters:
         - tests
     bootstrapFiles:
         - phpstan-bootstrap.php
+    parallel:
+        maximumNumberOfProcesses: 1
