@@ -71,6 +71,8 @@ final class SessionBootstrapper
         } catch (\Throwable $e) {
             if (function_exists('logger')) {
                 logger()->log_error('Redis session bootstrap failed: ' . $e->getMessage());
+            } else {
+                \Components\Logger::instance()->log_error('Redis session bootstrap failed: ' . $e->getMessage());
             }
 
             if (($session['fail_open'] ?? true) !== true) {

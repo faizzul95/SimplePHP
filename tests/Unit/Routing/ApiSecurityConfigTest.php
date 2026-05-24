@@ -52,7 +52,7 @@ final class ApiSecurityConfigTest extends TestCase
         self::assertContains(\App\Providers\FilesystemServiceProvider::class, $providers);
     }
 
-    public function testThrottleRunsBeforePayloadInspectionInWebAndApiGroups(): void
+    public function testThrottleRunsBeforeRequestSafetyInWebAndApiGroups(): void
     {
         $framework = $this->frameworkConfig();
         $groups = (array) ($framework['middleware_groups'] ?? []);
@@ -60,7 +60,19 @@ final class ApiSecurityConfigTest extends TestCase
         $web = array_values((array) ($groups['web'] ?? []));
         $api = array_values((array) ($groups['api'] ?? []));
 
-        self::assertLessThan(array_search('payload.limits', $web, true), array_search('throttle:web', $web, true));
-        self::assertLessThan(array_search('payload.limits', $api, true), array_search('throttle:api', $api, true));
+        // payload.limits was removed — request.safety is the consolidated payload/safety inspector.
+        // Throttle must still run before the heavier payload inspection middleware.
+        $webSafety = array_search('request.safety', $web, true);
+        $apiSafety = array_search('request.safety', $api, true);
+
+        self::assertIsInt($webSafety, 'request.safety must be present in the web group');
+        self::assertIsInt($apiSafety, 'request.safety must be present in the api group');
+
+        self::assertLessThan($webSafety, array_search('throttle:web', $web, true));
+        self::assertLessThan($apiSafety, array_search('throttle:api', $api, true));
+
+        // payload.limits must NOT be present in either group (replaced by request.safety).
+        self::assertFalse(array_search('payload.limits', $web, true), 'payload.limits must not be in web group — request.safety is the superset');
+        self::assertFalse(array_search('payload.limits', $api, true), 'payload.limits must not be in api group — request.safety is the superset');
     }
 }

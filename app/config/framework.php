@@ -129,8 +129,8 @@ $config['framework'] = [
         'compress'    => \Middleware\CompressResponse::class,
     ],
     'middleware_groups' => [
-        'web' => ['session.stateful', 'headers', 'preload.assets', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:web', 'payload.limits', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'csrf'],
-        'api' => ['headers', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:api', 'payload.limits', 'content.type', 'request.fingerprint', 'request.safety', 'xss', 'api.log'],
+        'web' => ['session.stateful', 'headers', 'preload.assets', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:web', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'csrf'],
+        'api' => ['headers', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:api', 'content.type', 'request.fingerprint', 'request.safety', 'xss', 'api.log'],
         'api.public.submit' => ['api', 'throttle:auth'],
         'api.external.auth' => ['api', 'auth.api'],
         'api.app' => ['api', 'origin.policy:strict', 'session.stateful:force', 'auth.web', 'csrf:force'],

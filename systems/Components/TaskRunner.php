@@ -160,7 +160,7 @@ class TaskRunner
      */
     public function run()
     {
-        $originalTimeLimit = ini_get('max_execution_time') ?? 300;
+        $originalTimeLimit = (int) (ini_get('max_execution_time') ?: 300);
         try {
 
             // Check if there are tasks to run
@@ -252,6 +252,10 @@ class TaskRunner
                             // Handle deadlock resolution here, e.g., by forcefully terminating the process
                             $this->print("TaskRunner - Timeout reached for PID: {$pid}, Task : {$command}. Handling deadlock...");
                             proc_terminate($process);
+                            // Always close the resource to prevent zombie processes
+                            if (is_resource($process)) {
+                                proc_close($process);
+                            }
                             unset($this->runningTasks[$pid]); // Remove deadlock process
                         } else {
                             continue; // If deadlock resolution is not enabled, simply wait
@@ -392,9 +396,9 @@ class TaskRunner
             $pid = $this->getPid($task['process']);
             $pidInfo = $pid !== null ? "(PID: $pid)" : "Unknown PID";
             // Close the process if it's still running
-            if ($pid !== null) {
-                proc_close($task['process']);
-            }
+            // Always close the process resource to prevent zombie handles,
+            // regardless of whether the PID was retrievable.
+            proc_close($task['process']);
 
             // Calculate the time taken for the task
             $costSeconds = number_format(microtime(true) - $task['start_time'], 2, '.', '');

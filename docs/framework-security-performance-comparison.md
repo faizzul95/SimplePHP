@@ -1,6 +1,6 @@
 ﻿# Framework Security & Performance Comparison Report
 
-**Generated:** May 2026 — **Last reviewed:** May 2026 v5 (filesystem atomic writes/copy-move hardening, SignedUrl-aligned local temporary URLs, upload record-scope enforcement, prior deep source re-audit retained)  
+**Generated:** May 2026 — **Last reviewed:** May 2026  
 **PHP Baseline:** PHP 8.3 (runtime tested) / PHP 8.4 (target)  
 **Scope:** MythPHP vs Native PHP, Laravel 12, Yii2, CodeIgniter 3, CodeIgniter 4, CakePHP 5  
 **Evaluation Areas:** Security (OWASP Top 10 attack vectors) + Large-Dataset Database Performance + Cache & HTTP Performance  
@@ -161,6 +161,8 @@ Models that accept direct user input must declare `$fillable`. The schema-only g
 - `X-CSRF-TOKEN` header support for AJAX
 - `csrf_exclude_uris: ['api/*']` — API routes use Bearer tokens; web routes protected by default
 - `hash_equals()` for constant-time token comparison
+- All catch blocks in `CSRF::validate()` use `function_exists('logger')` guard + `Logger::instance()` fallback + outer `\Throwable` absorber — token errors never expose stack traces or silently lose log entries
+- Auto-blocks IP on `E_CSRF_FAILURE` threshold via `IpBlocklist::observeAuditEvent()` (10 failures / 5 min → 1 h block)
 
 | Framework     | Server-Side Token | SameSite | Origin Check | AJAX | Rating |
 |--------------|------------------|---------|-------------|------|--------|
@@ -325,6 +327,7 @@ MythPHP provides two independent rate-limiting tiers:
 - URI length ≤ 2 000, body ≤ 1 MB, headers ≤ 64, input vars ≤ 200, JSON fields ≤ 200, multipart parts ≤ 50 — all configurable
 - Host allow-list from `security.trusted.hosts`
 - `X-Forwarded-For` honoured only when `REMOTE_ADDR` is in trusted proxy list
+- `ValidateRequestSafety` is a **strict superset** of the former `ValidatePayloadLimits` middleware — it checks headers, body size, method, URI length, UA length, JSON fields, multipart parts, and input vars in a single pass; `payload.limits` has been removed from all middleware groups to eliminate the duplicate inspection overhead
 
 | Framework     | Method Filter | Host Allow-List | Proxy Trust | Request Size Limit | Rating |
 |--------------|--------------|----------------|------------|-------------------|--------|
@@ -761,6 +764,14 @@ Path traversal blocked at `normalizeRelativePath()` — `..` → `InvalidArgumen
 | Content-Disposition safety | `FileUploadGuard::serve()` CRLF-sanitizes filename before header output |
 | Worker mode | `WorkerState` + `RoadRunnerWorker` — per-request singleton reset; OPcache preload |
 | Shared hosting | APCu → file graceful degrade; all security features work without Redis or root access |
+| Logger fallback pattern | Every catch block that may execute before the service container is ready uses `function_exists('logger')` guard + `Logger::instance()` fallback — ensures no silent log loss at bootstrap, in CSRF validation, in session bootstrapping, or in queue/backup workers |
+| TaskRunner process hygiene | `proc_close()` always called after `proc_terminate()` with resource guard — no zombie handles; `ini_get()` return value cast to `(int)` before `set_time_limit()` |
+| Middleware deduplication | `payload.limits` removed from `web` and `api` groups — `request.safety` is a strict superset; eliminates one full body-scan per request without reducing protection |
+| CSRF auto-IP-block escalation | `IpBlocklist::observeAuditEvent()` automatically adds repeat CSRF offenders to the dynamic blocklist (10 failures / 5 min) |
+| IpBlocklist trusted-proxy chain | `resolveClientIp()` walks `CF-Connecting-IP → Client-IP → X-Forwarded-For → X-Cluster-Client-IP → Forwarded-For` in priority order; only trusted `REMOTE_ADDR` proxies trigger header trust |
+| AuditLogger dual-write | DB write best-effort; flat NDJSON file always written even if DB is down; per-request ID injected via `$_SERVER['HTTP_X_REQUEST_ID']` or fresh `bin2hex(random_bytes(8))` |
+| Redis session handler | Locking with TTL (`SET NX EX`); `updateTimestamp()` extends TTL without full write; `validateId()` for session integrity; `gc()` delegated to Redis TTL |
+| Hasher dummy verify | `Hasher::dummyVerify()` called on missing user path to normalize response time and prevent account enumeration timing attacks |
 
 ### Known Gaps
 
@@ -1101,4 +1112,7 @@ if (PwnedPasswordChecker::isPwned($password)) {
 
 ---
 
-*All MythPHP claims are based on direct source inspection, May 2026. This re-audit covered `HttpClient`, `XssProtection`, `DatabaseRuntime`, `PerformanceMonitor`, `SlowQueryLogger`, `Model`, `HasStreaming`, `BladeEngine`, `WorkerState`, `Worker`, `Job`, `LocalFilesystemAdapter`, `Files`, and the surrounding security / database subsystems. Local verification during this review included green reruns of the focused filesystem, upload-security, and prior HttpClient/model-related test slices plus static checks on the affected files. Performance figures remain algorithm-analysis estimates; measure on target hardware.*
+*All MythPHP claims are based on direct source inspection, May 2026. Performance figures are algorithm-analysis estimates; measure on target hardware with `php myth db:benchmark`.*
+
+`AuditLogger::reset()` clears the cached request ID — must be called by `WorkerState::flush()` between RoadRunner requests to prevent ID leakage across requests.
+

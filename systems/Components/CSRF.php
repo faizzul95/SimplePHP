@@ -165,7 +165,15 @@ class CSRF
 
             return $this->validateToken();
         } catch (RuntimeException $e) {
-            logger()->log_error('CSRF validation error: ' . $e->getMessage());
+            try {
+                if (function_exists('logger')) {
+                    logger()->log_error('CSRF validation error: ' . $e->getMessage());
+                } else {
+                    Logger::instance()->log_error('CSRF validation error: ' . $e->getMessage());
+                }
+            } catch (\Throwable) {
+                // Never let a logging failure prevent a CSRF decision from being returned.
+            }
             return false;
         }
     }
