@@ -509,14 +509,14 @@ if (!function_exists('loadScopeMacroDBFunctions')) {
         // Input validation
         if (empty($filename) && empty($foldername)) {
             if (!$silent) {
-                error_log("loadScopeMacroDBFunctions: No files or folders specified");
+                \Components\Logger::instance()->log_error("loadScopeMacroDBFunctions: No files or folders specified");
             }
             return;
         }
 
         if (!is_string($base_path) || empty(trim($base_path))) {
             if (!$silent) {
-                error_log("loadScopeMacroDBFunctions: Invalid base path provided");
+                \Components\Logger::instance()->log_error("loadScopeMacroDBFunctions: Invalid base path provided");
             }
             return;
         }
@@ -528,7 +528,7 @@ if (!function_exists('loadScopeMacroDBFunctions')) {
         // Validate base path exists
         if (!is_dir($base_path)) {
             if (!$silent) {
-                error_log("loadScopeMacroDBFunctions: Base path does not exist: {$base_path}");
+                \Components\Logger::instance()->log_error("loadScopeMacroDBFunctions: Base path does not exist: {$base_path}");
             }
             return;
         }
@@ -735,7 +735,7 @@ if (!function_exists('loadScopeMacroDBFunctions')) {
         // Log errors if any occurred and not in silent mode
         if (!$silent && !empty($errors)) {
             foreach ($errors as $error) {
-                error_log("loadScopeMacroDBFunctions: " . $error);
+                \Components\Logger::instance()->log_error("loadScopeMacroDBFunctions: " . $error);
             }
         }
     }

@@ -69,9 +69,8 @@ class FileStore
         $path = $this->path($key);
         $dir  = dirname($path);
 
-        if (!is_dir($dir)) {
-            // 0750 — consistent with constructor; cache sub-dirs may hold PII.
-            @mkdir($dir, 0750, true);
+        if (!$this->ensureDirectoryExists($dir)) {
+            return false;
         }
 
         $expire  = $seconds > 0 ? time() + $seconds : 0;
@@ -86,8 +85,7 @@ class FileStore
             return false;
         }
 
-        if (!@rename($tmp, $path)) {
-            @unlink($tmp);
+        if (!$this->moveTempFileIntoPlace($tmp, $path)) {
             return false;
         }
 
@@ -113,8 +111,8 @@ class FileStore
         $path = $this->path($key);
         $dir  = dirname($path);
 
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0750, true);
+        if (!$this->ensureDirectoryExists($dir)) {
+            return false;
         }
 
         // If an unexpired entry already exists, short-circuit without racing.
@@ -299,5 +297,41 @@ class FileStore
             return ['expires_in' => 0];
         }
         return ['expires_in' => max(0, $expire - time())];
+    }
+
+    protected function ensureDirectoryExists(string $dir): bool
+    {
+        if (is_dir($dir)) {
+            return true;
+        }
+
+        return @mkdir($dir, 0750, true) || is_dir($dir);
+    }
+
+    protected function moveTempFileIntoPlace(string $tmp, string $path): bool
+    {
+        if ($this->renameFile($tmp, $path)) {
+            return true;
+        }
+
+        // Windows rename() cannot reliably replace an existing destination.
+        // If the target already exists, remove it and retry the move once.
+        if (is_file($path) && $this->deleteFile($path) && $this->renameFile($tmp, $path)) {
+            return true;
+        }
+
+        $this->deleteFile($tmp);
+
+        return false;
+    }
+
+    protected function renameFile(string $from, string $to): bool
+    {
+        return @rename($from, $to);
+    }
+
+    protected function deleteFile(string $path): bool
+    {
+        return @unlink($path);
     }
 }

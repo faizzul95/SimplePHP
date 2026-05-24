@@ -14,6 +14,8 @@ final class AuthSessionLifecycleProbe extends Auth
     public bool $mutateOk = true;
     public ?string $resolvedSessionId = null;
     public array $logoutCalls = [];
+    public bool $startNativeSessionResult = true;
+    public array $reportedSessionStartFailures = [];
 
     public function user(array|string|null $methods = null): ?array
     {
@@ -49,6 +51,16 @@ final class AuthSessionLifecycleProbe extends Auth
     protected function currentSessionIdentifier(): string
     {
         return (string) $this->resolvedSessionId;
+    }
+
+    protected function startNativeSession(): bool
+    {
+        return $this->startNativeSessionResult;
+    }
+
+    protected function reportSessionStartFailure(string $source): void
+    {
+        $this->reportedSessionStartFailures[] = $source;
     }
 
     protected function findConfiguredUserRecord(int $userId, string $selectColumns): ?array
@@ -159,5 +171,23 @@ final class AuthSessionLifecycleTest extends TestCase
 
         self::assertFalse($result);
         self::assertCount(2, $auth->registry);
+    }
+
+    public function testLoginReturnsFalseWhenSessionStartupFails(): void
+    {
+        $auth = new AuthSessionLifecycleProbe([
+            'session_security' => [
+                'enabled' => false,
+            ],
+            'session_concurrency' => [
+                'enabled' => false,
+            ],
+        ]);
+        $auth->startNativeSessionResult = false;
+
+        $result = $auth->login(44);
+
+        self::assertFalse($result);
+        self::assertSame([AuthSessionLifecycleProbe::class], $auth->reportedSessionStartFailures);
     }
 }

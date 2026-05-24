@@ -2,6 +2,8 @@
 
 namespace Core\Console;
 
+use Components\Logger;
+
 /**
  * Schedule — Laravel-like task scheduling manager.
  *
@@ -164,7 +166,13 @@ class Schedule
 
                 // Log the error
                 if (function_exists('logger')) {
-                    logger()->logException($e);
+                    try {
+                        logger()->logException($e);
+                    } catch (\Throwable) {
+                        Logger::instance()->logException($e);
+                    }
+                } else {
+                    Logger::instance()->logException($e);
                 }
             } finally {
                 $event->releaseLock();
@@ -228,7 +236,7 @@ class Schedule
     /**
      * Dispatch a scheduled command in the background (best effort, cross-platform).
      */
-    private function runCommandInBackground(string $commandLine): void
+    protected function runCommandInBackground(string $commandLine): void
     {
         $phpBinary = PHP_BINARY ?: 'php';
         $mythScript = ROOT_DIR . 'myth';
@@ -245,10 +253,32 @@ class Schedule
         }
 
         if (stripos(PHP_OS_FAMILY, 'Windows') === 0) {
-            @pclose(@popen('start /B "" ' . $command, 'r'));
+            if (!$this->launchWindowsBackgroundCommand($command)) {
+                throw new \RuntimeException('Failed to launch scheduled command in background: ' . $commandLine);
+            }
             return;
         }
 
-        @exec($command . ' > /dev/null 2>&1 &');
+        if (!$this->launchUnixBackgroundCommand($command)) {
+            throw new \RuntimeException('Failed to launch scheduled command in background: ' . $commandLine);
+        }
+    }
+
+    protected function launchWindowsBackgroundCommand(string $command): bool
+    {
+        $handle = @popen('start /B "" ' . $command, 'r');
+        if (!is_resource($handle)) {
+            return false;
+        }
+
+        return @pclose($handle) === 0;
+    }
+
+    protected function launchUnixBackgroundCommand(string $command): bool
+    {
+        $exitCode = 1;
+        @exec($command . ' > /dev/null 2>&1 &', $output, $exitCode);
+
+        return $exitCode === 0;
     }
 }

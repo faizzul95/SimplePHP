@@ -23,8 +23,9 @@ Browser/API → ValidateUploadGuard middleware (entity type/folder/MIME policy)
                └─ inspectDocumentContent() — streaming CSV/JSON/XML/text scan (opt-in)
            → storeAnalyzedFile():
                ├─ reserveTargetPath()     — bin2hex(random_bytes(16)) filename
-               ├─ move_uploaded_file()    — PHP-level atomicity for browser uploads
-               └─ chmod(0644)             — deny execute on stored files
+			   ├─ move_uploaded_file() / adapter writeStream()
+			   ├─ local adapter temp-file replacement for managed/local disk persistence
+			   └─ chmod(0644)             — deny execute on stored files
 ```
 
 ### Key Security Properties
@@ -40,6 +41,7 @@ Browser/API → ValidateUploadGuard middleware (entity type/folder/MIME policy)
 | Base64 size | Decoded size estimated from base64 string length before decode — prevents memory exhaustion |
 | Document content | Optional streaming scanner: SQL injection, XSS, wrapper abuse per cell/line |
 | GD re-encoding | Images re-created through GD (`imagecreatefromjpeg/png/gif/webp`) — strips EXIF payloads and embedded PHP tags |
+| Managed storage | `setStorageDisk()` routes final persistence through the configured filesystem adapter without changing caller response shape |
 | Execute bit | `chmod(0644)` on all stored files — web server cannot execute them |
 
 ### Blocked Extensions (Default)
@@ -108,6 +110,7 @@ Current central responsibilities:
 ### Public API
 
 - `setUploadDir(string $uploadDir, ?int $permission = 0775): void` — Set upload directory. Auto-creates folder if missing.
+- `setStorageDisk(?string $disk, ?string $prefix = null): void` — Persist through a managed disk while keeping the upload response shape compatible.
 - `setMaxFileSize(int $maxFileSize): void` — Set max file size **in megabytes** (e.g., `5` = 5 MB).
 - `setAllowedMimeTypes(string $allowedMimeTypes): void` — Comma-separated MIME types, or `'*'` to allow all.
 - `setImageLimits(int $maxWidth, int $maxHeight, int $maxPixels = 24000000): void` — Guard against oversized or decompression-bomb-like images.
@@ -203,6 +206,8 @@ For very wide CSV rows, increase `line_length` so rows are not artificially cons
 		'relative_path' => 'public/upload/avatars/1718001234ab3c5d6f.jpg',
 		'folder'        => '/var/www/.../upload/',
 		'relative_folder' => 'public/upload/avatars',
+		'disk'          => null|'public',
+		'url'           => null|'/storage/avatars/1718001234ab3c5d6f.jpg',
 		'mime'          => 'image/jpeg',
 		'extension'     => 'jpg',
 		'compression'   => 1|2|3,
@@ -261,10 +266,12 @@ Files are renamed automatically using cryptographically secure randomness. Origi
 - Images are re-encoded through GD before storage, which strips embedded active content and reduces polyglot/RCE risk.
 - Oversized images are rejected by width, height, and total pixel count to reduce decompression-bomb risk.
 - Stored files are written with generated names and `0644` permissions.
+- Managed-storage writes use adapter streams; the built-in local adapter rewinds seekable streams automatically and performs temp-file replacement before exposing the final path.
 - Bulk uploads are processed sequentially so each file is validated, transformed, and released before the next file is handled.
 - Text, CSV, JSON, and XML documents can be scanned line by line before storage so suspicious active content can be rejected without loading the full file into memory.
 - Streaming content validation also supports NDJSON, JSON-LD, Markdown, and YAML-style text payloads when the detected MIME matches one of the supported scan types.
 - Document scanning is not automatic; it only runs when `validate_content` is enabled by the caller.
+- The profile-image upload controller now scopes update/delete operations to the configured upload policy and matching entity metadata, so raw `entity_files.id` tampering cannot target unrelated file records.
 
 This reduces common upload attack classes such as path traversal, MIME spoofing, double-extension abuse, executable upload, image polyglots, and oversized image memory exhaustion. It does not replace patching PHP/GD/ImageMagick or keeping the server runtime updated.
 
@@ -272,7 +279,7 @@ This reduces common upload attack classes such as path traversal, MIME spoofing,
 
 - `/api/v1/uploads/image-cropper` — Image upload with cropper support
 - `/api/v1/uploads/delete` — Delete uploaded file
-- Protected by middleware: `auth`, `xss`
+- Protected by `api.upload.image` / `api.upload.action`, which layer API hardening, session-backed browser auth, origin policy, upload guard policy checks, and controller-level record-scope validation.
 
 ## Examples
 

@@ -1,10 +1,10 @@
 ﻿# Framework Security & Performance Comparison Report
 
-**Generated:** May 2026 — **Last reviewed:** May 2026 v4 (deep source re-audit: XSS GET scanning, HttpClient post-connect IP validation + pinning, database streaming/adaptive batching, score reconciliation)  
+**Generated:** May 2026 — **Last reviewed:** May 2026 v5 (filesystem atomic writes/copy-move hardening, SignedUrl-aligned local temporary URLs, upload record-scope enforcement, prior deep source re-audit retained)  
 **PHP Baseline:** PHP 8.3 (runtime tested) / PHP 8.4 (target)  
 **Scope:** MythPHP vs Native PHP, Laravel 12, Yii2, CodeIgniter 3, CodeIgniter 4, CakePHP 5  
 **Evaluation Areas:** Security (OWASP Top 10 attack vectors) + Large-Dataset Database Performance + Cache & HTTP Performance  
-**Methodology:** All MythPHP claims verified by direct source inspection of `systems/Core/`, `systems/Middleware/`, `systems/Components/`, `app/http/middleware/`, and `app/support/`. Scores for competing frameworks are based on their documented behaviour and public source code. Performance numbers are theoretical estimates derived from algorithm analysis — benchmark on target hardware using `php myth db:benchmark`.
+**Methodology:** All MythPHP claims verified by direct source inspection of `systems/Core/`, `systems/Middleware/`, `systems/Components/`, `systems/Core/Filesystem/`, `app/http/middleware/`, and `app/support/`. Scores for competing frameworks are based on their documented behaviour and public source code. Performance numbers are theoretical estimates derived from algorithm analysis — benchmark on target hardware using `php myth db:benchmark`.
 
 ---
 
@@ -204,22 +204,20 @@ Models that accept direct user input must declare `$fillable`. The schema-only g
 
 ### 2.6 File Upload Security
 
-**Verified implementation (`systems/Core/Security/FileUploadGuard.php`):**
-- MIME detected via `finfo` (magic bytes) — not the user-supplied `Content-Type`
-- Extension derived from MIME allowlist map, never from original filename
-- Double-extension bypass blocked (e.g., `shell.php.jpg` rejected)
-- Null bytes stripped from filename
+**Verified implementation (`systems/Components/Files.php`, `app/http/middleware/ValidateUploadGuard.php`, `app/http/controllers/UploadController.php`, legacy `systems/Core/Security/FileUploadGuard.php`):**
+- MIME detected via `finfo` (magic bytes) — never trusts browser `Content-Type`
+- Extension derived from MIME allowlist map or MIME fallback resolver, never from original filename
+- Double-extension bypass blocked because storage extension comes from detected MIME, not the submitted filename
+- Null bytes, traversal markers, and unsafe upload labels rejected by `Components\Security::isSafeUploadFilename()`
 - Stored filename: `bin2hex(random_bytes(16)) . '.' . $safeExtension` — non-guessable
-- Storage **outside web root** (`storage/uploads/`)
-- `.htaccess deny-all` written on first use
-- `serve()`: `realpath()` containment guard; `Content-Disposition: attachment` forced for non-image/non-PDF; `Content-Disposition` filename CRLF-sanitized: `str_replace(["\r","\n","\0",'"'], '', basename($realPath))`
-- `delete()`: `..` and null byte rejection before `realpath()` check
+- Default app uploads are normalized project-relative paths (commonly `public/upload/...`); private/local-managed disks and remote-managed disks can be used through the filesystem adapter layer when stronger storage isolation is required
 - `ValidateUploadGuard` middleware: entity-type allowlist, folder-group allowlist, AJAX-only flag, base64 MIME detection for cropper uploads
+- `UploadController` now enforces object-level scoping for profile-image update/delete requests, so a tampered `entity_files.id` cannot target unrelated records
 - Pixel-bomb guard + GD re-encode (EXIF strip) via `Files` component
 
-| Framework     | finfo MIME | Random Name | Out-of-Webroot | Safe Content-Disposition | Rating |
-|--------------|-----------|------------|----------------|-------------------------|--------|
-| **MythPHP**  | ✅ | ✅ `random_bytes(16)` | ✅ | ✅ CRLF sanitized | ⭐⭐⭐⭐½ **(4.5)** |
+| Framework     | finfo MIME | Random Name | Storage Isolation | Safe Content-Disposition | Rating |
+|--------------|-----------|------------|-------------------|-------------------------|--------|
+| **MythPHP**  | ✅ | ✅ `random_bytes(16)` | ⚠️ Configurable via local/private/managed disks | ✅ legacy guarded serving + generated names | ⭐⭐⭐⭐½ **(4.5)** |
 | Native PHP   | ❌ | ❌ | ❌ | ❌ | ⭐ (1.0) |
 | Laravel      | ✅ | ✅ | ✅ | ⚠️ | ⭐⭐⭐⭐ (4.0) |
 | Yii2         | ✅ | ⚠️ | ❌ | ❌ | ⭐⭐⭐½ (3.5) |
@@ -657,7 +655,7 @@ echo $html;
 
 ### 4.5 Filesystem Interface
 
-**Verified (`app/support/Filesystem/`):**
+**Verified (`systems/Core/Filesystem/`):**
 
 | Method | Interface | Local Adapter |
 |--------|-----------|--------------|
@@ -667,7 +665,12 @@ echo $html;
 | `files`, `allFiles`, `makeDirectory` | ✅ | ✅ |
 | `size()` | ✅ | ✅ `filesize()` |
 | `lastModified()` | ✅ | ✅ `filemtime()` |
-| `temporaryUrl()` | ✅ | ✅ `SignedUrl::generate()` — HMAC, no service |
+| `temporaryUrl()` | ✅ | ✅ `SignedUrl::generate()` — shared HMAC contract, no external service |
+
+Additional verified local-adapter guarantees:
+- `put()` and `writeStream()` use temp-file + `rename()` replacement for atomic local writes
+- seekable input streams are rewound automatically before `writeStream()` copies bytes
+- `copy()` and `move()` reject missing sources explicitly instead of silently delegating to PHP warnings
 
 Path traversal blocked at `normalizeRelativePath()` — `..` → `InvalidArgumentException`.
 
@@ -749,6 +752,9 @@ Path traversal blocked at `normalizeRelativePath()` — `..` → `InvalidArgumen
 | IDOR detection | `DetectIdor` — route-param ownership check; `AuditLogger` writes DB row + flat file |
 | Full security header suite | 9 headers via `SecurityHeadersTrait` including CSP nonce, Permissions-Policy (array format), COOP, CORP |
 | Signed URLs | `SignedUrl` — HMAC-SHA256; `hash_equals()`; no external service required |
+| Local storage temporary URLs | `LocalFilesystemAdapter::temporaryUrl()` delegates to `SignedUrl::generate()` using the same verifier contract as the wider framework |
+| Atomic local filesystem writes | `LocalFilesystemAdapter` uses temp-file replacement for `put()` / `writeStream()` and rewinds seekable streams before persistence |
+| Upload object authorization | `UploadController` restricts profile-image update/delete operations to records matching the configured upload policy and submitted entity metadata |
 | Keyset pagination | `cursorPaginate()` — O(1) deep pages regardless of dataset size |
 | Large-dataset iteration & maintenance | `chunk()`, `cursor()`, `lazy()`, `chunkById()`, `lazyById()`, model `each()` / `eachById()`, `importInBatches()`, `upsertInBatches()`, `updateInBatches()` |
 | Safe query triage | `toDebugSnapshot()` is gated to CLI / `APP_DEBUG`; slow-query logs redact binds and omit expanded full SQL |
@@ -1095,4 +1101,4 @@ if (PwnedPasswordChecker::isPwned($password)) {
 
 ---
 
-*All MythPHP claims are based on direct source inspection, May 2026. This re-audit covered `HttpClient`, `XssProtection`, `DatabaseRuntime`, `PerformanceMonitor`, `SlowQueryLogger`, `Model`, `HasStreaming`, `BladeEngine`, `WorkerState`, `Worker`, `Job`, and the surrounding security / database subsystems. Local verification during this review included green reruns of the previously failing HttpClient and model-related test slices plus focused PHPStan reruns for the affected test files. Performance figures remain algorithm-analysis estimates; measure on target hardware.*
+*All MythPHP claims are based on direct source inspection, May 2026. This re-audit covered `HttpClient`, `XssProtection`, `DatabaseRuntime`, `PerformanceMonitor`, `SlowQueryLogger`, `Model`, `HasStreaming`, `BladeEngine`, `WorkerState`, `Worker`, `Job`, `LocalFilesystemAdapter`, `Files`, and the surrounding security / database subsystems. Local verification during this review included green reruns of the focused filesystem, upload-security, and prior HttpClient/model-related test slices plus static checks on the affected files. Performance figures remain algorithm-analysis estimates; measure on target hardware.*

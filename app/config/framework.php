@@ -51,6 +51,7 @@ $config['framework'] = [
         // Only for stateless API requests (no view/session providers)
         'api' => [
             \App\Providers\AuthServiceProvider::class,
+            \App\Providers\FilesystemServiceProvider::class,
             \App\Providers\ResponseServiceProvider::class,
             \App\Providers\RoutingServiceProvider::class,
             \App\Providers\FeatureServiceProvider::class,
@@ -128,17 +129,18 @@ $config['framework'] = [
         'compress'    => \Middleware\CompressResponse::class,
     ],
     'middleware_groups' => [
-        'web' => ['session.stateful', 'headers', 'preload.assets', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'payload.limits', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'csrf', 'throttle:web'],
-        'api' => ['headers', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'payload.limits', 'content.type', 'request.fingerprint', 'request.safety', 'throttle:api', 'xss', 'api.log'],
-        'api.public.submit' => ['throttle:auth'],
-        'api.external.auth' => ['auth.api'],
-        'api.app' => ['auth'],
+        'web' => ['session.stateful', 'headers', 'preload.assets', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:web', 'payload.limits', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'csrf'],
+        'api' => ['headers', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:api', 'payload.limits', 'content.type', 'request.fingerprint', 'request.safety', 'xss', 'api.log'],
+        'api.public.submit' => ['api', 'throttle:auth'],
+        'api.external.auth' => ['api', 'auth.api'],
+        'api.app' => ['api', 'origin.policy:strict', 'session.stateful:force', 'auth.web', 'csrf:force'],
         'api.upload.image' => ['api.app', 'content.type:multipart', 'upload.guard:image-cropper'],
         'api.upload.action' => ['api.app', 'upload.guard:delete'],
     ],
     'middleware_override_aliases' => [
         'xss',
         'content.type',
+        'origin.policy',
     ],
     'content_type_profiles' => [
         'json' => ['application/json', 'application/*+json'],

@@ -36,12 +36,25 @@ final class DetectIdor
             return $next($request);
         }
 
-        $routeParam = (int) ($request->route($ownerParam) ?? 0);
+        $rawRouteParam = $request->route($ownerParam);
 
         // No owner param in route — nothing to check
-        if ($routeParam === 0) {
+        if ($rawRouteParam === null || $rawRouteParam === '') {
             return $next($request);
         }
+
+        $normalizedRouteParam = filter_var($rawRouteParam, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($normalizedRouteParam === false) {
+            if (\function_exists('abort')) {
+                \abort(404, 'Resource not found.');
+            }
+
+            http_response_code(404);
+            echo json_encode(['error' => 'Resource not found.']);
+            exit;
+        }
+
+        $routeParam = (int) $normalizedRouteParam;
 
         // Allow if IDs match (user accessing their own resource)
         if ($routeParam === (int) $authUserId) {
@@ -49,7 +62,7 @@ final class DetectIdor
         }
 
         // Allow super-admins to access any resource
-        if (function_exists('can') && can('admin.access.any')) {
+        if (\function_exists('can') && \can('admin.access.any')) {
             return $next($request);
         }
 
@@ -61,8 +74,8 @@ final class DetectIdor
             ownerId:    $routeParam
         );
 
-        if (function_exists('abort')) {
-            abort(403, 'Access denied.');
+        if (\function_exists('abort')) {
+            \abort(403, 'Access denied.');
         }
 
         http_response_code(403);

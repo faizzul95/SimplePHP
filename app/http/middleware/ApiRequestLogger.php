@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use Components\Logger;
 use Core\Http\Request;
 use Core\Http\Middleware\MiddlewareInterface;
 
@@ -22,6 +23,9 @@ use Core\Http\Middleware\MiddlewareInterface;
  */
 class ApiRequestLogger implements MiddlewareInterface
 {
+    private const MAX_JSON_CAPTURE_BYTES = 16384;
+    private const MAX_LOGGED_PARAMS_BYTES = 2048;
+
     public function setParameters(array $parameters): void
     {
         // No parameters needed — config driven
@@ -44,20 +48,7 @@ class ApiRequestLogger implements MiddlewareInterface
         $ip      = $request->ip();
         $agent   = $request->userAgent();
 
-        // Mask sensitive fields
-        $params = array_merge($_GET, $_POST);
-
-        // Also capture JSON body if present
-        $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
-        if (stripos($contentType, 'application/json') !== false) {
-            $rawBody = file_get_contents('php://input');
-            $jsonData = json_decode($rawBody, true);
-            if (is_array($jsonData)) {
-                $params = array_merge($params, $jsonData);
-            }
-        }
-
-        $params = $this->maskSensitiveFields($params);
+        $params = $this->captureRequestParams($request);
 
         $logPath = $config['log_path'] ?? 'logs/api.log';
 
@@ -74,7 +65,7 @@ class ApiRequestLogger implements MiddlewareInterface
             $uri,
             $ip,
             $agent,
-            json_encode($params, JSON_UNESCAPED_SLASHES)
+            $this->encodeParamsForLog($params)
         ));
 
         try {
@@ -129,12 +120,30 @@ class ApiRequestLogger implements MiddlewareInterface
     /**
      * Mask password, token, and secret fields to avoid leaking credentials in logs.
      */
+    private function captureRequestParams(Request $request): array
+    {
+        $params = array_merge($_GET, $_POST);
+        $contentType = (string) ($_SERVER['CONTENT_TYPE'] ?? '');
+
+        if (stripos($contentType, 'application/json') !== false) {
+            $rawBody = (string) $request->rawBody();
+            if (strlen($rawBody) > self::MAX_JSON_CAPTURE_BYTES) {
+                $params['_truncated_json_body'] = sprintf('%d bytes omitted from request log', strlen($rawBody));
+            } else {
+                $jsonData = json_decode($rawBody, true);
+                if (is_array($jsonData)) {
+                    $params = array_merge($params, $jsonData);
+                }
+            }
+        }
+
+        return $this->maskSensitiveFields($params);
+    }
+
     private function maskSensitiveFields(array $data): array
     {
-        $sensitiveKeys = ['password', 'password_confirmation', 'token', 'secret', 'api_key', 'access_token'];
-
         foreach ($data as $key => &$value) {
-            if (in_array(strtolower($key), $sensitiveKeys, true)) {
+            if ($this->isSensitiveKey((string) $key)) {
                 $value = '***';
             } elseif (is_array($value)) {
                 $value = $this->maskSensitiveFields($value);
@@ -145,19 +154,54 @@ class ApiRequestLogger implements MiddlewareInterface
         return $data;
     }
 
+    private function isSensitiveKey(string $key): bool
+    {
+        $normalized = strtolower(trim($key));
+
+        return preg_match('/pass|pwd|token|secret|key|auth|csrf|cookie/', $normalized) === 1;
+    }
+
+    private function encodeParamsForLog(array $params): string
+    {
+        $encoded = json_encode($params, JSON_UNESCAPED_SLASHES);
+        if (!is_string($encoded)) {
+            return '{}';
+        }
+
+        if (strlen($encoded) <= self::MAX_LOGGED_PARAMS_BYTES) {
+            return $encoded;
+        }
+
+        return substr($encoded, 0, self::MAX_LOGGED_PARAMS_BYTES) . '...(truncated)';
+    }
+
     /**
      * Append a line to the log file (non-blocking, best-effort).
      */
     private function write(string $path, string $line): void
     {
         try {
-            $dir = dirname($path);
-            if (!is_dir($dir)) {
-                mkdir($dir, 0755, true);
-            }
-            file_put_contents($path, $line . PHP_EOL, FILE_APPEND | LOCK_EX);
+            $this->appendStructuredLogLine($path, $line);
         } catch (\Throwable $e) {
             // Logging failure must not break the request
         }
     }
+
+    private function loggerForPath(string $path): Logger
+    {
+        static $instances = [];
+
+        if (!isset($instances[$path])) {
+            $instances[$path] = new Logger($path);
+        }
+
+        return $instances[$path];
+    }
+
+    private function appendStructuredLogLine(string $path, string $line): void
+    {
+        $method = 'appendRawLine';
+        $this->loggerForPath($path)->{$method}($line);
+    }
+
 }

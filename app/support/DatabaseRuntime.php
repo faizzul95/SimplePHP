@@ -260,7 +260,7 @@ class DatabaseRuntime
             bootstrapFail($message, 500, $previous);
         }
 
-        error_log($message . ($previous !== null ? ' :: ' . $previous->getMessage() : ''));
+        \Components\Logger::instance()->log_error($message . ($previous !== null ? ' :: ' . $previous->getMessage() : ''));
         throw new RuntimeException($message, 0, $previous);
     }
 
@@ -271,6 +271,6 @@ class DatabaseRuntime
             return;
         }
 
-        error_log($message);
+        \Components\Logger::instance()->log_error($message);
     }
 }

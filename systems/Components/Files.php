@@ -1074,11 +1074,17 @@ class Files
 
         try {
             foreach ($variants as $variant) {
+                $variantPath = ltrim(($relativeFolder !== '' ? $relativeFolder . '/' : '') . $baseName . (string) $variant['suffix'] . '.' . $extension, '/');
+
+                if ($storage instanceof \Core\Filesystem\LocalFilesystemAdapter) {
+                    $size += $this->writeImageVariantToLocalStorage($storage, $variantPath, $variant['resource'], $mime, (int) $variant['quality']);
+                    continue;
+                }
+
                 $tempPath = $this->createTemporaryFile();
 
                 try {
                     $this->writeImageResource($variant['resource'], $tempPath, $mime, (int) $variant['quality']);
-                    $variantPath = ltrim(($relativeFolder !== '' ? $relativeFolder . '/' : '') . $baseName . (string) $variant['suffix'] . '.' . $extension, '/');
                     $size += $this->writePathToStorage($storage, $variantPath, $tempPath);
                 } finally {
                     if (is_file($tempPath)) {
@@ -1097,6 +1103,34 @@ class Files
         return $size;
     }
 
+    private function writeImageVariantToLocalStorage(\Core\Filesystem\LocalFilesystemAdapter $storage, string $relativePath, $resource, string $mime, int $quality): int
+    {
+        $directory = trim(dirname($relativePath), './\\');
+        if ($directory !== '') {
+            $storage->makeDirectory($directory);
+        }
+
+        $targetPath = $storage->path($relativePath);
+        $temporaryPath = $targetPath . '.tmp-' . bin2hex(random_bytes(6));
+
+        try {
+            $this->writeImageResource($resource, $temporaryPath, $mime, $quality);
+
+            if (!@rename($temporaryPath, $targetPath)) {
+                throw new \RuntimeException('Failed to persist processed image to local storage.');
+            }
+        } finally {
+            if (is_file($temporaryPath)) {
+                @unlink($temporaryPath);
+            }
+        }
+
+        clearstatcache(true, $targetPath);
+        $size = filesize($targetPath);
+
+        return $size === false ? 0 : (int) $size;
+    }
+
     private function writePathToStorage(\Core\Filesystem\FilesystemAdapterInterface $storage, string $relativePath, string $sourcePath): int
     {
         $stream = fopen($sourcePath, 'rb');
@@ -1105,6 +1139,11 @@ class Files
         }
 
         try {
+            $metadata = stream_get_meta_data($stream);
+            if (($metadata['seekable'] ?? false) === true && ftell($stream) !== 0) {
+                rewind($stream);
+            }
+
             if (!$storage->writeStream($relativePath, $stream)) {
                 throw new \RuntimeException('Failed to persist file to storage disk.');
             }

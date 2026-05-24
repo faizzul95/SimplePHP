@@ -342,8 +342,6 @@ if (!function_exists('findInCollection')) {
 
             return null;
         } catch (Exception $e) {
-            // Log the error if needed
-            // error_log("Error in findInCollection: " . $e->getMessage());
             throw $e; // Re-throw the exception for the caller to handle
         }
     }

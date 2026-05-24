@@ -2,6 +2,8 @@
 
 namespace Core\Queue;
 
+use Components\Logger;
+
 /**
  * Queue Worker
  *
@@ -146,9 +148,7 @@ class Worker
                 return $row;
             });
         } catch (\Throwable $e) {
-            if (function_exists('logger')) {
-                logger()->log_error('Queue pop error: ' . $e->getMessage());
-            }
+            $this->logQueueError('Queue pop error: ' . $e->getMessage());
             return null;
         }
     }
@@ -229,9 +229,7 @@ class Worker
                 }
             }
 
-            if (function_exists('logger')) {
-                logger()->log_error("Queue job [{$shortName}] attempt {$attempts} failed: " . $e->getMessage());
-            }
+            $this->logQueueError("Queue job [{$shortName}] attempt {$attempts} failed: " . $e->getMessage());
         }
     }
 
@@ -281,15 +279,28 @@ class Worker
                 'failed_at' => date('Y-m-d H:i:s'),
             ]);
         } catch (\Throwable $insertError) {
-            if (function_exists('logger')) {
-                logger()->log_error("Failed to record failed job: " . $insertError->getMessage());
-            }
+            $this->logQueueError("Failed to record failed job: " . $insertError->getMessage());
         }
 
         // Remove from jobs table
         db()->table($this->table)
             ->where('id', $jobRow['id'])
             ->delete();
+    }
+
+    protected function logQueueError(string $message): void
+    {
+        if (function_exists('logger')) {
+            try {
+                logger()->log_error($message);
+                return;
+            } catch (\Throwable) {
+                // Fall through to the direct logger fallback when the helper is
+                // defined but the logger service is not registered yet.
+            }
+        }
+
+        Logger::instance()->log_error($message);
     }
 
     // ─── Failed Job Management ───────────────────────────────

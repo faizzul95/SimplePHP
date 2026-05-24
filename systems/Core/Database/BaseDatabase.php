@@ -1459,7 +1459,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $stmt->closeCursor();
             unset($stmt);
         } catch (\PDOException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
@@ -1603,7 +1603,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 ];
             }
         } catch (\PDOException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
@@ -1776,7 +1776,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $stmt->closeCursor();
             unset($stmt);
         } catch (\PDOException $e) {
-            $this->db_error_log($e, $methodName);
+            $this->logDatabaseError($e, $methodName);
             throw $e;
         }
 
@@ -2349,7 +2349,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             ];
         } catch (\PDOException $e) {
             // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
@@ -2697,7 +2697,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
         } catch (\PDOException $e) {
             // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
@@ -2830,7 +2830,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 throw $txException;
             }
         } catch (\Throwable $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             $response['message'] = $e->getMessage();
         }
 
@@ -2868,7 +2868,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             return $this->insert($insertData);
 
         } catch (\Exception $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             return ['code' => 422, 'message' => $e->getMessage(), 'action' => 'firstOrCreate'];
         }
     }
@@ -2985,7 +2985,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'action' => 'increment'
             ];
         } catch (\PDOException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e;
         }
 
@@ -3060,7 +3060,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'action' => 'decrement'
             ];
         } catch (\PDOException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e;
         }
 
@@ -3136,7 +3136,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
         } catch (\PDOException $e) {
             // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
@@ -3226,7 +3226,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             return $this->update($updateData);
         } catch (\Exception $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             return [
                 'code' => 400,
                 'message' => $e->getMessage(),
@@ -3307,7 +3307,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
         } catch (\PDOException $e) {
             // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
@@ -3372,7 +3372,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $this->flushPendingPaginateCountCacheRemovals();
             }
         } catch (\PDOException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e;
         }
 
@@ -3468,7 +3468,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             ];
         } catch (\PDOException $e) {
             // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
@@ -3966,7 +3966,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             // Cache the result
             self::$_tableColumnsCache[$cacheKey] = $columns;
         } catch (\PDOException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             return [];
         }
         return $columns;
@@ -4025,7 +4025,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
             return isset($result[0]['Msg_text']) && strtolower($result[0]['Msg_text']) === 'ok';
         } catch (\PDOException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             return false;
         }
     }
@@ -4040,7 +4040,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param bool $rethrow
      * @return void
      */
-    protected function db_error_log(
+    protected function logDatabaseError(
         \Throwable $e,
         string $function = '',
         string $customMessage = 'Database error occurred',
@@ -4141,14 +4141,14 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 if ($isCritical) {
                     $dbLogDir = (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR;
                     if (!is_dir($dbLogDir)) { @mkdir($dbLogDir, 0775, true); }
-                    error_log("Critical Database Error: " . $this->_error['message'] . PHP_EOL, 3, $dbLogDir . 'error.log');
+                    Logger::instance($dbLogDir . 'error.log')->log_error("Critical Database Error: " . $this->_error['message']);
                 }
             } catch (\Throwable $logException) {
                 // Fallback to system error log if custom logger fails
                 $dbLogDir = (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR;
                 if (!is_dir($dbLogDir)) { @mkdir($dbLogDir, 0775, true); }
-                error_log("Database error logging failed: " . $logException->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
-                error_log("Original error: " . $e->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
+                Logger::instance($dbLogDir . 'error.log')->log_error("Database error logging failed: " . $logException->getMessage());
+                Logger::instance($dbLogDir . 'error.log')->log_error("Original error: " . $e->getMessage());
             }
 
             // Optionally rethrow the exception with appropriate type
@@ -4184,8 +4184,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             // Fallback to system error log
             $dbLogDir = (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR;
             if (!is_dir($dbLogDir)) { @mkdir($dbLogDir, 0775, true); }
-            error_log("Database error processing failed: " . $loggingError->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
-            error_log("Original database error: " . $e->getMessage() . PHP_EOL, 3, $dbLogDir . 'error.log');
+            Logger::instance($dbLogDir . 'error.log')->log_error("Database error processing failed: " . $loggingError->getMessage());
+            Logger::instance($dbLogDir . 'error.log')->log_error("Original database error: " . $e->getMessage());
 
             // Still throw the original exception if rethrowing is enabled
             if ($rethrow) {

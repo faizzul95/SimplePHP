@@ -152,8 +152,9 @@ final class FileUploadGuard
         $finfo    = new \finfo(FILEINFO_MIME_TYPE);
         $mimeType = $finfo->file($realPath) ?: 'application/octet-stream';
 
-        // Force download for non-image/non-PDF types to prevent browser execution
-        $inlineTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+        // Force download for anything other than common image types to prevent
+        // active content execution inside browser document viewers.
+        $inlineTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
         $disposition = in_array($mimeType, $inlineTypes, true) ? 'inline' : 'attachment';
 
         $safeFilename = str_replace(["\r", "\n", "\0", '"'], '', basename($realPath));

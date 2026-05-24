@@ -305,10 +305,20 @@ class Kernel
                         'trace' => $e->getTraceAsString(),
                     ]);
                 } catch (\Throwable) {
-                    error_log('[console] ' . get_class($e) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+                    \Components\Logger::instance()->error('Console command failed', [
+                        'command' => $commandName,
+                        'exception' => get_class($e),
+                        'message' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
+                    ]);
                 }
             } else {
-                error_log('[console] ' . get_class($e) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+                \Components\Logger::instance()->error('Console command failed', [
+                    'command' => $commandName,
+                    'exception' => get_class($e),
+                    'message' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
             }
             return 1;
         }

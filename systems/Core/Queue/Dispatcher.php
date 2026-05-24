@@ -2,6 +2,7 @@
 
 namespace Core\Queue;
 
+use Components\Logger;
 use Core\Database\Schema\Schema;
 
 /**
@@ -58,9 +59,7 @@ class Dispatcher
             $redisQueue = new RedisQueue($connConfig);
             return $redisQueue->push($job, $job->queue, $job->delay);
         } catch (\Throwable $e) {
-            if (function_exists('logger')) {
-                logger()->log_error('Redis queue dispatch failed [' . get_class($job) . ']: ' . $e->getMessage());
-            }
+            $this->logQueueError('Redis queue dispatch failed [' . get_class($job) . ']: ' . $e->getMessage());
             // Fallback to sync
             return $this->dispatchSync($job);
         }
@@ -76,9 +75,7 @@ class Dispatcher
         } catch (\Throwable $e) {
             $job->failed($e);
 
-            if (function_exists('logger')) {
-                logger()->log_error('Sync job failed [' . get_class($job) . ']: ' . $e->getMessage());
-            }
+            $this->logQueueError('Sync job failed [' . get_class($job) . ']: ' . $e->getMessage());
 
             throw $e;
         }
@@ -116,9 +113,7 @@ class Dispatcher
 
             return $id;
         } catch (\Throwable $e) {
-            if (function_exists('logger')) {
-                logger()->log_error('Failed to dispatch job [' . get_class($job) . ']: ' . $e->getMessage());
-            }
+            $this->logQueueError('Failed to dispatch job [' . get_class($job) . ']: ' . $e->getMessage());
 
             return null;
         }
@@ -191,10 +186,23 @@ class Dispatcher
                 db()->rawQuery("ALTER TABLE `{$jobsTable}` ADD INDEX `idx_queue_priority_available` (`queue`, `priority`, `available_at`)");
             }
         } catch (\Throwable $e) {
-            if (function_exists('logger')) {
-                logger()->log_error('Queue schema backfill failed: ' . $e->getMessage());
+            $this->logQueueError('Queue schema backfill failed: ' . $e->getMessage());
+        }
+    }
+
+    protected function logQueueError(string $message): void
+    {
+        if (function_exists('logger')) {
+            try {
+                logger()->log_error($message);
+                return;
+            } catch (\Throwable) {
+                // Fall through to the direct logger fallback when the helper is
+                // defined but the logger service is not registered yet.
             }
         }
+
+        Logger::instance()->log_error($message);
     }
 
     private function hasIndex(string $table, string $indexName): bool

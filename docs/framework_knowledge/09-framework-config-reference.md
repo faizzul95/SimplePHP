@@ -106,6 +106,7 @@ Runtime behavior:
 - `disks.*.driver` selects the registered adapter for a disk; built-in support currently includes `local`
 - `disks.*.root` defines the on-disk storage root
 - `disks.*.url` provides public URL generation for local public-style disks
+- The built-in local adapter now performs atomic `put()` / `writeStream()` writes through temp-file replacement, retries replace-on-write when `rename()` cannot overwrite an existing destination (notably on Windows), rewinds seekable streams before persistence, rejects missing-source `copy()` / `move()` calls explicitly, and generates local temporary URLs through the shared `SignedUrl` helper.
 - `gdrive` now supports stream-based file operations through the Google API client when credentials are configured; chunked uploads keep large backup files off the PHP heap
 - `s3` remains scaffolded for later implementation
 
@@ -118,7 +119,8 @@ That means future S3 or Google Drive support should not require changing callers
 
 Upload bridge:
 - `Components\Files` can now persist through a managed disk with `setStorageDisk($disk, $prefix)`.
-- The upload response shape stays compatible and now includes `disk` and `url`, which is the next seam needed for later cloud-backed uploads.
+- The upload response shape stays compatible and now includes `disk` and `url`, which is the seam used by both local public disks and future cloud-backed uploads.
+- Managed-disk persistence uses adapter `writeStream()` internally, so local disks benefit from the same atomic write path and stream rewind handling as direct `storage()` callers.
 
 Backup bridge:
 - `Components\Backup` can now publish the finished local archive to a managed disk with `setBackupDisk($disk, $prefix)`.

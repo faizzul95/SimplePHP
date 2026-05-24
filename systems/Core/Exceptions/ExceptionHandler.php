@@ -75,7 +75,7 @@ class ExceptionHandler
      */
     public static function handle(\Throwable $e, ?bool $debug = null): void
     {
-        error_log("Unhandled Exception: " . $e->getMessage());
+        \Components\Logger::instance()->logException($e);
         $statusCode = static::resolveStatusCode($e);
         if (!headers_sent()) {
             http_response_code($statusCode);

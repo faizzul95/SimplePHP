@@ -50,7 +50,7 @@ class CSRF
         'csrf_httponly' => true,
         'csrf_samesite' => 'Lax',
         'csrf_origin_check' => true,
-        'csrf_allow_missing_origin' => true,
+        'csrf_allow_missing_origin' => false,
         'csrf_trusted_origins' => [],
     ];
 
@@ -128,7 +128,7 @@ class CSRF
      * @return bool True if validation passes, false otherwise
      * @throws RuntimeException If validation fails due to system error
      */
-    public function validate(?string $url): bool
+    public function validate(?string $url, bool $force = false): bool
     {
         try {
             $this->currentUri = $url;
@@ -144,7 +144,7 @@ class CSRF
             }
 
             // Opt-out model: skip CSRF for excluded URIs (e.g. API routes using Bearer tokens)
-            if ($this->isExcludedUri()) {
+            if (!$force && $this->isExcludedUri()) {
                 return true;
             }
 
@@ -165,7 +165,7 @@ class CSRF
 
             return $this->validateToken();
         } catch (RuntimeException $e) {
-            error_log('CSRF validation error: ' . $e->getMessage());
+            logger()->log_error('CSRF validation error: ' . $e->getMessage());
             return false;
         }
     }

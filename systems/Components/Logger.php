@@ -21,6 +21,9 @@ class Logger
 {
     private $logPath;
 
+    /** @var array<string, self> */
+    private static array $instances = [];
+
     public const LOG_LEVEL_INFO = 'INFO';
     public const LOG_LEVEL_ERROR = 'ERROR';
     public const LOG_LEVEL_WARNING = 'WARNING';
@@ -36,8 +39,33 @@ class Logger
      */
     public function __construct($logPath = null)
     {
-        $this->logPath = $logPath ?: dirname(__DIR__, 1) . '/logs/logger.log';
+        $this->logPath = $logPath ?: self::defaultLogPath();
         $this->ensureLogDirectoryExists();
+    }
+
+    /**
+     * Resolve a cached logger instance for a specific path.
+     */
+    public static function instance($logPath = null): self
+    {
+        $resolvedPath = is_string($logPath) && trim($logPath) !== ''
+            ? $logPath
+            : self::defaultLogPath();
+
+        if (!isset(self::$instances[$resolvedPath])) {
+            self::$instances[$resolvedPath] = new self($resolvedPath);
+        }
+
+        return self::$instances[$resolvedPath];
+    }
+
+    public static function defaultLogPath(): string
+    {
+        $rootDir = defined('ROOT_DIR')
+            ? ROOT_DIR
+            : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR;
+
+        return rtrim($rootDir, '/\\') . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'logger.log';
     }
 
     /**
@@ -52,6 +80,20 @@ class Logger
 
         $logMessage = $this->formatLogMessage($message, $level);
         if (file_put_contents($this->logPath, $logMessage, FILE_APPEND | LOCK_EX) === false) {
+            throw new RuntimeException("Failed to write to log file: {$this->logPath}");
+        }
+    }
+
+    /**
+     * Append a preformatted single-line record without the default timestamp/level prefix.
+     * Useful for structured logs that are parsed line-by-line as JSON or custom trace formats.
+     */
+    public function appendRawLine($message)
+    {
+        $this->rotateLogIfNeeded();
+
+        $line = $this->sanitizeLogValue((string) $message) . PHP_EOL;
+        if (file_put_contents($this->logPath, $line, FILE_APPEND | LOCK_EX) === false) {
             throw new RuntimeException("Failed to write to log file: {$this->logPath}");
         }
     }
@@ -84,6 +126,44 @@ class Logger
     public function log_error($message)
     {
         $this->log($message, self::LOG_LEVEL_ERROR);
+    }
+
+    /**
+     * Logs warning message to the default log file.
+     *
+     * @param string $message Log message.
+     */
+    public function log_warning($message)
+    {
+        $this->log($message, self::LOG_LEVEL_WARNING);
+    }
+
+    public function info($message, array $context = []): void
+    {
+        $context === []
+            ? $this->log($message, self::LOG_LEVEL_INFO)
+            : $this->logWithContext($message, $context, self::LOG_LEVEL_INFO);
+    }
+
+    public function debug($message, array $context = []): void
+    {
+        $context === []
+            ? $this->log($message, self::LOG_LEVEL_DEBUG)
+            : $this->logWithContext($message, $context, self::LOG_LEVEL_DEBUG);
+    }
+
+    public function warning($message, array $context = []): void
+    {
+        $context === []
+            ? $this->log($message, self::LOG_LEVEL_WARNING)
+            : $this->logWithContext($message, $context, self::LOG_LEVEL_WARNING);
+    }
+
+    public function error($message, array $context = []): void
+    {
+        $context === []
+            ? $this->log($message, self::LOG_LEVEL_ERROR)
+            : $this->logWithContext($message, $context, self::LOG_LEVEL_ERROR);
     }
 
     /**

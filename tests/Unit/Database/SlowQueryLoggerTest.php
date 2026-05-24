@@ -36,6 +36,8 @@ final class SlowQueryLoggerTest extends TestCase
 
     protected function tearDown(): void
     {
+        SlowQueryLogger::setAuditLoggerOverride(null);
+
         $path = SlowQueryLogger::path();
         if ($this->hadOriginal) {
             file_put_contents($path, $this->backup);
@@ -81,5 +83,30 @@ final class SlowQueryLoggerTest extends TestCase
         self::assertSame(2, $rows[0]['bind_count']);
         self::assertSame('', $rows[0]['full_query']);
         self::assertSame('/loginAuthorization: injected', $rows[0]['request_uri']);
+    }
+
+    public function testRecordSwallowsAuditLoggerFailuresForAlertingQueries(): void
+    {
+        SlowQueryLogger::clear();
+        SlowQueryLogger::setAuditLoggerOverride(static function (): void {
+            throw new \RuntimeException('audit logger unavailable');
+        });
+
+        SlowQueryLogger::record([
+            'connection' => 'default',
+            'table' => 'users',
+            'duration_ms' => 2600,
+            'threshold_ms' => 750,
+            'alert_ms' => 2500,
+            'query' => 'SELECT * FROM users',
+            'binds' => [],
+            'request_uri' => '/api/v1/users/list',
+        ]);
+
+        $rows = SlowQueryLogger::readAll();
+
+        self::assertCount(1, $rows);
+        self::assertEquals(2600.0, $rows[0]['duration_ms']);
+        self::assertSame('/api/v1/users/list', $rows[0]['request_uri']);
     }
 }

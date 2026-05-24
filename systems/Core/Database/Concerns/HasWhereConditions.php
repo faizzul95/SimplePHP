@@ -84,7 +84,7 @@ trait HasWhereConditions
             $this->_buildWhereClause($rawQuery, $value, 'RAW', $whereType);
             return $this;
         } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e;
         }
     }
@@ -142,7 +142,7 @@ trait HasWhereConditions
 
             return $this;
         } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e;
         }
     }
@@ -225,7 +225,7 @@ trait HasWhereConditions
 
             return $this;
         } catch (\InvalidArgumentException $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e;
         }
     }

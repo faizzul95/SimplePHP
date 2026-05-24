@@ -11,6 +11,9 @@ final class SlowQueryLogger
 {
     private const LOG_PATH = ROOT_DIR . 'logs/database/slow.log';
 
+    /** @var null|callable(string, array, string): void */
+    private static $auditLoggerOverride = null;
+
     public static function record(array $entry): void
     {
         $normalized = self::normalize($entry);
@@ -20,25 +23,35 @@ final class SlowQueryLogger
             @mkdir($dir, 0775, true);
         }
 
-        file_put_contents(
-            self::LOG_PATH,
-            json_encode($normalized, JSON_UNESCAPED_SLASHES) . PHP_EOL,
-            FILE_APPEND | LOCK_EX
-        );
+        $payload = json_encode($normalized, JSON_UNESCAPED_SLASHES);
+        if ($payload === false) {
+            $payload = '{"event":"slow_query","error":"encoding_failed"}';
+        }
+
+        self::appendStructuredLogLine($payload);
 
         if ((float) ($normalized['duration_ms'] ?? 0.0) >= (float) ($normalized['alert_ms'] ?? 2000.0)) {
-            AuditLogger::log(
-                AuditLogger::E_SLOW_QUERY,
-                [
-                    'connection' => $normalized['connection'],
-                    'duration_ms' => $normalized['duration_ms'],
-                    'threshold_ms' => $normalized['threshold_ms'],
-                    'request_uri' => $normalized['request_uri'],
-                    'query' => $normalized['query'],
-                ],
-                'warning'
-            );
+            try {
+                self::writeAuditLog(
+                    AuditLogger::E_SLOW_QUERY,
+                    [
+                        'connection' => $normalized['connection'],
+                        'duration_ms' => $normalized['duration_ms'],
+                        'threshold_ms' => $normalized['threshold_ms'],
+                        'request_uri' => $normalized['request_uri'],
+                        'query' => $normalized['query'],
+                    ],
+                    'warning'
+                );
+            } catch (\Throwable) {
+                // Slow query logging must never break the original request path.
+            }
         }
+    }
+
+    public static function setAuditLoggerOverride(?callable $logger): void
+    {
+        self::$auditLoggerOverride = $logger;
     }
 
     public static function clear(): void
@@ -174,5 +187,32 @@ final class SlowQueryLogger
         }
 
         return $requestUri;
+    }
+
+    private static function writeAuditLog(string $eventType, array $context, string $severity): void
+    {
+        if (is_callable(self::$auditLoggerOverride)) {
+            call_user_func(self::$auditLoggerOverride, $eventType, $context, $severity);
+            return;
+        }
+
+        AuditLogger::log($eventType, $context, $severity);
+    }
+
+    private static function fileLogger(): Logger
+    {
+        static $logger = null;
+
+        if (!$logger instanceof Logger) {
+            $logger = new Logger(self::LOG_PATH);
+        }
+
+        return $logger;
+    }
+
+    private static function appendStructuredLogLine(string $payload): void
+    {
+        $method = 'appendRawLine';
+        self::fileLogger()->{$method}($payload);
     }
 }

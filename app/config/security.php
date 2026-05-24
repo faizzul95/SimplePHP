@@ -25,7 +25,8 @@ $config['security'] = [
         'csrf_expire'        => (int) env('CSRF_EXPIRE', 7200),
         // Keep false by default so modal/AJAX-loaded forms do not go stale between requests.
         'csrf_regenerate'    => (bool) env('CSRF_REGENERATE', false),
-        // Routes excluded from CSRF verification (API uses Bearer tokens instead)
+        // Routes excluded from CSRF verification by default. Cookie-auth API
+        // routes can opt back in with the csrf:force middleware parameter.
         'csrf_exclude_uris'  => [
             'api/*',
             '_myth/csp-report',
@@ -38,8 +39,9 @@ $config['security'] = [
         'csrf_samesite'      => 'Lax',
         // Verify Origin/Referer on state-changing web requests.
         'csrf_origin_check'  => true,
-        // Keep true to avoid breaking non-browser clients that do not send Origin/Referer.
-        'csrf_allow_missing_origin' => true,
+        // Deny missing Origin/Referer by default on state-changing routes. Relax
+        // this explicitly per environment only when a trusted client cannot send them.
+        'csrf_allow_missing_origin' => false,
         // Additional trusted origins (scheme + host [+ optional port]).
         'csrf_trusted_origins' => [
             // 'https://example.com',
@@ -50,7 +52,7 @@ $config['security'] = [
     'request_hardening' => [
         'enabled' => true,
         'max_uri_length' => 2000,
-        'max_body_bytes' => 1048576, // 1 MB
+        'max_body_bytes' => 10485760, // 10 MB: covers the 8 MB avatar upload policy plus multipart overhead
         'max_user_agent_length' => 1024,
         'max_header_count' => 64,
         'max_input_vars' => 200,

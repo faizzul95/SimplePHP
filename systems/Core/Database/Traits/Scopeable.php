@@ -243,15 +243,16 @@ trait Scopeable
      */
     protected function logErrorScope(string $message, array $context = []): void
     {
+        $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR;
+
         try {
             if (class_exists(Logger::class)) {
-                $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR;
                 $logger = new Logger($rootDir . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log');
                 $logger->logWithContext($message, $context, Logger::LOG_LEVEL_ERROR);
             }
         } catch (Throwable $e) {
             // Fail silently if logging fails
-            error_log("Failed to log error: " . $e->getMessage());
+            Logger::instance($rootDir . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log')->log_error("Failed to log error: " . $e->getMessage());
         }
     }
 }

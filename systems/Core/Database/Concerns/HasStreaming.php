@@ -280,7 +280,8 @@ trait HasStreaming
 
             return $collection;
         } catch (\Exception $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            \Components\Logger::instance((defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log')
+                ->log_error(__FUNCTION__ . ' failed: ' . $e->getMessage());
             throw $e; // Re-throw the exception
         }
     }
@@ -451,7 +452,8 @@ trait HasStreaming
 
             return $collection;
         } catch (\Exception $e) {
-            $this->db_error_log($e, __FUNCTION__);
+            \Components\Logger::instance((defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log')
+                ->log_error(__FUNCTION__ . ' failed: ' . $e->getMessage());
             throw $e;
         }
     }

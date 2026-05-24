@@ -689,7 +689,7 @@ class Api
         }
 
         if ($this->config['log_errors']) {
-            error_log("API Error [{$statusCode}]: {$message}");
+            Logger::instance()->log_error("API Error [{$statusCode}]: {$message}");
         }
 
         $this->sendJsonResponse($error, $statusCode);
@@ -745,7 +745,7 @@ class Api
             }
         } catch (\Throwable $e) {
             if ($this->config['log_errors']) {
-                error_log("API Exception: " . $e->getMessage());
+                Logger::instance()->log_error("API Exception: " . $e->getMessage());
             }
             $this->sendError('Internal server error', 500);
         }

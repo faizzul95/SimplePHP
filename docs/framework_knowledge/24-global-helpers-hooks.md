@@ -24,6 +24,9 @@ Source: `systems/hooks.php` (~524 lines).
 |----------|-----------|--------|-------------|
 | `debug` | `debug()` | `\Components\Debug` | Get Debug component instance (singleton) |
 | `logger` | `logger()` | `\Components\Logger` | Get Logger component instance (singleton) |
+
+Default logger destination:
+- `logger()` / `Logger::instance()` write to the project-level `logs/logger.log` by default, not under `systems/` or another framework source directory.
 | `request` | `request()` | `\Components\Request` | Get Request component instance (singleton) |
 | `blade_engine` | `blade_engine()` | `\Core\View\BladeEngine` | Get Blade template engine instance (singleton) |
 | `auth` | `auth()` | `\Components\Auth` | Get Auth component instance (singleton). Use `auth()->issueApiCredential(...)` to mint API tokens through the enabled-methods gate — see [03-auth-tokens-api.md](03-auth-tokens-api.md). |

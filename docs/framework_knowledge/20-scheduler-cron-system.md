@@ -94,7 +94,7 @@
 - `skip(callable $callback)` — Skip when callback returns true.
 - `environments(array $environments)` — Only run in specified environments.
 - `evenInMaintenanceMode()` — Run even during maintenance.
-- `runInBackground()` — Non-blocking execution.
+- `runInBackground()` — Non-blocking execution. Background process launch is best-effort; if the spawn fails immediately, the scheduler marks the event as failed and logs the exception.
 
 ## Meta / Description
 

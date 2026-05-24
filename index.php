@@ -14,7 +14,7 @@ try {
         exit(1);
     }
 
-    error_log('Router initialization error: ' . $e->getMessage());
+    \Components\Logger::instance()->log_error('Router initialization error: ' . $e->getMessage());
 
     if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg' && !headers_sent()) {
         http_response_code(500);

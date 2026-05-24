@@ -7,6 +7,7 @@ use App\Support\Auth\AccessCredentialService;
 use App\Support\Auth\AuthMethodResolver;
 use App\Support\Auth\LoginPolicy;
 use App\Support\Auth\TokenService;
+use Components\Logger;
 
 class Auth
 {
@@ -527,7 +528,10 @@ class Auth
             if (function_exists('bootstrapConfigureSessionIni')) {
                 bootstrapConfigureSessionIni();
             }
-            @session_start();
+            if (!$this->startNativeSession() || session_status() !== PHP_SESSION_ACTIVE) {
+                $this->reportSessionStartFailure(static::class);
+                return false;
+            }
             if (function_exists('bootstrapRefreshSessionCookie')) {
                 bootstrapRefreshSessionCookie();
             }
@@ -562,6 +566,28 @@ class Auth
         $this->resetResolvedAuthCaches();
 
         return true;
+    }
+
+    protected function startNativeSession(): bool
+    {
+        return session_start();
+    }
+
+    protected function reportSessionStartFailure(string $source): void
+    {
+        $message = sprintf(
+            '%s failed to start the session; headers_sent=%s status=%s',
+            $source,
+            headers_sent() ? 'true' : 'false',
+            (string) session_status()
+        );
+
+        if (function_exists('logger')) {
+            logger()->log_error($message);
+            return;
+        }
+
+        Logger::instance()->log_error($message);
     }
 
     protected function maybeRefreshPasswordHash(int $userId, string $plainPassword, string $currentHash, array $user = []): void

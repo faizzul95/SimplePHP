@@ -289,10 +289,10 @@ class PerformanceMonitor
                 try {
                     logger()->log_warning($message);
                 } catch (\Throwable) {
-                    error_log($message);
+                    \Components\Logger::instance()->log_warning($message);
                 }
             } else {
-                error_log($message);
+                \Components\Logger::instance()->log_warning($message);
             }
         }
     }

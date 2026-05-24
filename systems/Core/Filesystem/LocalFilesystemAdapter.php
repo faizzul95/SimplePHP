@@ -2,6 +2,7 @@
 
 namespace Core\Filesystem;
 
+use Core\Security\SignedUrl;
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -22,7 +23,11 @@ class LocalFilesystemAdapter implements FilesystemAdapterInterface
         $absolutePath = $this->path($path);
         $this->ensureDirectory(dirname($absolutePath));
 
-        return file_put_contents($absolutePath, $contents) !== false;
+        return $this->replaceFileAtomically($absolutePath, static function (string $temporaryPath) use ($contents): void {
+            if (file_put_contents($temporaryPath, $contents, LOCK_EX) === false) {
+                throw new RuntimeException('Unable to write file contents.');
+            }
+        });
     }
 
     public function writeStream(string $path, $stream): bool
@@ -34,18 +39,23 @@ class LocalFilesystemAdapter implements FilesystemAdapterInterface
         $absolutePath = $this->path($path);
         $this->ensureDirectory(dirname($absolutePath));
 
-        $target = fopen($absolutePath, 'wb');
-        if ($target === false) {
-            throw new RuntimeException('Unable to open target file for writing.');
-        }
+        $this->rewindStreamIfPossible($stream);
 
-        try {
-            $copied = stream_copy_to_stream($stream, $target);
-        } finally {
-            fclose($target);
-        }
+        return $this->replaceFileAtomically($absolutePath, static function (string $temporaryPath) use ($stream): void {
+            $target = fopen($temporaryPath, 'wb');
+            if ($target === false) {
+                throw new RuntimeException('Unable to open target file for writing.');
+            }
 
-        return $copied !== false;
+            try {
+                $copied = stream_copy_to_stream($stream, $target);
+                if ($copied === false) {
+                    throw new RuntimeException('Unable to copy stream contents.');
+                }
+            } finally {
+                fclose($target);
+            }
+        });
     }
 
     public function get(string $path): string
@@ -105,17 +115,52 @@ class LocalFilesystemAdapter implements FilesystemAdapterInterface
     public function copy(string $from, string $to): bool
     {
         $source = $this->path($from);
+        if (!is_file($source)) {
+            throw new RuntimeException('Source file does not exist: ' . $from);
+        }
+
         $target = $this->path($to);
         $this->ensureDirectory(dirname($target));
 
-        return copy($source, $target);
+        $visibilityMode = $this->fileMode($source);
+
+        return $this->replaceFileAtomically($target, static function (string $temporaryPath) use ($source): void {
+            $sourceHandle = fopen($source, 'rb');
+            if ($sourceHandle === false) {
+                throw new RuntimeException('Unable to open source file for copying.');
+            }
+
+            $targetHandle = fopen($temporaryPath, 'wb');
+            if ($targetHandle === false) {
+                fclose($sourceHandle);
+                throw new RuntimeException('Unable to open target file for copying.');
+            }
+
+            try {
+                $copied = stream_copy_to_stream($sourceHandle, $targetHandle);
+                if ($copied === false) {
+                    throw new RuntimeException('Unable to copy file contents.');
+                }
+            } finally {
+                fclose($targetHandle);
+                fclose($sourceHandle);
+            }
+        }, $visibilityMode);
     }
 
     public function move(string $from, string $to): bool
     {
         $source = $this->path($from);
+        if (!file_exists($source)) {
+            throw new RuntimeException('Source path does not exist: ' . $from);
+        }
+
         $target = $this->path($to);
         $this->ensureDirectory(dirname($target));
+
+        if (file_exists($target)) {
+            $this->delete($to);
+        }
 
         return rename($source, $target);
     }
@@ -289,21 +334,12 @@ class LocalFilesystemAdapter implements FilesystemAdapterInterface
      */
     public function temporaryUrl(string $path, \DateTimeInterface $expiry): string
     {
-        $appKey = (function_exists('config') ? config('app.key') : null)
-            ?? (defined('APP_KEY') ? APP_KEY : null)
-            ?? throw new \RuntimeException('APP_KEY is required to generate temporary URLs.');
-
-        $expires  = $expiry->getTimestamp();
         $relative = $this->normalizeRelativePath($path);
-        $sig      = hash_hmac('sha256', $relative . '|' . $expires, $appKey);
 
-        $base = function_exists('getProjectBaseUrl') ? rtrim(getProjectBaseUrl(), '/') : '';
+        $base = (function_exists('getProjectBaseUrl') ? rtrim(getProjectBaseUrl(), '/') : '')
+            . '/files/serve/' . ltrim($relative, '/');
 
-        return $base . '/files/serve?' . http_build_query([
-            'path'    => $relative,
-            'expires' => $expires,
-            'sig'     => $sig,
-        ]);
+        return SignedUrl::generate($base, max(0, $expiry->getTimestamp() - time()));
     }
 
     /**
@@ -398,8 +434,87 @@ class LocalFilesystemAdapter implements FilesystemAdapterInterface
             return;
         }
 
-        if (!mkdir($directory, 0777, true) && !is_dir($directory)) {
+        if (!mkdir($directory, 0755, true) && !is_dir($directory)) {
             throw new RuntimeException('Unable to create directory: ' . $directory);
         }
+    }
+
+    private function rewindStreamIfPossible($stream): void
+    {
+        $metadata = stream_get_meta_data($stream);
+        if (($metadata['seekable'] ?? false) !== true) {
+            return;
+        }
+
+        if (ftell($stream) !== 0) {
+            rewind($stream);
+        }
+    }
+
+    private function replaceFileAtomically(string $absolutePath, callable $writer, int $mode = 0644): bool
+    {
+        $directory = dirname($absolutePath);
+        $temporaryPath = tempnam($directory, 'fs_');
+        if ($temporaryPath === false) {
+            throw new RuntimeException('Unable to allocate a temporary file for atomic write.');
+        }
+
+        try {
+            $writer($temporaryPath);
+
+            if (!$this->setPermissions($temporaryPath, $mode)) {
+                throw new RuntimeException('Unable to set file permissions.');
+            }
+
+            if (!$this->moveTempFileIntoPlace($temporaryPath, $absolutePath)) {
+                throw new RuntimeException('Unable to finalize written file.');
+            }
+        } catch (\Throwable $e) {
+            if (is_file($temporaryPath)) {
+                $this->deleteFile($temporaryPath);
+            }
+
+            throw $e;
+        }
+
+        return true;
+    }
+
+    private function fileMode(string $absolutePath): int
+    {
+        $permissions = fileperms($absolutePath);
+        if ($permissions === false) {
+            throw new RuntimeException('Unable to read file permissions.');
+        }
+
+        return $permissions & 0777;
+    }
+
+    protected function moveTempFileIntoPlace(string $temporaryPath, string $absolutePath): bool
+    {
+        if ($this->renameFile($temporaryPath, $absolutePath)) {
+            return true;
+        }
+
+        if (is_file($absolutePath) && $this->deleteFile($absolutePath) && $this->renameFile($temporaryPath, $absolutePath)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function renameFile(string $from, string $to): bool
+    {
+        return @rename($from, $to);
+    }
+
+    protected function deleteFile(string $path): bool
+    {
+        return @unlink($path);
+    }
+
+    protected function setPermissions(string $path, int $mode): bool
+    {
+        return @chmod($path, $mode);
     }
 }

@@ -171,13 +171,9 @@ class RateLimit implements MiddlewareInterface
     private function handleWithFile(Request $request, callable $next, int $now, string $signature): mixed
     {
         $file   = $this->cacheFile($signature);
-        $state  = $this->readStateAtomic($file, $now);
-
-        $state['attempts'] = (int) ($state['attempts'] ?? 0) + 1;
+        $state  = $this->incrementFileStateAtomically($file, $now);
         $remaining  = max(0, $this->maxAttempts - $state['attempts']);
         $retryAfter = max(0, (int) ($state['reset_at'] ?? $now) - $now);
-
-        $this->writeState($signature, $state);
 
         return $this->applyRateLimitHeaders($request, $next, $state['attempts'], $remaining, $retryAfter);
     }
@@ -261,58 +257,43 @@ class RateLimit implements MiddlewareInterface
         return $this->cacheDirectory() . DIRECTORY_SEPARATOR . $signature . '.json';
     }
 
-    private function readState(string $signature): array
-    {
-        $file = $this->cacheFile($signature);
-        return $this->readStateAtomic($file, time());
-    }
-
     /**
-     * Read state file with shared lock to prevent reading a partial write.
+     * Atomically open, read, reset, increment, and persist the file-backed
+     * limiter state under a single exclusive lock.
      */
-    private function readStateAtomic(string $file, int $now): array
+    private function incrementFileStateAtomically(string $file, int $now): array
     {
-        if (!is_file($file) || !is_readable($file)) {
-            return ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
-        }
-
-        $handle = @fopen($file, 'rb');
+        $handle = @fopen($file, 'c+b');
         if ($handle === false) {
-            return ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
+            return ['attempts' => 1, 'reset_at' => $now + $this->decaySeconds];
         }
 
-        flock($handle, LOCK_SH);
-        $raw = '';
-        while (!feof($handle)) {
-            $chunk = fread($handle, 4096);
-            if ($chunk === false) break;
-            $raw .= $chunk;
-        }
-        flock($handle, LOCK_UN);
-        fclose($handle);
+        try {
+            if (!flock($handle, LOCK_EX)) {
+                return ['attempts' => 1, 'reset_at' => $now + $this->decaySeconds];
+            }
 
-        $decoded = json_decode($raw, true);
-        $state   = is_array($decoded) ? $decoded : ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
+            rewind($handle);
+            $raw = stream_get_contents($handle);
+            $decoded = is_string($raw) ? json_decode($raw, true) : null;
+            $state = is_array($decoded) ? $decoded : ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
 
-        // Reset window if expired.
-        if (($state['reset_at'] ?? 0) <= $now) {
-            $state = ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
+            if (($state['reset_at'] ?? 0) <= $now) {
+                $state = ['attempts' => 0, 'reset_at' => $now + $this->decaySeconds];
+            }
+
+            $state['attempts'] = (int) ($state['attempts'] ?? 0) + 1;
+
+            rewind($handle);
+            ftruncate($handle, 0);
+            fwrite($handle, (string) json_encode($state));
+            fflush($handle);
+            flock($handle, LOCK_UN);
+        } finally {
+            fclose($handle);
         }
 
         return $state;
-    }
-
-    private function writeState(string $signature, array $state): void
-    {
-        $file = $this->cacheFile($signature);
-        // Atomic: write to temp then rename — prevents concurrent readers
-        // from seeing a partial JSON payload.
-        $tmp = $file . '.' . getmypid() . '.tmp';
-        if (@file_put_contents($tmp, json_encode($state), LOCK_EX) !== false) {
-            @rename($tmp, $file);
-        } else {
-            @unlink($tmp);
-        }
     }
 
     private function apcuAvailable(): bool

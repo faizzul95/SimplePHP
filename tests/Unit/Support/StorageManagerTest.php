@@ -18,6 +18,9 @@ final class StorageManagerTest extends TestCase
         $this->deleteDirectory($this->storageRoot);
 
         bootstrapTestFrameworkServices([
+            'app' => [
+                'key' => 'phpunit-storage-manager-key',
+            ],
             'filesystems' => [
                 'default' => 'local',
                 'drivers' => [
@@ -126,6 +129,16 @@ final class StorageManagerTest extends TestCase
         self::assertFalse($disk->exists('reports/daily-moved.txt'));
     }
 
+    public function testStorageCopyRejectsMissingSourceFiles(): void
+    {
+        $disk = storage('local');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Source file does not exist: reports/missing.txt');
+
+        $disk->copy('reports/missing.txt', 'reports/private-copy.txt');
+    }
+
     public function testStorageCanWriteStreamsAndGenerateUrls(): void
     {
         $disk = storage('public');
@@ -149,12 +162,39 @@ final class StorageManagerTest extends TestCase
         self::assertSame('/storage-test/exports/report.csv', $disk->url('exports/report.csv'));
     }
 
+    public function testStorageWriteStreamRewindsSeekableStreamsAndSetsPublicVisibility(): void
+    {
+        $disk = storage('public');
+        $stream = fopen('php://temp', 'r+b');
+        fwrite($stream, 'seekable payload');
+        fread($stream, 8);
+
+        try {
+            self::assertTrue($disk->writeStream('exports/seekable.txt', $stream));
+        } finally {
+            fclose($stream);
+        }
+
+        self::assertSame('seekable payload', $disk->get('exports/seekable.txt'));
+        self::assertSame('public', $disk->visibility('exports/seekable.txt'));
+    }
+
     public function testStorageRejectsDirectoryTraversalPaths(): void
     {
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Directory traversal is not allowed in storage paths.');
 
         storage('local')->path('../escape.txt');
+    }
+
+    public function testStorageTemporaryUrlUsesProjectSignedUrlFormat(): void
+    {
+        $signed = storage('local')->temporaryUrl('reports/daily.txt', new DateTimeImmutable('+5 minutes'));
+
+        self::assertStringContainsString('/files/serve/reports/daily.txt', $signed);
+        self::assertStringContainsString('expires=', $signed);
+        self::assertStringContainsString('signature=', $signed);
+        self::assertTrue(\Core\Security\SignedUrl::verify($signed));
     }
 
     private function deleteDirectory(string $path): void

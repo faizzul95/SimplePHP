@@ -9,7 +9,7 @@ Config: `app/config/cache.php`.
 
 | Driver | Class | Storage | Atomic Ops | Notes |
 |--------|-------|---------|-----------|-------|
-| `file` | `FileStore` | `storage/cache/` | ✅ flock + temp+rename | Default; 0750 directory permissions |
+| `file` | `FileStore` | `storage/cache/` | ✅ flock + temp+rename | Default; 0750 directory permissions; retries replace-on-write when `rename()` cannot overwrite an existing destination (notably on Windows) |
 | `array` | `ArrayStore` | RAM (request-scoped) | N/A | Testing only |
 | `apcu` | `ApcuStore` | APCu shared memory | ✅ `apcu_inc()` / `apcu_fetch($k, $ok)` | Degrades to `file` if APCu unavailable |
 | `redis` | `RedisDriver` | Redis | ✅ `INCR`/`SET NX`/`SETEX` | Falls back to `file` if ext-redis not loaded |

@@ -80,5 +80,14 @@ foreach ($hotFiles as $file) {
 
 // Optional: log preload result (only visible in FPM error log)
 if ($skipped > 0) {
-    error_log("[MythPHP Preload] Compiled {$compiled} files, skipped {$skipped} missing files.");
+    if (!class_exists(\Components\Logger::class, false)) {
+        $autoloadFile = dirname(__DIR__, 3) . '/vendor/autoload.php';
+        if (is_file($autoloadFile)) {
+            require_once $autoloadFile;
+        }
+    }
+
+    if (class_exists(\Components\Logger::class)) {
+        \Components\Logger::instance()->log_warning("[MythPHP Preload] Compiled {$compiled} files, skipped {$skipped} missing files.");
+    }
 }

@@ -439,8 +439,9 @@ class Backup
         ];
 
         $pipes = [];
-        $process = @proc_open($command, $descriptors, $pipes, null, null, ['bypass_shell' => true]);
+        $process = $this->openProcess($command, $descriptors, $pipes);
         if (!is_resource($process)) {
+            $this->logError('mysqldump failed to start. Falling back to the PHP database dumper.');
             return false;
         }
 
@@ -553,6 +554,19 @@ class Backup
         }
 
         return is_file($path) && (PHP_OS_FAMILY === 'Windows' || is_executable($path));
+    }
+
+    /**
+     * Open an external process without invoking a shell.
+     *
+     * @param array<int, string> $command
+     * @param array<int, mixed> $descriptors
+     * @param array<int, resource> $pipes
+     * @return resource|false
+     */
+    protected function openProcess(array $command, array $descriptors, array &$pipes)
+    {
+        return @proc_open($command, $descriptors, $pipes, null, null, ['bypass_shell' => true]);
     }
 
     /**
@@ -955,12 +969,18 @@ class Backup
     /**
      * Log error
      */
-    private function logError(string $message): void
+    protected function logError(string $message): void
     {
         if (function_exists('logger')) {
-            logger()->log_error('[Backup] ' . $message);
-        } else {
-            error_log('[Backup] ' . $message);
+            try {
+                logger()->log_error('[Backup] ' . $message);
+                return;
+            } catch (\Throwable) {
+                // Fall back to direct logger access when the helper is defined
+                // but the logger service is not registered in the current runtime.
+            }
         }
+
+        Logger::instance()->log_error('[Backup] ' . $message);
     }
 }

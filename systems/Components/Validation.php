@@ -489,7 +489,7 @@ class Validation
             try {
                 $hook($this);
             } catch (Exception $e) {
-                error_log("Before validation hook error: " . $e->getMessage());
+                Logger::instance()->log_error("Before validation hook error: " . $e->getMessage());
             }
         }
     }
@@ -505,7 +505,7 @@ class Validation
             try {
                 $hook($this);
             } catch (Exception $e) {
-                error_log("After validation hook error: " . $e->getMessage());
+                Logger::instance()->log_error("After validation hook error: " . $e->getMessage());
             }
         }
     }
@@ -717,7 +717,7 @@ class Validation
             }
         } catch (Exception $e) {
             // Log error but continue processing
-            error_log("Wildcard extraction error: " . $e->getMessage());
+            Logger::instance()->log_error("Wildcard extraction error: " . $e->getMessage());
         }
     }
 
@@ -757,7 +757,7 @@ class Validation
                 }
             }
         } catch (Exception $e) {
-            error_log("Deep wildcard extraction error: " . $e->getMessage());
+            Logger::instance()->log_error("Deep wildcard extraction error: " . $e->getMessage());
         }
     }
 
@@ -874,7 +874,7 @@ class Validation
 
             $this->errors[$field][] = $message;
         } catch (Exception $e) {
-            error_log("Error adding validation error: " . $e->getMessage());
+            Logger::instance()->log_error("Error adding validation error: " . $e->getMessage());
         }
     }
 

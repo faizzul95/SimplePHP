@@ -278,7 +278,7 @@ class MariaDBDriver extends BaseDatabase
                 'has_having' => $hasHaving,
             ];
 
-            $this->db_error_log($e, __FUNCTION__, 'Count query failed', $context);
+            $this->logDatabaseError($e, __FUNCTION__, 'Count query failed', $context);
 
             // Stop profiler on error
             if ($this->enableProfiling && method_exists($this, '_stopProfiler')) {
@@ -345,7 +345,7 @@ class MariaDBDriver extends BaseDatabase
             return $result !== false;
         } catch (\PDOException $e) {
             // Log database errors
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
     }
@@ -456,7 +456,8 @@ class MariaDBDriver extends BaseDatabase
                     $this->resolvePdo('write')->exec('SET bulk_insert_buffer_size = 268435456');
                     $this->resolvePdo('write')->beginTransaction();
                 } catch (\Exception $e) {
-                    error_log("Database optimization failed: " . $e->getMessage());
+                    \Components\Logger::instance((defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log')
+                        ->log_error("Database optimization failed: " . $e->getMessage());
                 }
             } else {
                 // For small datasets, just start a simple transaction
@@ -585,7 +586,8 @@ class MariaDBDriver extends BaseDatabase
                         $this->resolvePdo('write')->exec("SET bulk_insert_buffer_size = {$originalSettings['bulk_insert_buffer_size']}");
                     }
                 } catch (\Exception $e) {
-                    error_log("Failed to restore database settings: " . $e->getMessage());
+                    \Components\Logger::instance((defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR) . 'logs' . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'error.log')
+                        ->log_error("Failed to restore database settings: " . $e->getMessage());
                 }
             }
 
@@ -598,7 +600,7 @@ class MariaDBDriver extends BaseDatabase
             // Reset internal properties for next query
             $this->reset();
 
-            $this->db_error_log($e, __FUNCTION__);
+            $this->logDatabaseError($e, __FUNCTION__);
             return $this->_returnResult([
                 'code' => 400,
                 'message' => 'Upsert failed: ' . $e->getMessage()

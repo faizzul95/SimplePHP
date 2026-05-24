@@ -8,13 +8,21 @@ use Core\Http\Response;
 
 class VerifyCsrfToken implements MiddlewareInterface
 {
+    private bool $forceValidation = false;
+
+    public function setParameters(array $parameters): void
+    {
+        $mode = strtolower(trim((string) ($parameters[0] ?? '')));
+        $this->forceValidation = ($mode === 'force');
+    }
+
     public function handle(Request $request, callable $next)
     {
         $csrf = csrf();
         $currentToken = $csrf->getToken() ?: $csrf->init();
         $this->sendTokenHeader($currentToken);
 
-        if ($csrf->validate($request->path())) {
+        if ($csrf->validate($request->path(), $this->forceValidation)) {
             return $next($request);
         }
 

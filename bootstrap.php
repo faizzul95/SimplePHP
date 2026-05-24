@@ -23,7 +23,17 @@ if (!defined('REDIRECT_404')) {
 if (!function_exists('bootstrapFail')) {
     function bootstrapFail(string $message, int $statusCode = 500, ?\Throwable $previous = null): never
     {
-        error_log($message . ($previous !== null ? ' :: ' . $previous->getMessage() : ''));
+        $fullMessage = $message . ($previous !== null ? ' :: ' . $previous->getMessage() : '');
+        if (!class_exists(\Components\Logger::class, false)) {
+            $autoloadFile = __DIR__ . '/vendor/autoload.php';
+            if (is_file($autoloadFile)) {
+                require_once $autoloadFile;
+            }
+        }
+
+        if (class_exists(\Components\Logger::class)) {
+            \Components\Logger::instance()->log_error($fullMessage);
+        }
 
         if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg' && !headers_sent()) {
             http_response_code($statusCode);
