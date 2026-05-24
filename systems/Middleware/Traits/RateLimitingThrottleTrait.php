@@ -249,7 +249,7 @@ trait RateLimitingThrottleTrait
 			return false;
 		}
 
-		$trustedProxies = config('security.trusted_proxies', config('security.trusted.proxies', []));
+		$trustedProxies = config('security.trusted.proxies', []);
 		if (!is_array($trustedProxies) || $trustedProxies === []) {
 			return false;
 		}

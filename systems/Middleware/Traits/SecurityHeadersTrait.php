@@ -296,7 +296,19 @@ trait SecurityHeadersTrait
 			return true;
 		}
 
-		$forwardedProto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
-		return $forwardedProto === 'https';
+		// Only trust X-Forwarded-Proto from a verified reverse proxy.
+		// Delegate to the Request object which validates against security.trusted.proxies.
+		if (function_exists('request')) {
+			try {
+				$req = request();
+				if ($req !== null) {
+					return str_starts_with($req->fullUrl(), 'https://');
+				}
+			} catch (\Throwable) {
+				// Fall through
+			}
+		}
+
+		return false;
 	}
 }

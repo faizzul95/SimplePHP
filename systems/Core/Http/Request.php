@@ -272,7 +272,7 @@ class Request
         $remoteAddr = $this->server['REMOTE_ADDR'] ?? '127.0.0.1';
 
         // Only trust forwarded headers when behind a known reverse proxy
-        $trustedProxies = config('security.trusted_proxies', []);
+        $trustedProxies = config('security.trusted.proxies', []);
 
         if (!empty($trustedProxies) && $this->isTrustedProxy($remoteAddr, $trustedProxies)) {
             $keys = [
@@ -314,7 +314,17 @@ class Request
             return true;
         }
 
-        return strtolower((string) ($this->header('x-forwarded-proto', ''))) === 'https';
+        // Only trust X-Forwarded-Proto from verified reverse proxies
+        $proto = strtolower((string) ($this->header('x-forwarded-proto', '')));
+        if ($proto === 'https') {
+            $remoteAddr = $this->server['REMOTE_ADDR'] ?? '127.0.0.1';
+            $trustedProxies = config('security.trusted.proxies', []);
+            if (!empty($trustedProxies) && $this->isTrustedProxy($remoteAddr, $trustedProxies)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function normalizeIgnoredKeys(string|array|null $ignoreList): array

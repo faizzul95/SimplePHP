@@ -54,7 +54,8 @@ class RequireAuth implements MiddlewareInterface
                 header('WWW-Authenticate: ' . auth()->digestChallengeHeader());
             }
 
-            if ($request->expectsJson()) {
+            $hasChallengeGuard = !empty(array_intersect($normalizedGuards, ['basic', 'digest']));
+            if ($request->expectsJson() || $hasChallengeGuard) {
                 Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
             }
 

@@ -707,8 +707,8 @@ class Request
         $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
         // Only trust forwarded headers when behind a known reverse proxy
-        $trustedProxies = \config('security.trusted_proxies', []);
-        if (empty($trustedProxies) || (is_array($trustedProxies) && !in_array($remoteAddr, $trustedProxies, true))) {
+        $trustedProxies = \config('security.trusted.proxies', []);
+        if (empty($trustedProxies) || (is_array($trustedProxies) && !$this->isInTrustedProxies($remoteAddr, $trustedProxies))) {
             return filter_var($remoteAddr, FILTER_VALIDATE_IP) ? $remoteAddr : '0.0.0.0';
         }
 
@@ -1098,5 +1098,70 @@ class Request
         }
 
         return $validator->validate();
+    }
+
+    /**
+     * Check whether $remoteAddr matches any entry in $trustedProxies.
+     * Entries may be exact IPs or CIDR ranges (e.g. "10.0.0.0/8").
+     */
+    private function isInTrustedProxies(string $remoteAddr, array $trustedProxies): bool
+    {
+        foreach ($trustedProxies as $proxy) {
+            $proxy = trim((string) $proxy);
+            if ($proxy === '') {
+                continue;
+            }
+            if ($proxy === '*' || $remoteAddr === $proxy) {
+                return true;
+            }
+            if (str_contains($proxy, '/') && $this->ipInCidr($remoteAddr, $proxy)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Test whether an IP address falls within a CIDR block.
+     */
+    private function ipInCidr(string $ip, string $cidr): bool
+    {
+        if (!str_contains($cidr, '/')) {
+            return false;
+        }
+        [$subnet, $maskBits] = explode('/', $cidr, 2);
+        $subnet   = trim($subnet);
+        $maskBits = (int) $maskBits;
+
+        $ipBinary     = @inet_pton($ip);
+        $subnetBinary = @inet_pton($subnet);
+
+        if ($ipBinary === false || $subnetBinary === false) {
+            return false;
+        }
+
+        $byteLength = strlen($ipBinary);
+        if ($byteLength !== strlen($subnetBinary)) {
+            return false;
+        }
+
+        $maxBits = $byteLength * 8;
+        if ($maskBits < 0 || $maskBits > $maxBits) {
+            return false;
+        }
+
+        $fullBytes     = intdiv($maskBits, 8);
+        $remainingBits = $maskBits % 8;
+
+        if ($fullBytes > 0 && substr($ipBinary, 0, $fullBytes) !== substr($subnetBinary, 0, $fullBytes)) {
+            return false;
+        }
+
+        if ($remainingBits === 0) {
+            return true;
+        }
+
+        $mask = (~((1 << (8 - $remainingBits)) - 1)) & 0xFF;
+        return ((ord($ipBinary[$fullBytes]) & $mask) === (ord($subnetBinary[$fullBytes]) & $mask));
     }
 }
