@@ -297,6 +297,9 @@ function validateRule(value, rule, element, form, attributeType) {
             case 'email':
                 return validateEmail(value);
             
+            case 'emails':
+                return validateEmails(value);
+            
             case 'array':
                 return validateArray(value);
             
@@ -994,6 +997,19 @@ function validateEmail(value) {
     if (value === '' || value === null || value === undefined) return { valid: true };
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return { valid: emailRegex.test(value) };
+}
+
+/**
+ * Validates a comma-separated list of valid email addresses
+ * @param {*} value - The value to validate
+ * @returns {Object} - Object with valid property indicating validation result
+ */
+function validateEmails(value) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const addresses = value.split(',').map(a => a.trim()).filter(a => a !== '');
+    if (addresses.length === 0) return { valid: false };
+    return { valid: addresses.every(a => emailRegex.test(a)) };
 }
 
 /**

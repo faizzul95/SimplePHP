@@ -31,9 +31,9 @@ class SaveEmailTemplateRequest extends FormRequest
             'email_type' => 'required|string|min_length:3|max_length:255|secure_value',
             'email_body' => 'required|string|min_length:5|max_length:200000|safe_html',
             'email_status' => 'required|integer|min:0|max:1',
-            'email_footer' => 'nullable|string',
-            'email_cc' => 'nullable|string',
-            'email_bcc' => 'nullable|string',
+            'email_footer' => 'nullable|string|max_length:255',
+            'email_cc' => 'nullable|emails|max_length:1000',
+            'email_bcc' => 'nullable|emails|max_length:1000',
             'id' => 'nullable|numeric',
         ];
     }
@@ -44,9 +44,9 @@ class SaveEmailTemplateRequest extends FormRequest
             'email_subject' => 'trim|strip_tags|normalize_spaces',
             'email_type' => 'trim|strip_tags|normalize_spaces',
             'email_body' => 'no_null_bytes|normalize_newlines',
-            'email_footer' => 'trim|no_null_bytes',
-            'email_cc' => 'trim|no_null_bytes',
-            'email_bcc' => 'trim|no_null_bytes',
+            'email_footer' => 'trim|no_null_bytes|normalize_newlines',
+            'email_cc' => 'trim|no_null_bytes|normalize_newlines',
+            'email_bcc' => 'trim|no_null_bytes|normalize_newlines',
         ];
     }
 

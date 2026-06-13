@@ -81,11 +81,11 @@
                     <div class="row mt-2">
                         <div class="col-6 col-sm-6">
                             <label class="form-label"> CC </label>
-                            <input type="email" id="email_cc" name="email_cc" maxlength="255" class="form-control" autocomplete="off">
+                            <input type="text" id="email_cc" name="email_cc" maxlength="1000" class="form-control" autocomplete="off">
                         </div>
                         <div class="col-6 col-sm-6">
                             <label class="form-label"> BCC </label>
-                            <input type="email" id="email_bcc" name="email_bcc" maxlength="255" class="form-control" autocomplete="off">
+                            <input type="text" id="email_bcc" name="email_bcc" maxlength="1000" class="form-control" autocomplete="off">
                         </div>
                     </div>
 
@@ -305,8 +305,8 @@
             'email_subject': 'required|min_length:5|max_length:255',
             'email_body': 'required|min_length:5',
             'email_footer': 'max_length:255',
-            'email_cc': 'min_length:5|max_length:255',
-            'email_bcc': 'min_length:5|max_length:255',
+            'email_cc': 'emails|max_length:1000',
+            'email_bcc': 'emails|max_length:1000',
             'email_status': 'required|integer|in:0,1',
             'id': 'integer',
         };

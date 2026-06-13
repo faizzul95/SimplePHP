@@ -21,8 +21,8 @@ class UploadImageCropperRequest extends FormRequest
         return [
             'entity_type' => 'required|string|max_length:255|secure_value',
             'entity_file_type' => 'required|string|max_length:255|secure_value',
-            'entity_id' => 'required|string',
-            'image' => 'required|string',
+            'entity_id' => 'required|string|max_length:255|secure_value',
+            'image' => 'required|string|max_length:1048576',
             'folder_group' => 'nullable|string|max_length:100',
             'folder_type' => 'nullable|string|max_length:100',
             'id' => 'nullable|string',

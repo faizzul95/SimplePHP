@@ -104,6 +104,7 @@ class Validation
         'integer' => 'The :field must be an integer.',
         'boolean' => 'The :field field must be true or false.',
         'email' => 'The :field must be a valid email address.',
+        'emails' => 'The :field must contain valid email addresses (comma-separated).',
         'url' => 'The :field format is invalid.',
         'ip' => 'The :field must be a valid IP address.',
         'min' => 'The :field must be at least :min characters.',
@@ -1097,6 +1098,13 @@ class Validation
                             if ($attributeName === 'style' && !$this->isSafeInlineStyle($rawAttributeValue)) {
                                 return false;
                             }
+
+                            // Block <meta http-equiv="refresh"> — can redirect users away
+                            // from a web preview or embed phishing URLs.
+                            if ($tagName === 'meta' && $attributeName === 'http-equiv'
+                                && strtolower(trim($rawAttributeValue)) === 'refresh') {
+                                return false;
+                            }
                         }
                     }
                 }
@@ -1518,7 +1526,7 @@ class Validation
     private function validateNumeric(string $field, $value, array $params = []): bool
     {
         try {
-            if (empty($value)) {
+            if ($value === null || $value === '') {
                 return true;
             }
 
@@ -1593,6 +1601,34 @@ class Validation
     }
 
     /**
+     * Validate emails rule — comma-separated list of valid email addresses.
+     */
+    private function validateEmails(string $field, $value, array $params = []): bool
+    {
+        try {
+            if (!is_string($value)) {
+                return false;
+            }
+
+            $addresses = array_filter(array_map('trim', explode(',', $value)));
+
+            if (empty($addresses)) {
+                return false;
+            }
+
+            foreach ($addresses as $address) {
+                if (filter_var($address, FILTER_VALIDATE_EMAIL) === false) {
+                    return false;
+                }
+            }
+
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
      * Validate url rule
      */
     private function validateUrl(string $field, $value, array $params = []): bool
@@ -1643,7 +1679,7 @@ class Validation
             }
 
             if (is_string($value)) {
-                return strlen($value) <= $max;
+                return mb_strlen($value, 'UTF-8') <= $max;
             }
 
             if (is_array($value)) {
@@ -1673,7 +1709,7 @@ class Validation
             }
 
             if (is_string($value)) {
-                return strlen($value) >= $min;
+                return mb_strlen($value, 'UTF-8') >= $min;
             }
 
             if (is_array($value)) {
@@ -1699,11 +1735,11 @@ class Validation
             $maxLength = $params[0];
 
             if (is_string($value)) {
-                return strlen($value) <= $maxLength;
+                return mb_strlen($value, 'UTF-8') <= $maxLength;
             }
 
             if (is_numeric($value)) {
-                return strlen((string)$value) <= $maxLength;
+                return mb_strlen((string) $value, 'UTF-8') <= $maxLength;
             }
 
             return false;
@@ -1725,11 +1761,11 @@ class Validation
             $minLength = $params[0];
 
             if (is_string($value)) {
-                return strlen($value) >= $minLength;
+                return mb_strlen($value, 'UTF-8') >= $minLength;
             }
 
             if (is_numeric($value)) {
-                return strlen((string)$value) >= $minLength;
+                return mb_strlen((string) $value, 'UTF-8') >= $minLength;
             }
 
             return false;
@@ -1756,7 +1792,7 @@ class Validation
             }
 
             if (is_string($value)) {
-                $length = strlen($value);
+                $length = mb_strlen($value, 'UTF-8');
                 return $length >= $min && $length <= $max;
             }
 
@@ -1784,7 +1820,7 @@ class Validation
             $size = $params[0] ?? 0;
 
             if (is_string($value)) {
-                return strlen($value) == $size;
+                return mb_strlen($value, 'UTF-8') == $size;
             }
 
             if (is_numeric($value)) {

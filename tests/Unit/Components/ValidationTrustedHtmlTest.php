@@ -54,4 +54,40 @@ final class ValidationTrustedHtmlTest extends TestCase
         self::assertFalse($validator->passed());
         self::assertArrayHasKey('email_body', $validator->getErrors());
     }
+
+    public function testRejectsMetaHttpEquivRefreshWithExternalUrl(): void
+    {
+        $validator = Validation::make([
+            'email_body' => '<html><head><meta http-equiv="refresh" content="0;url=https://evil.example/phish"></head><body><p>Hello</p></body></html>',
+        ], [
+            'email_body' => 'required|string|safe_html',
+        ])->validate();
+
+        self::assertFalse($validator->passed());
+        self::assertArrayHasKey('email_body', $validator->getErrors());
+    }
+
+    public function testRejectsMetaHttpEquivRefreshWithNoUrl(): void
+    {
+        $validator = Validation::make([
+            'email_body' => '<p>Hello</p><meta http-equiv="refresh" content="5">',
+        ], [
+            'email_body' => 'required|string|safe_html',
+        ])->validate();
+
+        self::assertFalse($validator->passed());
+        self::assertArrayHasKey('email_body', $validator->getErrors());
+    }
+
+    public function testAllowsMetaCharsetAndViewport(): void
+    {
+        $validator = Validation::make([
+            'email_body' => '<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><p>Hello</p></body></html>',
+        ], [
+            'email_body' => 'required|string|safe_html',
+        ])->validate();
+
+        self::assertTrue($validator->passed());
+        self::assertSame([], $validator->getErrors());
+    }
 }
