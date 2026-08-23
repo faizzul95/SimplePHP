@@ -82,6 +82,14 @@
     <script type="text/javascript">
         let usersTableManager = null;
 
+        const USER_STATUS_BADGES = {
+            0: '<span class="badge bg-label-warning"> Inactive </span>',
+            1: '<span class="badge bg-label-success"> Active </span>',
+            2: '<span class="badge bg-label-warning"> Suspended </span>',
+            3: '<span class="badge bg-label-danger"> Deleted </span>',
+            4: '<span class="badge bg-label-dark"> Unverified </span>',
+        };
+
         $(document).ready(async function() {
             await getProfileList('filter_profile');
             await getDataList();
@@ -127,15 +135,115 @@
                     }
                 },
                 columns: [
-                    { data: 'avatar', width: '5%', targets: 0 },
-                    { data: 'name', targets: 1 },
-                    { data: 'contact', width: '35%', targets: 2 },
-                    { data: 'gender', width: '8%', targets: 3 },
-                    { data: 'status', width: '7%', targets: 4 },
                     {
-                        data: 'action',
-                        render: function(data) {
-                            return data;
+                        data: null,
+                        render: function(data, type, row) {
+                            const defaultImg = "{{ asset('upload/default.jpg') }}";
+                            let html = `<div class="avatar-lg" style="position: relative; display:inline-block;">
+                                <img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy"
+                                     src="${row.avatar_url}" onerror="this.onerror=null;this.src='${defaultImg}';">`;
+
+                            if (row.can_upload_avatar) {
+                                const uploadFunc = `updateCropperPhoto('PROFILE UPLOAD', '${row.avatar_id}', '${row.key}', 'USER_PROFILE', 'users', '${row.avatar_original_url}', 'getDataList', 'directory', 'avatar')`;
+                                html += `<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)"
+                                            onclick="${uploadFunc}" style="position: absolute; top: 40px; right: -6px;" title="Change profile">
+                                            <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>
+                                         </a>`;
+                            }
+
+                            html += `</div>`;
+                            return html;
+                        },
+                        width: '5%',
+                        targets: 0,
+                        searchable: false,
+                        orderable: false
+                    },
+                    {
+                        data: 'name',
+                        render: function(data, type, row) {
+                            // name/profile_role_names are already HTML-escaped server-side via ->safeOutput() in UserController
+                            let html = row.name;
+                            if (row.profile_role_names && row.profile_role_names.length > 0) {
+                                html += ` <span class="text-muted"><i><small>(${row.profile_role_names.join(', ')})</i></small></span>`;
+                            }
+                            return html;
+                        },
+                        targets: 1
+                    },
+                    {
+                        data: null,
+                        render: function(data, type, row) {
+                            // email/user_contact_no are already HTML-escaped server-side via ->safeOutput() in UserController
+                            const contact = row.user_contact_no
+                                ? `Contact No : ${row.user_contact_no}`
+                                : 'Contact No : <small><i> (No information provided) </i></small>';
+                            return `<ul><li>Email : ${row.email}</li><li>${contact}</li></ul>`;
+                        },
+                        width: '35%',
+                        targets: 2,
+                        searchable: false,
+                        orderable: false
+                    },
+                    {
+                        data: 'user_gender',
+                        render: function(data) { return data === 1 ? 'Male' : 'Female'; },
+                        width: '8%',
+                        targets: 3
+                    },
+                    {
+                        data: null,
+                        render: function(data, type, row) {
+                            if (row.deleted_at) return USER_STATUS_BADGES[3];
+                            return USER_STATUS_BADGES[row.user_status] ?? '<span class="badge bg-label-danger"> Unknown Status </span>';
+                        },
+                        width: '7%',
+                        targets: 4,
+                        searchable: false,
+                        orderable: false
+                    },
+                    {
+                        data: null,
+                        render: function(data, type, row) {
+                            const key = row.key;
+                            const rowKey = row.row_key;
+
+                            if (row.deleted_at) {
+                                return `<a href="javascript:void(0);" onclick="restoreRecord('${key}')" title="Restore users">
+                                            <i class="bx bx-refresh"></i>
+                                        </a>`;
+                            }
+
+                            let updateAction = '';
+                            let dropdownAction = '';
+
+                            if (row.can_update) {
+                                updateAction = `<span style="display: inline-block; vertical-align: middle;">
+                                    <i class="bx bx-edit-alt" style="cursor: pointer;" onclick="editRecord('${key}')" title="Edit"></i>
+                                </span>`;
+                            }
+
+                            if (!row.is_superadmin) {
+                                let deleteAction = row.can_delete
+                                    ? `<a href="javascript:void(0);" onclick="deleteRecord('${key}', '${rowKey}')" class="dropdown-item">
+                                           <i class="bx bx-trash me-1"></i> Delete
+                                       </a>`
+                                    : '';
+                                let resetAction = row.can_update
+                                    ? `<a href="javascript:void(0);" onclick="resetPassword('${key}')" class="dropdown-item">
+                                           <i class="bx bx-key me-1"></i> Reset Password
+                                       </a>`
+                                    : '';
+
+                                dropdownAction = `<div class="dropdown" style="display: inline-block; vertical-align: middle;">
+                                    <button type="button" class="btn p-0 dropdown-toggle hide-arrow" data-bs-toggle="dropdown" aria-expanded="false" style="cursor: pointer;">
+                                        <i class="bx bx-dots-vertical-rounded"></i>
+                                    </button>
+                                    <div class="dropdown-menu">${deleteAction}${resetAction}</div>
+                                </div>`;
+                            }
+
+                            return `${updateAction} ${dropdownAction}`;
                         },
                         targets: -1,
                         width: '3%',
@@ -222,6 +330,18 @@
                 url: "{{ route('users.delete') }}".replace('{id}', id),
                 onSuccess: function() {
                     removeDatatableRow('dataList', rowKey);
+                }
+            });
+        }
+
+        async function restoreRecord(id) {
+            await confirmApiAction({
+                html: 'This will restore the deleted user.<br><br><strong>Do you want to continue?</strong>',
+                confirmButtonText: 'Yes, Restore!',
+                method: 'post',
+                url: "{{ route('users.restore') }}".replace('{id}', id),
+                onSuccess: function() {
+                    getDataList(true);
                 }
             });
         }

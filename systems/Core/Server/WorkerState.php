@@ -57,6 +57,13 @@ final class WorkerState
                 $class::resetQueryLog();
             }
         }
+
+        // Reset the database.runtime service so a fresh BaseDatabase builder is
+        // created for each request. Without this, the singleton's query-builder
+        // state (table, where, binds, etc.) leaks across requests in worker mode.
+        if (function_exists('reset_framework_service')) {
+            reset_framework_service('database.runtime');
+        }
     }
 
     /**

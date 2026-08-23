@@ -4,7 +4,7 @@ namespace Middleware\Traits;
 
 trait SecurityHeadersTrait
 {
-	private const CSP_META_KEYS = [
+	private static array $CSP_META_KEYS = [
 		'enabled',
 		'nonce_enabled',
 		'mode',
@@ -236,7 +236,7 @@ trait SecurityHeadersTrait
 
 	private function filterCspDirectiveConfig(array $csp): array
 	{
-		foreach (self::CSP_META_KEYS as $metaKey) {
+		foreach (self::$CSP_META_KEYS as $metaKey) {
 			unset($csp[$metaKey]);
 		}
 

@@ -265,14 +265,8 @@ class UserController extends Controller
     private function mapUserDatatableRow(array $row): array
     {
         $key = $row['id'] ?? null;
-        $rowKey = 'user-row-' . $row['id'];
         $avatar = isset($row['avatar']['files_path']) ? asset(getFilesCompression($row['avatar']), false) : asset('upload/default.jpg');
         $avatarOriginal = isset($row['avatar']['files_path']) ? asset($row['avatar']['files_path'], false) : asset('upload/default.jpg');
-        $avatarId = $row['avatar']['id'] ?? null;
-        $uploadFunc = "updateCropperPhoto('PROFILE UPLOAD', '{$avatarId}', '{$key}', 'USER_PROFILE', 'users', '{$avatarOriginal}', 'getDataList', 'directory', 'avatar')";
-        $uploadAction = permission('user-upload-profile') && featureFlag('uploads.image-cropper') ? '<a class="btn btn-icon btn-info btn-xs rounded-circle" href="javascript:void(0)" onclick="' . $uploadFunc . '" style="position: absolute; top: 40px; right: -6px;" title="Change profile">                             
-                                                                            <i aria-hidden="true" class="tf-icons bx bx-camera" style="font-size: 0.75rem; position: relative; top: 45%; transform: translateY(-50%);"></i>                            
-                                                                        </a>' : '';
 
         $profileRoleIds = [];
         $profileRoleNames = [];
@@ -289,49 +283,27 @@ class UserController extends Controller
             }
         }
 
-        $isSuperadmin = in_array('1', $profileRoleIds, true);
-
-        $statusMarkup = !empty($row['deleted_at'])
-            ? self::USER_STATUS_BADGES[3]
-            : (self::USER_STATUS_BADGES[$row['user_status']] ?? '<span class="badge bg-label-danger"> Unknown Status </span>');
-
-        if (!empty($row['deleted_at'])) {
-            $action = "<a href='javascript:void(0);' onclick='restoreRecord(\"{$key}\")' title='Restore users'> <i class='bx bx-refresh'></i> </a>";
-        } else {
-            $updateAction = permission('user-update') ? "<span style='display: inline-block; vertical-align: middle;'><i class='bx bx-edit-alt' style='cursor: pointer;' onclick='editRecord(\"{$key}\")' title='Edit'></i> </span>" : '';
-            $deleteAction = permission('user-delete') ? "<a href='javascript:void(0);' onclick='deleteRecord(\"{$key}\", \"{$rowKey}\")' class='dropdown-item'><i class='bx bx-trash me-1'></i> Delete </a>" : '';
-            $resetAction = permission('user-update') ? "<a href='javascript:void(0);' onclick='resetPassword(\"{$key}\")' class='dropdown-item'>
-                                                                                                <i class='bx bx-key me-1'></i> Reset Password
-                                                                                            </a>" : '';
-            $dropdownAction = $isSuperadmin ? null : "<div class='dropdown' style='display: inline-block; vertical-align: middle;'>
-                                                                                        <button type='button' class='btn p-0 dropdown-toggle hide-arrow' data-bs-toggle='dropdown' aria-expanded='false' style='cursor: pointer;'>
-                                                                                            <i class='bx bx-dots-vertical-rounded'></i>
-                                                                                        </button>
-                                                                                        <div class='dropdown-menu'>
-                                                                                            {$deleteAction}
-                                                                                            {$resetAction}
-                                                                                        </div>
-                                                                                    </div>";
-
-            $action = "{$updateAction} {$dropdownAction}";
-        }
-
         return [
-            'row_key' => $rowKey,
-            'key' => $key,
+            'row_key'           => 'user-row-' . $key,
+            'key'               => $key,
             'user_status_value' => isset($row['user_status']) ? (int) $row['user_status'] : null,
             'user_gender_value' => isset($row['user_gender']) ? (int) $row['user_gender'] : null,
-            'profile_role_ids' => array_values(array_unique($profileRoleIds)),
-            'has_profile' => !empty($profileRoleIds),
-            'avatar' => '<div class="avatar-lg" style="position: relative; display:inline-block;">'
-                . '<img alt="user image" class="img-fluid img-thumbnail rounded-circle" loading="lazy" src="' . $avatar . '" onerror="this.onerror=null;this.src=\'' . asset('upload/default.jpg') . '\';">'
-                . $uploadAction
-                . '</div>',
-            'name' => ($row['name'] ?? '') . (!empty($profileRoleNames) ? ' <span class="text-muted"><i><small>(' . implode(', ', $profileRoleNames) . ')</i></small></span>' : ''),
-            'contact' => '<ul><li>' . implode('</li><li>', ['Email : ' . ($row['email'] ?? ''), empty($row['user_contact_no']) ? 'Contact No : <small><i> (No information provided) </i></small>' : 'Contact No : ' . $row['user_contact_no']]) . '</li></ul>',
-            'gender' => (int) ($row['user_gender'] ?? 0) === 1 ? 'Male' : 'Female',
-            'status' => $statusMarkup,
-            'action' => $action,
+            'profile_role_ids'  => array_values(array_unique($profileRoleIds)),
+            'profile_role_names'=> $profileRoleNames,
+            'has_profile'       => !empty($profileRoleIds),
+            'is_superadmin'     => in_array('1', $profileRoleIds, true),
+            'deleted_at'        => $row['deleted_at'] ?? null,
+            'avatar_url'        => $avatar,
+            'avatar_original_url' => $avatarOriginal,
+            'avatar_id'         => $row['avatar']['id'] ?? null,
+            'can_upload_avatar' => permission('user-upload-profile') && featureFlag('uploads.image-cropper'),
+            'can_update'        => permission('user-update'),
+            'can_delete'        => permission('user-delete'),
+            'name'              => $row['name'] ?? '',
+            'email'             => $row['email'] ?? '',
+            'user_contact_no'   => $row['user_contact_no'] ?? null,
+            'user_gender'       => (int) ($row['user_gender'] ?? 0),
+            'user_status'       => isset($row['user_status']) ? (int) $row['user_status'] : null,
         ];
     }
 }

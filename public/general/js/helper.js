@@ -367,6 +367,35 @@ const getDataPerChunk = (total, percentage = 10) => {
 
 // GENERAL HELPER
 
+// PHP-compatible ENT_* flag constants (subset needed for htmlspecialchars() quote handling)
+const ENT_NOQUOTES = 0; // Don't escape single or double quotes
+const ENT_COMPAT = 2;   // Escape double quotes only
+const ENT_QUOTES = 3;   // Escape both double and single quotes (default, matches PHP 8.1+ default)
+
+const htmlspecialchars = (value, flags = ENT_QUOTES, doubleEncode = true) => {
+	if (isUndef(value)) {
+		return '';
+	}
+
+	let str = String(value);
+
+	str = doubleEncode
+		? str.replace(/&/g, '&amp;')
+		: str.replace(/&(?!(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);)/g, '&amp;');
+
+	str = str.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+	if (flags & 2) {
+		str = str.replace(/"/g, '&quot;');
+	}
+
+	if (flags & 1) {
+		str = str.replace(/'/g, '&#039;');
+	}
+
+	return str;
+};
+
 const ucfirst = (string) => {
 	return string.charAt(0).toUpperCase() + string.slice(1);
 }
@@ -391,11 +420,11 @@ const random = (min, max) => {
 };
 
 const isUndef = (value) => {
-	return typeof value === undefined || value === null;
+	return typeof value === 'undefined' || value === null;
 }
 
 const isDef = (value) => {
-	return typeof value !== undefined && value !== null;
+	return !isUndef(value);
 }
 
 const isTrue = (value) => {
