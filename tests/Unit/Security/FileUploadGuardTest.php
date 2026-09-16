@@ -5,141 +5,294 @@ declare(strict_types=1);
 namespace Tests\Unit\Security;
 
 use Core\Security\FileUploadGuard;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 /**
- * Tests for Core\Security\FileUploadGuard
- *
- * Covers: store() validation paths, serve() path traversal, delete(), isSafePath()
- * Note: actual file moves are tested with tmp files — no real uploads needed.
+ * The guard had solid extension and MIME checks but no size ceiling, no proof
+ * that an "image" actually decodes, and no decompression-bomb guard. It also
+ * required is_uploaded_file(), which a PSR-7 worker bridge can never satisfy
+ * because it spools uploads to a temp file the SAPI never registered.
  */
-class FileUploadGuardTest extends TestCase
+final class FileUploadGuardTest extends TestCase
 {
-    private string $tmpDir;
+    /** @var list<string> */
+    private array $tempFiles = [];
+
+    private string $storageDir;
 
     protected function setUp(): void
     {
-        $this->tmpDir = sys_get_temp_dir() . '/mythphp_upload_test_' . uniqid();
-        mkdir($this->tmpDir, 0750, true);
+        parent::setUp();
+
+        $this->storageDir = ROOT_DIR . 'storage/uploads/phpunit-guard';
     }
 
     protected function tearDown(): void
     {
-        // Clean up temp directory
-        $files = glob($this->tmpDir . '/*');
-        if ($files) {
-            foreach ($files as $file) {
+        foreach ($this->tempFiles as $file) {
+            if (is_file($file)) {
                 @unlink($file);
             }
         }
-        @rmdir($this->tmpDir);
+
+        foreach (glob($this->storageDir . '/*') ?: [] as $stored) {
+            @unlink($stored);
+        }
+
+        if (is_dir($this->storageDir)) {
+            @rmdir($this->storageDir);
+        }
+
+        parent::tearDown();
     }
 
-    public function test_store_throws_on_invalid_upload_array(): void
+    /** Write bytes to a temp file the guard will accept as an upload source. */
+    private function tempUpload(string $contents, string $name): array
     {
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/Invalid file upload array/');
+        $path = tempnam(sys_get_temp_dir(), 'guard_');
+        self::assertIsString($path);
 
-        FileUploadGuard::store([]);
+        file_put_contents($path, $contents);
+        $this->tempFiles[] = $path;
+
+        return [
+            'tmp_name' => $path,
+            'name' => $name,
+            'error' => UPLOAD_ERR_OK,
+            'size' => strlen($contents),
+            'type' => 'application/octet-stream',
+        ];
     }
 
-    public function test_store_throws_on_upload_error(): void
+    private function pngBytes(int $width = 4, int $height = 4): string
     {
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/Upload error code/');
+        $image = imagecreatetruecolor($width, $height);
+        ob_start();
+        imagepng($image);
+        $bytes = (string) ob_get_clean();
+        imagedestroy($image);
 
-        FileUploadGuard::store([
-            'tmp_name' => '/tmp/test',
-            'name'     => 'test.jpg',
-            'error'    => UPLOAD_ERR_INI_SIZE,
-        ]);
+        return $bytes;
     }
 
-    public function test_store_throws_on_blocked_php_extension(): void
+    private function jpegBytes(int $width = 4, int $height = 4): string
     {
-        // is_uploaded_file() returns false for non-real uploads in unit tests.
-        // The guard raises a RuntimeException — verify that happens.
-        $this->expectException(\RuntimeException::class);
+        $image = imagecreatetruecolor($width, $height);
+        ob_start();
+        imagejpeg($image);
+        $bytes = (string) ob_get_clean();
+        imagedestroy($image);
 
-        FileUploadGuard::store([
-            'tmp_name' => '/tmp/test',
-            'name'     => 'shell.php',
-            'error'    => UPLOAD_ERR_OK,
-        ]);
+        return $bytes;
     }
 
-    public function test_store_throws_on_double_extension_bypass(): void
-    {
-        $this->expectException(\RuntimeException::class);
-
-        FileUploadGuard::store([
-            'tmp_name' => '/tmp/test',
-            'name'     => 'image.php.jpg',
-            'error'    => UPLOAD_ERR_OK,
-        ]);
-    }
-
-    public function test_store_throws_on_disallowed_extension(): void
-    {
-        $this->expectException(\RuntimeException::class);
-
-        FileUploadGuard::store([
-            'tmp_name' => '/tmp/test',
-            'name'     => 'file.zip',
-            'error'    => UPLOAD_ERR_OK,
-        ]);
-    }
+    // ─── Worker-mode source acceptance ───────────────────────────────
 
     /**
-     * Validate extension blocking logic independently of is_uploaded_file().
-     * Uses reflection to access the static BLOCKED_EXTENSIONS constant.
+     * A spooled temp file is not is_uploaded_file(), so requiring that
+     * unconditionally broke every upload under a PSR-7 worker.
      */
-    public function test_blocked_extensions_constant_includes_php_variants(): void
+    public function testASpooledTempFileIsAnAcceptableSource(): void
     {
-        $reflection = new \ReflectionClass(FileUploadGuard::class);
-        $constants  = $reflection->getConstants();
+        $stored = FileUploadGuard::store($this->tempUpload($this->pngBytes(), 'avatar.png'), 'phpunit-guard');
 
-        $this->assertArrayHasKey('BLOCKED_EXTENSIONS', $constants);
-
-        $blocked = array_map('strtolower', $constants['BLOCKED_EXTENSIONS']);
-
-        $this->assertContains('php', $blocked, 'php must be blocked');
-        $this->assertContains('phar', $blocked, 'phar must be blocked');
-        $this->assertContains('phtml', $blocked, 'phtml must be blocked');
+        self::assertMatchesRegularExpression('#^phpunit-guard/[0-9a-f]{32}\.png$#', $stored);
     }
 
-    public function test_is_safe_path_blocks_traversal(): void
+    public function testAPathOutsideAnyTempDirectoryIsRejected(): void
     {
-        $this->assertFalse(FileUploadGuard::isSafePath('../../../etc/passwd'));
-        $this->assertFalse(FileUploadGuard::isSafePath('../../config/database.php'));
-    }
+        // The property that matters: an arbitrary caller-supplied path is refused
+        // even when it is a perfectly valid image with an allowed extension, so
+        // the rejection is about provenance rather than content.
+        $outside = ROOT_DIR . 'storage/phpunit-outside-temp.png';
+        file_put_contents($outside, $this->pngBytes());
 
-    public function test_delete_throws_on_traversal(): void
-    {
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/Path traversal/');
+        try {
+            FileUploadGuard::store([
+                'tmp_name' => $outside,
+                'name' => 'avatar.png',
+                'error' => UPLOAD_ERR_OK,
+            ], 'phpunit-guard');
 
-        FileUploadGuard::delete('../../../etc/passwd');
-    }
-
-    public function test_delete_returns_true_for_nonexistent_file(): void
-    {
-        // Non-existent but safe path should return true (idempotent)
-        // This will fail isSafePath because path doesn't exist, so test with a known safe path
-        // that doesn't exist
-        $result = FileUploadGuard::isSafePath('nonexistent/path/file.jpg');
-        // isSafePath returns false for non-existent files (realpath returns false)
-        // That's correct — we can't confirm it's safe without resolving the real path
-        $this->assertIsBool($result);
-    }
-
-    public function test_blocked_extensions_constant_includes_php_variants_via_loop(): void
-    {
-        $reflection = new \ReflectionClass(FileUploadGuard::class);
-        $blocked    = array_map('strtolower', $reflection->getConstants()['BLOCKED_EXTENSIONS'] ?? []);
-
-        foreach (['php', 'php7', 'phar', 'phtml', 'asp', 'exe'] as $ext) {
-            $this->assertContains($ext, $blocked, "{$ext} must be in BLOCKED_EXTENSIONS");
+            self::fail('A file outside any temp directory must not be accepted as an upload.');
+        } catch (RuntimeException $e) {
+            self::assertStringContainsString('not a valid upload source', $e->getMessage());
+        } finally {
+            @unlink($outside);
         }
+    }
+
+    public function testAMissingTempFileIsRejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('missing or unreadable');
+
+        FileUploadGuard::store([
+            'tmp_name' => sys_get_temp_dir() . '/definitely-not-here-' . bin2hex(random_bytes(6)),
+            'name' => 'x.png',
+            'error' => UPLOAD_ERR_OK,
+        ], 'phpunit-guard');
+    }
+
+    // ─── Size ceiling ────────────────────────────────────────────────
+
+    public function testAFileOverTheLimitIsRejected(): void
+    {
+        $file = $this->tempUpload($this->pngBytes(64, 64), 'big.png');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('the limit is');
+
+        FileUploadGuard::store($file, 'phpunit-guard', maxBytes: 10);
+    }
+
+    public function testTheSizeErrorNamesBothNumbers(): void
+    {
+        try {
+            FileUploadGuard::store($this->tempUpload($this->pngBytes(64, 64), 'big.png'), 'phpunit-guard', 10);
+            self::fail('Expected a size rejection.');
+        } catch (RuntimeException $e) {
+            // A user cannot act on "upload failed".
+            self::assertStringContainsString('bytes', $e->getMessage());
+        }
+    }
+
+    public function testAnEmptyFileIsRejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('empty');
+
+        FileUploadGuard::store($this->tempUpload('', 'empty.png'), 'phpunit-guard');
+    }
+
+    public function testAFileUnderTheLimitIsAccepted(): void
+    {
+        $stored = FileUploadGuard::store(
+            $this->tempUpload($this->pngBytes(), 'ok.png'),
+            'phpunit-guard',
+            maxBytes: 1048576
+        );
+
+        self::assertStringEndsWith('.png', $stored);
+    }
+
+    // ─── Image content verification ──────────────────────────────────
+
+    /**
+     * finfo reads the magic bytes at the head of the file. A polyglot satisfies
+     * that while carrying something else after it; getimagesize() has to parse
+     * real dimensions out of the container.
+     */
+    public function testBytesThatDoNotDecodeAsAnImageAreRejected(): void
+    {
+        // PNG magic followed by junk — passes finfo, fails a real decode.
+        $fake = "\x89PNG\r\n\x1a\n" . str_repeat('not actually a png', 40);
+
+        $this->expectException(RuntimeException::class);
+
+        FileUploadGuard::store($this->tempUpload($fake, 'fake.png'), 'phpunit-guard');
+    }
+
+    public function testAJpegRenamedToPngIsRejected(): void
+    {
+        // finfo would report image/jpeg against a .png extension, and even if the
+        // MIME matched, the decoded type must agree with the extension.
+        $this->expectException(RuntimeException::class);
+
+        FileUploadGuard::store($this->tempUpload($this->jpegBytes(), 'actually.png'), 'phpunit-guard');
+    }
+
+    public function testAGenuineJpegIsAccepted(): void
+    {
+        $stored = FileUploadGuard::store($this->tempUpload($this->jpegBytes(), 'photo.jpg'), 'phpunit-guard');
+
+        self::assertStringEndsWith('.jpg', $stored);
+    }
+
+    // ─── Extension policy still holds ────────────────────────────────
+
+    /** @return list<array{0:string}> */
+    public static function dangerousNameProvider(): array
+    {
+        return [
+            ['shell.php'],
+            ['image.php.jpg'],
+            ['payload.phar'],
+            ['script.svg'],
+            ['config.ini'],
+            ['run.sh'],
+        ];
+    }
+
+    #[DataProvider('dangerousNameProvider')]
+    public function testDangerousExtensionsAreStillBlocked(string $name): void
+    {
+        $this->expectException(RuntimeException::class);
+
+        FileUploadGuard::store($this->tempUpload($this->pngBytes(), $name), 'phpunit-guard');
+    }
+
+    public function testAnUnlistedExtensionIsRejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Extension not permitted');
+
+        FileUploadGuard::store($this->tempUpload($this->pngBytes(), 'archive.zip'), 'phpunit-guard');
+    }
+
+    // ─── Upload error reporting ──────────────────────────────────────
+
+    /** @return list<array{0:int,1:string}> */
+    public static function uploadErrorProvider(): array
+    {
+        return [
+            [UPLOAD_ERR_INI_SIZE, 'upload_max_filesize'],
+            [UPLOAD_ERR_PARTIAL, 'partially uploaded'],
+            [UPLOAD_ERR_NO_FILE, 'No file'],
+            [UPLOAD_ERR_CANT_WRITE, 'could not write'],
+        ];
+    }
+
+    #[DataProvider('uploadErrorProvider')]
+    public function testUploadErrorsAreExplainedNotJustNumbered(int $code, string $expected): void
+    {
+        // "Upload error code: 1" tells a user nothing.
+        try {
+            FileUploadGuard::store(['tmp_name' => '', 'name' => 'x.png', 'error' => $code], 'phpunit-guard');
+            self::fail('Expected a rejection.');
+        } catch (RuntimeException $e) {
+            self::assertStringContainsString($expected, $e->getMessage());
+        }
+    }
+
+    // ─── Stored file properties ──────────────────────────────────────
+
+    public function testTheStoredNameIsRandomNotUserControlled(): void
+    {
+        $stored = FileUploadGuard::store($this->tempUpload($this->pngBytes(), 'my secret name.png'), 'phpunit-guard');
+
+        self::assertStringNotContainsString('secret', $stored);
+        self::assertMatchesRegularExpression('#/[0-9a-f]{32}\.png$#', $stored);
+    }
+
+    public function testUploadsLandOutsideTheWebRoot(): void
+    {
+        FileUploadGuard::store($this->tempUpload($this->pngBytes(), 'a.png'), 'phpunit-guard');
+
+        self::assertDirectoryExists($this->storageDir);
+        self::assertFileExists($this->storageDir . '/.htaccess');
+        self::assertStringContainsString('Deny from all', (string) file_get_contents($this->storageDir . '/.htaccess'));
+    }
+
+    public function testTheSubdirectoryIsSanitised(): void
+    {
+        $stored = FileUploadGuard::store(
+            $this->tempUpload($this->pngBytes(), 'a.png'),
+            '../../etc/phpunit-guard'
+        );
+
+        self::assertStringNotContainsString('..', $stored);
     }
 }

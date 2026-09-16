@@ -84,6 +84,19 @@ $config['auth'] = [
         'track_by_ip' => (bool) env('AUTH_LOGIN_POLICY_TRACK_IP', true),
         'identifier_fields' => env_list('AUTH_LOGIN_POLICY_IDENTIFIER_FIELDS', ['email', 'username']),
         'cache_key_prefix' => (string) env('AUTH_LOGIN_POLICY_CACHE_PREFIX', 'auth_login_policy_'),
+        /*
+        | What to do when the login-attempt history cannot be read.
+        |
+        | The lockout is backed by the attempts table, not the cache — so an
+        | unreadable table means there is no way to know whether this address has
+        | already failed five times. true allows the attempt anyway; false refuses
+        | it with a 503.
+        |
+        | Defaults to open, because a broken attempts table should not lock every
+        | user out of an otherwise working application. Set it to false where
+        | losing brute-force protection is the worse outcome. Either way the
+        | failure is logged.
+        */
         'fail_open_if_cache_unavailable' => (bool) env('AUTH_LOGIN_POLICY_FAIL_OPEN', true),
         'record_attempts' => (bool) env('AUTH_LOGIN_POLICY_RECORD_ATTEMPTS', true),
         'record_history' => (bool) env('AUTH_LOGIN_POLICY_RECORD_HISTORY', true),
@@ -145,7 +158,51 @@ $config['auth'] = [
 
     /*
     |----------------------------------------------------------------------
-    | Token Table Schema (used by ensureTokenTable auto-migration)
+    | Token Runtime Behaviour
+    |----------------------------------------------------------------------
+    |
+    | last_used_precision — seconds of staleness tolerated on the token's
+    | last_used_at column. Every authenticated request used to UPDATE it, which
+    | turns a read-only GET into a write: it takes a row lock, pins the request
+    | to the primary through sticky read/write routing, and scales with request
+    | volume rather than with login volume. 0 restores the write-every-time
+    | behaviour; raise it if you do not need minute-level "last used" accuracy.
+    |
+    | auto_migrate — whether createToken() should run CREATE TABLE IF NOT EXISTS
+    | before inserting. The tables are created properly by
+    | 20260308_005_create_users_access_tokens_table.php, so this is redundant DDL
+    | (and a metadata lock) on every login. Left on in development as a
+    | convenience for scratch databases; off everywhere else.
+    */
+    'token' => [
+        /*
+        | max_active_per_user — how many concurrent access tokens one user may hold.
+        |
+        |   0 (default) unlimited
+        |   1           single-device: a new login retires the previous token
+        |   N           at most N devices
+        |
+        | This is the API counterpart of auth.session_concurrency, which only ever
+        | governed browser sessions. Without it, "single-device login" held for the
+        | web while a user could accumulate unlimited tokens from the mobile app.
+        |
+        | on_limit — what happens once the cap is reached:
+        |   'revoke_oldest' (default) retire the least recently used token, so
+        |                             signing in on a new phone signs the old one out
+        |   'deny'                    refuse the new login
+        */
+        'max_active_per_user' => (int) env('AUTH_TOKEN_MAX_ACTIVE_PER_USER', 0),
+        'on_limit' => (string) env('AUTH_TOKEN_ON_LIMIT', 'revoke_oldest'),
+
+        'last_used_precision' => (int) env('AUTH_TOKEN_LAST_USED_PRECISION', 60),
+        // Read from APP_ENV directly: config.php sorts after auth.php, so
+        // $config['environment'] is not populated yet at this point.
+        'auto_migrate' => (bool) env('AUTH_TOKEN_AUTO_MIGRATE', env('APP_ENV', 'production') === 'development'),
+    ],
+
+    /*
+    |----------------------------------------------------------------------
+    | Token Table Schema
     |----------------------------------------------------------------------
     | Column name mappings for the personal-access-token table.
     | Change these if your token table uses different column names.

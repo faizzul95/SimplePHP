@@ -8,8 +8,6 @@ namespace Core\Database\Schema;
  * Usage:
  *   $table->foreign('user_id')->references('id')->on('users')->onDelete('CASCADE');
  *
- * @category  Database
- * @package   Core\Database\Schema
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -31,8 +29,6 @@ class ForeignKeyDefinition
 
     /**
      * Set the referenced column(s).
-     *
-     * @param string|array $columns
      */
     public function references(string|array $columns): self
     {

@@ -69,10 +69,10 @@ $router->group(['prefix' => $apiPrefix, 'middleware' => ['api.external.auth']], 
 // ─── Application API (Web Front-End) ────────────────────────────────────────
 
 $router->group(['prefix' => $apiPrefix, 'middleware' => ['api.app']], function ($router) {
-	require_once __DIR__ . '/API/auth.php';
-	require_once __DIR__ . '/API/dashboard.php';
-	require_once __DIR__ . '/API/users.php';
-	require_once __DIR__ . '/API/rbac_roles_permissions.php';
-	require_once __DIR__ . '/API/email_templates.php';
-	require_once __DIR__ . '/API/uploads.php';
+	require_once __DIR__ . '/api/auth.php';
+	require_once __DIR__ . '/api/dashboard.php';
+	require_once __DIR__ . '/api/users.php';
+	require_once __DIR__ . '/api/rbac_roles_permissions.php';
+	require_once __DIR__ . '/api/email_templates.php';
+	require_once __DIR__ . '/api/uploads.php';
 });

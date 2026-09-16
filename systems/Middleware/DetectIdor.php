@@ -23,8 +23,6 @@ use Core\Security\AuditLogger;
 final class DetectIdor
 {
     /**
-     * @param Request  $request
-     * @param \Closure $next
      * @param string   $ownerParam  Name of the route parameter that holds the resource owner's user ID
      */
     public function handle(Request $request, \Closure $next, string $ownerParam = 'user_id'): mixed
@@ -45,13 +43,7 @@ final class DetectIdor
 
         $normalizedRouteParam = filter_var($rawRouteParam, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($normalizedRouteParam === false) {
-            if (\function_exists('abort')) {
-                \abort(404, 'Resource not found.');
-            }
-
-            http_response_code(404);
-            echo json_encode(['error' => 'Resource not found.']);
-            exit;
+            \Core\Http\Abort::json(['code' => 404, 'error' => 'Resource not found.'], 404);
         }
 
         $routeParam = (int) $normalizedRouteParam;
@@ -74,12 +66,6 @@ final class DetectIdor
             ownerId:    $routeParam
         );
 
-        if (\function_exists('abort')) {
-            \abort(403, 'Access denied.');
-        }
-
-        http_response_code(403);
-        echo json_encode(['error' => 'Access denied.']);
-        exit;
+        \Core\Http\Abort::json(['code' => 403, 'error' => 'Access denied.'], 403);
     }
 }

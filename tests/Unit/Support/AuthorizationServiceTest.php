@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Support\Auth\AuthorizationService;
+use Core\Auth\AuthorizationService;
 use PHPUnit\Framework\TestCase;
 
 final class AuthorizationServiceTest extends TestCase

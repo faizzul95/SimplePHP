@@ -45,7 +45,6 @@ if (!function_exists('groupArray')) {
 if (!function_exists('fillUndefinedIndex')) {
     function fillUndefinedIndex($arr, $colNames, $emptyIndexStr = 'undefined')
     {
-        // Iterate through each column name to check and fill undefined indexes
         foreach ($colNames as $colName) {
             foreach ($arr as $key => $value) {
                 if (!isset($value[$colName])) {

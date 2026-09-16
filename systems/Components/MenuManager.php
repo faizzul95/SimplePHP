@@ -588,7 +588,7 @@ class MenuManager
                 (array) ($definition['profile'] ?? [])
             );
 
-            $html .= $this->renderGenericElement($badgeProfile, htmlspecialchars($label, ENT_QUOTES, 'UTF-8'), [
+            $html .= $this->renderGenericElement($badgeProfile, htmlspecialchars($label, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), [
                 'state' => $state,
                 'badge' => $label,
                 'desc' => (string) ($menu['desc'] ?? ''),
@@ -726,7 +726,7 @@ class MenuManager
             'attributes' => ['data-i18n' => '{desc}'],
         ];
 
-        return $this->renderGenericElement($labelProfile, htmlspecialchars($desc, ENT_QUOTES, 'UTF-8'), [
+        return $this->renderGenericElement($labelProfile, htmlspecialchars($desc, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), [
             'desc' => $desc,
         ]);
     }
@@ -810,7 +810,7 @@ class MenuManager
                 continue;
             }
 
-            $html .= ' ' . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '="' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"';
+            $html .= ' ' . htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '="' . htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
         }
 
         return $html;

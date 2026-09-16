@@ -95,13 +95,28 @@ class ResponseFactory
         return $this->stream($callback, 200, $headers);
     }
 
-    public function json(array $data, int $status = 200): void
+    /**
+     * Emit a JSON response and stop processing.
+     *
+     * Declared `never` rather than `void`: Response::json() throws
+     * ResponseEmitted, so this cannot return. Saying so lets static analysis and
+     * the reader see that code after a call is unreachable.
+     *
+     * @throws \Core\Http\ResponseEmitted always
+     */
+    public function json(array $data, int $status = 200): never
     {
         Response::json($data, $status);
+
+        // Unreachable; present so the `never` return type is provable.
+        throw new \LogicException('Response::json() must not return.');
     }
 
-    public function redirectTo(string $url, int $status = 302): void
+    /** @throws \Core\Http\ResponseEmitted always */
+    public function redirectTo(string $url, int $status = 302): never
     {
         Response::redirect($url, $status);
+
+        throw new \LogicException('Response::redirect() must not return.');
     }
 }

@@ -18,11 +18,7 @@ class LazyCollection implements \Iterator, \Countable
     private $currentItem = null;
     private $itemLoaded = false;
 
-    /**
-     * Create a new LazyCollection instance
-     * 
-     * @param callable $source The source data generator
-     */
+    /** Create a new LazyCollection instance */
     public function __construct(callable $source)
     {
         $this->source = $source;
@@ -30,8 +26,6 @@ class LazyCollection implements \Iterator, \Countable
 
     /**
      * Get the current item
-     * 
-     * @return mixed
      */
     public function current(): mixed
     {
@@ -42,11 +36,7 @@ class LazyCollection implements \Iterator, \Countable
         return $this->currentItem;
     }
 
-    /**
-     * Get the current position
-     * 
-     * @return int
-     */
+    /** Get the current position */
     public function key(): mixed
     {
         return $this->position;
@@ -77,8 +67,6 @@ class LazyCollection implements \Iterator, \Countable
 
     /**
      * Check if the current position is valid
-     * 
-     * @return bool
      */
     public function valid(): bool
     {
@@ -143,8 +131,6 @@ class LazyCollection implements \Iterator, \Countable
 
     /**
      * Count elements of the collection
-     * 
-     * @return int
      */
     public function count(): int
     {
@@ -209,7 +195,6 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Execute a callback over each item while maintaining lazy evaluation
      * 
-     * @param callable $callback
      * @return LazyCollection
      */
     public function map(callable $callback)
@@ -226,7 +211,6 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Filter items by a given callback while maintaining lazy evaluation
      * 
-     * @param callable $callback
      * @return LazyCollection
      */
     public function filter(callable $callback)
@@ -243,7 +227,6 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Execute a callback over each item
      * 
-     * @param callable $callback
      * @return LazyCollection
      */
     public function each(callable $callback)
@@ -275,10 +258,6 @@ class LazyCollection implements \Iterator, \Countable
 
     /**
      * Get the first item in the collection
-     * 
-     * @param callable|null $callback
-     * @param mixed $default
-     * @return mixed
      */
     public function first(?callable $callback = null, mixed $default = null): mixed
     {
@@ -302,8 +281,7 @@ class LazyCollection implements \Iterator, \Countable
 
     /**
      * Take the first n items from the collection
-     * 
-     * @param int $limit
+     *
      * @return LazyCollection
      */
     public function take($limit)
@@ -327,8 +305,7 @@ class LazyCollection implements \Iterator, \Countable
      * Get a value from all items by key
      * Supports dot notation for nested values with eager loading (e.g., 'user.profile.name')
      * Automatically handles array relationships by taking the first item
-     * 
-     * @param string $key
+     *
      * @param string|null $valueKey Optional key to use as array keys
      * @return LazyCollection|array
      */
@@ -421,7 +398,6 @@ class LazyCollection implements \Iterator, \Countable
             return $result;
         }
         
-        // Return a LazyCollection with mapped values
         return $this->map(function ($item) use ($key) {
             if (strpos($key, '.') === false) {
                 // Simple key access
@@ -467,12 +443,7 @@ class LazyCollection implements \Iterator, \Countable
         });
     }
 
-    /**
-     * Get a specific chunk of items from the collection
-     * 
-     * @param int $size
-     * @return LazyCollection
-     */
+    /** @return LazyCollection */
     public function chunk($size)
     {
         $chunks = [];
@@ -501,7 +472,6 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Create a collection of all elements that pass the given truth test
      * 
-     * @param callable $callback
      * @return LazyCollection
      */
     public function reject(callable $callback)
@@ -513,9 +483,7 @@ class LazyCollection implements \Iterator, \Countable
 
     /**
      * Concatenate values of a given key as a string
-     * 
-     * @param string $key
-     * @param string $glue
+     *
      * @return string
      */
     public function implode($key, $glue = '')
@@ -539,7 +507,6 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Pass the collection to the given callback and then return it
      * 
-     * @param callable $callback
      * @return LazyCollection
      */
     public function tap(callable $callback)
@@ -548,12 +515,7 @@ class LazyCollection implements \Iterator, \Countable
         return $this;
     }
 
-    /**
-     * Skip the given number of items
-     * 
-     * @param int $count
-     * @return LazyCollection
-     */
+    /** @return LazyCollection */
     public function skip($count)
     {
         $clone = clone $this;
@@ -568,7 +530,6 @@ class LazyCollection implements \Iterator, \Countable
     /**
      * Set the chunk size for internal data loading
      *
-     * @param int $size
      * @return LazyCollection
      */
     public function setChunkSize($size)

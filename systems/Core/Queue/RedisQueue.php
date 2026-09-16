@@ -67,7 +67,6 @@ final class RedisQueue
     /**
      * Push a job onto the named queue (or delayed set).
      *
-     * @param  Job    $job
      * @param  string $queue  Queue name (e.g. 'default', 'emails')
      * @param  int    $delay  Seconds before the job becomes available
      * @return string         Unique job ID
@@ -91,7 +90,6 @@ final class RedisQueue
      * Reserve the next available job from the queue (FIFO).
      * Moves delayed jobs whose score <= now() into the ready list first.
      *
-     * @param  string $queue
      * @return array{id: string, payload: array}|null  null if no job available
      */
     public function pop(string $queue = 'default'): ?array

@@ -91,8 +91,6 @@ class Request
 
     /**
      * Get input stream data for PUT/PATCH requests
-     * 
-     * @return array
      */
     private function getInputStreamData(): array
     {
@@ -109,7 +107,6 @@ class Request
             if (json_last_error() === JSON_ERROR_NONE && is_array($json)) {
                 $data = $json;
             } else {
-                // Parse as form data
                 parse_str(is_string($input) ? $input : '', $data);
             }
 
@@ -139,12 +136,7 @@ class Request
         return $this;
     }
 
-    /**
-     * Sanitize input data recursively
-     * 
-     * @param mixed $input
-     * @return mixed
-     */
+    /** @return mixed */
     private function sanitizeInput($input)
     {
         if (!$this->secureRequest) {
@@ -163,12 +155,7 @@ class Request
         return $input;
     }
 
-    /**
-     * Basic XSS cleaning function
-     * 
-     * @param string $str
-     * @return string
-     */
+    /** @return string */
     private function xssClean($str)
     {
         // Handle null, empty, or non-string values
@@ -244,12 +231,7 @@ class Request
         return trim($str);
     }
 
-    /**
-     * Process uploaded files
-     * 
-     * @param array $files
-     * @return array
-     */
+    /** @return array */
     private function processUploadedFiles($files)
     {
         $processed = [];
@@ -289,9 +271,6 @@ class Request
     }
 
     /**
-     * Get a specific input item
-     * 
-     * @param string $key The key of the input item
      * @param mixed $default The default value if the key doesn't exist
      * @return mixed The value of the input item or the default value
      */
@@ -328,13 +307,10 @@ class Request
     }
 
      /**
-     * Get a specific input item from $_POST
-     * 
-     * @param string $key The key of the input item
-     * @param mixed $default The default value if the key doesn't exist
-     * @param bool $secure Whether to sanitize the input (default: true)
-     * @return mixed The value of the input item or the default value
-     */
+      * @param mixed $default The default value if the key doesn't exist
+      * @param bool $secure Whether to sanitize the input (default: true)
+      * @return mixed The value of the input item or the default value
+      */
     public function post($key, $default = null, $secure = true)
     {
         // Use local variable instead of mutating instance state
@@ -377,9 +353,6 @@ class Request
     }
 
     /**
-     * Get a specific input item from $_GET
-     * 
-     * @param string $key The key of the input item
      * @param mixed $default The default value if the key doesn't exist
      * @param bool $secure Whether to sanitize the input (default: true)
      * @return mixed The value of the input item or the default value
@@ -425,12 +398,7 @@ class Request
         return $result;
     }
 
-    /**
-     * Get information about uploaded files
-     * 
-     * @param string|null $key
-     * @return array|null
-     */
+    /** @return array|null */
     public function files($key = null)
     {
         if ($key === null) {
@@ -442,8 +410,7 @@ class Request
 
     /**
      * Check if an input item exists
-     * 
-     * @param string $key The key of the input item
+     *
      * @return bool True if the item exists, false otherwise
      */
     public function has($key)
@@ -451,12 +418,7 @@ class Request
         return isset(self::$data[$key]);
     }
 
-    /**
-     * Get only specified input items
-     * 
-     * @param array|string $keys The keys to retrieve
-     * @return array The specified input items
-     */
+    /** @return array The specified input items */
     public function only($keys)
     {
         if (!is_array($keys) && !is_string($keys)) {
@@ -475,8 +437,7 @@ class Request
 
     /**
      * Get all input items except the specified ones
-     * 
-     * @param array|string $keys The keys to exclude
+     *
      * @return array All input items except the specified ones
      */
     public function except($keys)
@@ -496,9 +457,6 @@ class Request
     }
 
     /**
-     * Retrieve a header from the request
-     *
-     * @param string $key The header key
      * @param mixed $default The default value if header does not exist
      * @return mixed The header value
      */
@@ -537,7 +495,6 @@ class Request
     /**
      * Check if the request has a specific header
      *
-     * @param string $key The header key
      * @return bool True if header exists, false otherwise
      */
     public static function hasHeader($key)
@@ -735,7 +692,6 @@ class Request
                     // Additional security: Remove any non-IP characters
                     $ip = preg_replace('/[^0-9a-fA-F:.]/', '', $ip);
 
-                    // Validate IP format and exclude private/reserved ranges
                     if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false) {
                         // Additional IPv4 validation for common spoofing attempts
                         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
@@ -759,7 +715,6 @@ class Request
         // Fallback to REMOTE_ADDR with validation
         $fallbackIP = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
-        // Validate fallback IP
         if (filter_var($fallbackIP, FILTER_VALIDATE_IP) !== false) {
             return $fallbackIP;
         }
@@ -825,7 +780,6 @@ class Request
             'ipad' => 'iPadOS',
             'ipod' => 'iOS',
             
-            // Android
             'android' => 'Android',
             
             // Linux distributions
@@ -893,14 +847,12 @@ class Request
             '/chrome\/([\d.]+)/i' => 'Google Chrome',
             '/chromium\/([\d.]+)/i' => 'Chromium',
             
-            // Firefox
             '/firefox\/([\d.]+)/i' => 'Mozilla Firefox',
             
             // Safari (must be after Chrome check as Chrome contains Safari in UA)
             '/version\/([\d.]+).*safari/i' => 'Safari',
             '/safari\/([\d.]+)/i' => 'Safari',
             
-            // Internet Explorer
             '/msie ([\d.]+)/i' => 'Internet Explorer',
             '/trident.*rv:([\d.]+)/i' => 'Internet Explorer',
             

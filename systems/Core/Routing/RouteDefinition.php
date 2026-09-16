@@ -145,7 +145,6 @@ class RouteDefinition
      *
      * @param string|array $param  Parameter name or associative array [param => pattern]
      * @param string|null  $pattern Regex pattern (when $param is a string)
-     * @return self
      */
     public function where($param, ?string $pattern = null): self
     {

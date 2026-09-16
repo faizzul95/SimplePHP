@@ -416,7 +416,6 @@
     var GL = 9; //  Prohibit line breaks before and after
     var SP = 10; // Enable indirect line breaks
     var ZWJ$1 = 11; // Prohibit line breaks within joiner sequences
-    // Break Opportunities
     var B2 = 12; //  Provide a line break opportunity before and after the character
     var BA = 13; //  Generally provide a line break opportunity after the character
     var BB = 14; //  Generally provide a line break opportunity before the character
@@ -699,9 +698,7 @@
         // (PR | PO) × ( OP | HY )? NU
         ([PR, PO].indexOf(current) !== -1 &&
             (next === NU || ([OP, HY].indexOf(next) !== -1 && classTypes[afterIndex + 1] === NU))) ||
-            // ( OP | HY ) × NU
             ([OP, HY].indexOf(current) !== -1 && next === NU) ||
-            // NU ×	(NU | SY | IS)
             (current === NU && [NU, SY, IS].indexOf(next) !== -1)) {
             return BREAK_NOT_ALLOWED$1;
         }

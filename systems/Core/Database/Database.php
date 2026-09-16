@@ -9,12 +9,8 @@ use Core\Database\PerformanceMonitor;
 /**
  * Database Class
  *
- * @category  Database
- * @package   Core\Database
- * @author    
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   0.0.1
  *
  * @method BaseDatabase addConnection(string $name, array $params)
  * @method BaseDatabase setProfilingEnabled(bool $enable = true)

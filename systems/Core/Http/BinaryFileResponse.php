@@ -4,8 +4,10 @@ namespace Core\Http;
 
 use RuntimeException;
 
-class BinaryFileResponse
+class BinaryFileResponse implements Responsable
 {
+    use HeaderSanitizer;
+
     public function __construct(
         private string $path,
         private ?string $downloadName = null,
@@ -26,28 +28,42 @@ class BinaryFileResponse
 
     public function headers(): array
     {
-        return $this->preparedHeaders();
+        $headers = $this->preparedHeaders();
+
+        // Content-Length is part of the header set, not something emitBody() can
+        // add later — by then the headers are already on the wire.
+        $realPath = $this->resolvedPath();
+        if ($realPath !== null) {
+            $size = @filesize($realPath);
+            if ($size !== false) {
+                $headers['Content-Length'] = (string) $size;
+            }
+        }
+
+        return $headers;
     }
 
-    public function send(): never
+    public function emitBody(): void
     {
-        $realPath = realpath($this->path);
-        if ($realPath === false || !is_file($realPath) || !is_readable($realPath)) {
+        $realPath = $this->resolvedPath();
+
+        if ($realPath === null) {
             throw new RuntimeException('Download file is missing or not readable.');
         }
 
-        if (!headers_sent()) {
-            http_response_code($this->status);
+        readfile($realPath);
+    }
 
-            foreach ($this->preparedHeaders() as $name => $value) {
-                header($name . ': ' . $value, true);
-            }
-
-            header('Content-Length: ' . (string) filesize($realPath), true);
+    /** Throws rather than exits so middleware unwind and the Kernel emits once. */
+    public function send(): never
+    {
+        // Fail before any header is sent, so a missing file still produces a
+        // proper 500 rather than a truncated 200.
+        if ($this->resolvedPath() === null) {
+            throw new RuntimeException('Download file is missing or not readable.');
         }
 
-        readfile($realPath);
-        exit;
+        throw new ResponseEmitted($this);
     }
 
     public static function buildContentDisposition(string $downloadName): string
@@ -57,6 +73,17 @@ class BinaryFileResponse
         $encoded = rawurlencode($fallback);
 
         return sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $fallback, $encoded);
+    }
+
+    private function resolvedPath(): ?string
+    {
+        $realPath = realpath($this->path);
+
+        if ($realPath === false || !is_file($realPath) || !is_readable($realPath)) {
+            return null;
+        }
+
+        return $realPath;
     }
 
     private function preparedHeaders(): array
@@ -77,26 +104,5 @@ class BinaryFileResponse
         $mimeType = function_exists('mime_content_type') ? @mime_content_type($this->path) : false;
 
         return is_string($mimeType) && $mimeType !== '' ? $mimeType : 'application/octet-stream';
-    }
-
-    private function sanitizeHeaders(array $headers): array
-    {
-        $sanitized = [];
-
-        foreach ($headers as $name => $value) {
-            if (!is_string($name) || !is_scalar($value)) {
-                continue;
-            }
-
-            $headerName = str_replace(["\r", "\n", "\0"], '', $name);
-            $headerValue = str_replace(["\r", "\n", "\0"], '', (string) $value);
-            if ($headerName === '') {
-                continue;
-            }
-
-            $sanitized[$headerName] = $headerValue;
-        }
-
-        return $sanitized;
     }
 }

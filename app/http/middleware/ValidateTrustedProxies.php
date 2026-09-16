@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Middleware\MiddlewareInterface;
 use Core\Http\Request;
-use Core\Http\Response;
 
 class ValidateTrustedProxies implements MiddlewareInterface
 {
@@ -68,16 +68,7 @@ class ValidateTrustedProxies implements MiddlewareInterface
 
     protected function reject(Request $request, int $status, string $message)
     {
-        if ($request->expectsJson()) {
-            Response::json([
-                'code' => $status,
-                'message' => $message,
-            ], $status);
-        }
-
-        http_response_code($status);
-        echo $message;
-        exit;
+        Abort::problem($request, $status, $message);
     }
 
     private function hasForwardedHeaders(Request $request): bool

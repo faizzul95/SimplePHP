@@ -40,7 +40,20 @@ class DriverRegistry
             throw new InvalidArgumentException("Unsupported database driver: {$normalizedName}");
         }
 
-        return self::$drivers[$normalizedName]['class'];
+        $class = self::$drivers[$normalizedName]['class'];
+
+        // A grammar-only registration: the SQL is written, the connection driver
+        // is not. Saying so beats a class-not-found further down the stack.
+        if ($class === '') {
+            throw new InvalidArgumentException(sprintf(
+                'Database driver [%s] has a query grammar but no connection driver yet. '
+                . 'Register one with DriverRegistry::register(\'%s\', YourDriver::class).',
+                $normalizedName,
+                $normalizedName
+            ));
+        }
+
+        return $class;
     }
 
     public static function capabilities(string $name): DriverCapabilities
@@ -114,5 +127,43 @@ class DriverRegistry
             'retryable_deadlocks' => true,
             'upsert' => true,
         ], 'MariaDB'), \Core\Database\Schema\Grammars\MySQLGrammar::class, \Core\Database\Query\Grammars\MariaDBGrammar::class);
+
+        /*
+        | PostgreSQL, SQL Server and Oracle have a query grammar but no connection
+        | driver yet, so resolveClass() still refuses them — connecting to an
+        | engine whose driver does not exist should fail loudly, not silently
+        | behave like MySQL.
+        |
+        | Registering them here means the SQL each one needs is written, tested,
+        | and reachable through queryGrammar(), so adding an engine is a driver
+        | class rather than an audit of every backtick in the builder.
+        */
+        self::register('pgsql', '', new DriverCapabilities('pgsql', [
+            'date_functions' => true,
+            'json_contains' => true,
+            'retryable_deadlocks' => true,
+            'upsert' => true,
+            'returning' => true,
+            'skip_locked' => true,
+        ], 'PostgreSQL'), \Core\Database\Schema\Grammars\MySQLGrammar::class, \Core\Database\Query\Grammars\PostgresGrammar::class);
+
+        self::register('sqlsrv', '', new DriverCapabilities('sqlsrv', [
+            'date_functions' => true,
+            'json_contains' => false,
+            'retryable_deadlocks' => true,
+            // MERGE only, which is a statement rather than a trailing clause.
+            'upsert' => false,
+            'returning' => true,
+            'skip_locked' => true,
+        ], 'SQL Server'), \Core\Database\Schema\Grammars\MySQLGrammar::class, \Core\Database\Query\Grammars\SqlServerGrammar::class);
+
+        self::register('oci', '', new DriverCapabilities('oci', [
+            'date_functions' => true,
+            'json_contains' => false,
+            'retryable_deadlocks' => true,
+            'upsert' => false,
+            'returning' => true,
+            'skip_locked' => true,
+        ], 'Oracle'), \Core\Database\Schema\Grammars\MySQLGrammar::class, \Core\Database\Query\Grammars\OracleGrammar::class);
     }
 }

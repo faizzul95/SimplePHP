@@ -72,7 +72,9 @@ final class PaginateAjaxTest extends TestCase
             ]],
         ]);
 
-        self::assertSame(['name', 'ASC'], $database->capturedOrderBy);
+        // No sortable columns were declared, so the client's order request is ignored.
+        // Deriving them from DESCRIBE would let a client sort by any column in the table.
+        self::assertSame([], $database->capturedOrderBy);
         self::assertSame([0, 500, 1, str_repeat('x', 255)], $result);
     }
 

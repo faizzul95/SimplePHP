@@ -46,8 +46,6 @@ use Core\Database\Schema\Grammars\MySQLGrammar;
  *   Schema::createTrigger('before_user_insert', 'users', 'BEFORE', 'INSERT',
  *       'SET NEW.created_at = NOW();');
  *
- * @category  Database
- * @package   Core\Database\Schema
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -77,7 +75,6 @@ class Schema
     /**
      * Create a new Schema instance.
      *
-     * @param string $connection  Connection name (default: 'default')
      * @param string $driver      Database driver (mysql, mariadb)
      */
     public function __construct(string $connection = 'default', string $driver = 'mysql')
@@ -126,12 +123,6 @@ class Schema
 
     // ─── Table Operations (Static API) ───────────────────────
 
-    /**
-     * Create a new table.
-     *
-     * @param string   $table    Table name
-     * @param callable $callback Receives a Blueprint instance
-     */
     public static function create(string $table, callable $callback): void
     {
         $instance = static::getInstance();
@@ -143,12 +134,7 @@ class Schema
         $instance->executeStatements($statements);
     }
 
-    /**
-     * Create a new table only if it doesn't exist.
-     *
-     * @param string   $table    Table name
-     * @param callable $callback Receives a Blueprint instance
-     */
+    /** Create a new table only if it doesn't exist. */
     public static function createIfNotExists(string $table, callable $callback): void
     {
         $instance = static::getInstance();
@@ -161,12 +147,6 @@ class Schema
         $instance->executeStatements($statements);
     }
 
-    /**
-     * Modify an existing table.
-     *
-     * @param string   $table    Table name
-     * @param callable $callback Receives a Blueprint instance
-     */
     public static function table(string $table, callable $callback): void
     {
         $instance = static::getInstance();
@@ -245,9 +225,6 @@ class Schema
 
     /**
      * Check if multiple columns exist on a table.
-     *
-     * @param string $table
-     * @param array  $columns
      */
     public static function hasColumns(string $table, array $columns): bool
     {
@@ -332,9 +309,7 @@ class Schema
     /**
      * Create a stored procedure.
      *
-     * @param string $name       Procedure name
      * @param array  $parameters Array of ['direction' => 'IN|OUT|INOUT', 'name' => ..., 'type' => ...]
-     * @param string $body       The procedure body
      * @param array  $options    Optional: replace, definer, comment, deterministic, sql_security
      */
     public static function createProcedure(string $name, array $parameters, string $body, array $options = []): void
@@ -381,10 +356,7 @@ class Schema
     /**
      * Create a stored function.
      *
-     * @param string $name       Function name
-     * @param array  $parameters Array of ['name' => ..., 'type' => ...]
      * @param string $returnType Return data type (e.g., 'DECIMAL(10,2)', 'VARCHAR(255)')
-     * @param string $body       The function body
      * @param array  $options    Optional: replace, definer, comment, deterministic, sql_security
      */
     public static function createFunction(string $name, array $parameters, string $returnType, string $body, array $options = []): void
@@ -431,12 +403,8 @@ class Schema
     /**
      * Create a trigger.
      *
-     * @param string $name    Trigger name
-     * @param string $table   Table the trigger acts on
      * @param string $timing  'BEFORE' or 'AFTER'
      * @param string $event   'INSERT', 'UPDATE', or 'DELETE'
-     * @param string $body    Trigger body
-     * @param array  $options Optional: replace, definer
      */
     public static function createTrigger(string $name, string $table, string $timing, string $event, string $body, array $options = []): void
     {

@@ -75,7 +75,6 @@ final class SignedUrl
      * Generate a signed URL for a temporary file download.
      *
      * @param string $relativePath Relative path within storage/uploads/
-     * @param int    $expiresInSeconds
      */
     public static function forFile(string $relativePath, int $expiresInSeconds = 300): string
     {

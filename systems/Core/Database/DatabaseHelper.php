@@ -5,13 +5,9 @@ namespace Core\Database;
 /**
  * Database Helper Class
  *
- *
- * @category  Helper
- * @package   Core\Database
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   0.0.1
  */
 
 use Core\Database\DatabaseCache;
@@ -54,7 +50,6 @@ class DatabaseHelper
      * Sanitize input data to prevent XSS and SQL injection attacks based on the secure flag.
      * Protected against deep recursion attacks with a configurable depth limit.
      *
-     * @param mixed $value The input data to sanitize.
      * @param array $ignoreList List of keys/columns to ignore during sanitization.
      * @param int $depth Current recursion depth (internal use).
      * @return mixed|null The sanitized input data or null if $value is null or empty.
@@ -62,7 +57,6 @@ class DatabaseHelper
      */
     protected function sanitize($value = null, $ignoreList = [], $depth = 0)
     {
-        // Check if $value is not null or empty
         if (!isset($value) || is_null($value)) {
             return $value;
         }
@@ -105,7 +99,6 @@ class DatabaseHelper
      * Normalize database values for storage or internal processing without HTML escaping.
      * Protected against deep recursion attacks with a configurable depth limit.
      *
-     * @param mixed $value The input data to normalize.
      * @param array $ignoreList List of keys/columns to ignore during normalization.
      * @param int $depth Current recursion depth (internal use).
      * @return mixed|null The normalized input data or null if $value is null.
@@ -150,8 +143,6 @@ class DatabaseHelper
      * Blocks full statements, comment injections, hex/char obfuscation, stacked queries,
      * and common SQL injection payloads.
      *
-     * @param string|array $string The raw query string to validate.
-     * @param string $message (Optional) The exception message to throw.
      * @throws \InvalidArgumentException If the string contains forbidden keywords or patterns.
      */
     protected function _forbidRawQuery($string, $message = 'Not supported to run full query')
@@ -229,7 +220,6 @@ class DatabaseHelper
      * Validates a table or column name against SQL injection.
      * Only allows alphanumeric, underscores, dots (for schema.table), and backticks.
      *
-     * @param string $name The table or column name to validate.
      * @param string $label Human-readable label for error messages.
      * @throws \InvalidArgumentException If the name contains invalid characters.
      * @return string The validated name.
@@ -344,11 +334,77 @@ class DatabaseHelper
     # VALIDATION SECTION
 
     /**
-     * Validates if the given value is a string and throws an exception if not.
-     * Uses caching to avoid re-validating the same columns
+     * Assert that a value is a bare SQL identifier, optionally qualified.
      *
-     * @param string $column The column name to validate.
-    * @throws \InvalidArgumentException If the column name is not a string or no value.
+     * Accepts `column` or `table.column`, with or without backtick quoting.
+     * Rejects everything else — expressions, function calls, whitespace, and
+     * any embedded backtick that would close the identifier quoting early.
+     *
+     * This is the strict counterpart to validateColumn(), which only checks
+     * that a value is a non-empty string because several of its 38 call sites
+     * legitimately pass expressions. Use this one wherever the value is
+     * concatenated into SQL as an identifier rather than bound as a parameter.
+     *
+     * @return array{0:string,1:string|null} [column, qualifier|null]
+     * @throws \InvalidArgumentException
+     */
+    protected function parseIdentifier($name, string $label = 'Identifier'): array
+    {
+        if (!is_string($name)) {
+            throw new \InvalidArgumentException("$label must be a string.");
+        }
+
+        $name = trim($name);
+
+        if ($name === '') {
+            throw new \InvalidArgumentException("$label cannot be empty.");
+        }
+
+        // `qualifier`.`column`, qualifier.column, `column`, column.
+        // The backtick is optional but must be balanced, so a stray one is rejected.
+        $pattern = '/^`?([A-Za-z_][A-Za-z0-9_$]*)`?(?:\.`?([A-Za-z_][A-Za-z0-9_$]*)`?)?$/';
+
+        if (preg_match($pattern, $name, $parts) !== 1) {
+            throw new \InvalidArgumentException(
+                "$label is not a valid identifier: {$name}. "
+                . 'Expected `column` or `table.column`; use a raw method for expressions.'
+            );
+        }
+
+        return isset($parts[2]) && $parts[2] !== ''
+            ? [$parts[2], $parts[1]]
+            : [$parts[1], null];
+    }
+
+    /**
+     * Validate an identifier and return it backtick-quoted.
+     *
+     * @throws \InvalidArgumentException
+     */
+    protected function quoteIdentifier($name, string $label = 'Identifier', ?string $defaultQualifier = null): string
+    {
+        [$column, $qualifier] = $this->parseIdentifier($name, $label);
+
+        if ($qualifier === null && $defaultQualifier !== null && trim($defaultQualifier) !== '') {
+            [$qualifierColumn] = $this->parseIdentifier($defaultQualifier, 'Table name');
+            $qualifier = $qualifierColumn;
+        }
+
+        return $qualifier === null
+            ? '`' . $column . '`'
+            : '`' . $qualifier . '`.`' . $column . '`';
+    }
+
+    /**
+     * Assert that a value is a non-empty string.
+     *
+     * NOTE: this is deliberately permissive and is NOT an injection guard.
+     * Several call sites pass SQL expressions (aggregates, raw fragments), so
+     * it cannot enforce an identifier grammar without breaking them. When a
+     * value is concatenated into SQL as an identifier, use quoteIdentifier()
+     * or parseIdentifier() instead.
+     *
+     * @throws \InvalidArgumentException If the column name is not a string or has no value.
      */
     protected function validateColumn($column, $default = 'Column')
     {
@@ -366,7 +422,6 @@ class DatabaseHelper
             throw new \InvalidArgumentException("$default cannot be empty or null.");
         }
 
-        // Cache validation result
         $this->validatedColumns[$cacheKey] = true;
     }
 
@@ -374,9 +429,8 @@ class DatabaseHelper
      * Validates if the given date string is in a recognizable format (Y-m-d or d-m-Y)
      * and converts it to the Y-m-d format.
      *
-     * @param string $date The date string to validate and convert.
      * @return string The validated date in Y-m-d format.
-    * @throws \InvalidArgumentException If the date format is not recognized.
+     * @throws \InvalidArgumentException If the date format is not recognized.
      */
     protected function validateDate($date)
     {
@@ -390,9 +444,7 @@ class DatabaseHelper
     /**
      * Validates if the given operator is supported.
      *
-     * @param string $operator The operator to validate.
-     * @param array $extra The extra operator to validate.
-    * @throws \InvalidArgumentException If the operator is not supported.
+     * @throws \InvalidArgumentException If the operator is not supported.
      */
     protected function validateOperator($operator, $extra = [])
     {
@@ -405,8 +457,7 @@ class DatabaseHelper
     /**
      * Validates if the given day is a valid number between 1 and 31.
      *
-     * @param int $day The day to validate.
-    * @throws \InvalidArgumentException If the day is not a valid number between 1 and 31.
+     * @throws \InvalidArgumentException If the day is not a valid number between 1 and 31.
      */
     protected function validateDay($day)
     {
@@ -418,8 +469,7 @@ class DatabaseHelper
     /**
      * Validates if the given month is a valid number between 1 and 12.
      *
-     * @param int $month The month to validate.
-    * @throws \InvalidArgumentException If the month is not a valid number between 1 and 12.
+     * @throws \InvalidArgumentException If the month is not a valid number between 1 and 12.
      */
     protected function validateMonth($month)
     {
@@ -431,8 +481,7 @@ class DatabaseHelper
     /**
      * Validates if the given year is a valid four-digit number.
      *
-     * @param int $year The year to validate.
-    * @throws \InvalidArgumentException If the year is not a valid four-digit number.
+     * @throws \InvalidArgumentException If the year is not a valid four-digit number.
      */
     protected function validateYear($year)
     {
@@ -444,7 +493,6 @@ class DatabaseHelper
     /**
      * Validates a time string (HH:MM or HH:MM:SS).
      *
-     * @param string $time
      * @return string
      * @throws \InvalidArgumentException
      */

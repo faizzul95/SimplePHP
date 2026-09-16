@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 class RequireRole implements MiddlewareInterface
@@ -21,11 +21,7 @@ class RequireRole implements MiddlewareInterface
     public function handle(Request $request, callable $next)
     {
         if (!auth()->check(self::AUTH_GUARDS)) {
-            if ($request->expectsJson()) {
-                Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
-            }
-
-            Response::redirect(url(REDIRECT_LOGIN));
+            Abort::unauthenticated($request);
         }
 
         if (empty($this->roles)) {
@@ -33,16 +29,7 @@ class RequireRole implements MiddlewareInterface
         }
 
         if (!auth()->hasAnyRole($this->roles)) {
-            if ($request->expectsJson()) {
-                Response::json([
-                    'code' => 403,
-                    'message' => 'Forbidden: Missing role',
-                    'roles' => $this->roles,
-                ], 403);
-            }
-
-            show_403();
-            exit;
+            Abort::denied($request, 'Forbidden: Missing role', ['roles' => $this->roles]);
         }
 
         return $next($request);

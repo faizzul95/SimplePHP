@@ -132,9 +132,24 @@ final class RedisDriver
     /**
      * Atomic increment — uses Redis INCRBY (no race condition).
      */
-    public function increment(string $key, int $by = 1): int
+    /**
+     * @param int|null $seconds TTL applied only when this call creates the key.
+     *                          INCRBY on a missing key creates it with no expiry,
+     *                          so without this every counter Redis ever saw stayed
+     *                          resident — a rate limiter alone will fill an
+     *                          instance given enough distinct clients.
+     */
+    public function increment(string $key, int $by = 1, ?int $seconds = null): int
     {
-        return (int) $this->redis->incrBy($key, $by);
+        $value = (int) $this->redis->incrBy($key, $by);
+
+        // ttl() answers -1 for "exists, no expiry". Setting it only in that case
+        // means counting towards a window never extends the window.
+        if ($seconds !== null && $seconds > 0 && (int) $this->redis->ttl($key) === -1) {
+            $this->redis->expire($key, $seconds);
+        }
+
+        return $value;
     }
 
     /**

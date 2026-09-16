@@ -2,8 +2,10 @@
 
 namespace Core\Http;
 
-class RedirectResponse
+class RedirectResponse implements Responsable
 {
+    use HeaderSanitizer;
+
     private string $targetUrl;
     private int $status;
     private array $headers = [];
@@ -82,15 +84,42 @@ class RedirectResponse
         return $this->status;
     }
 
-    public function send(): never
+    public function status(): int
+    {
+        return $this->status;
+    }
+
+    /**
+     * Location plus any extra headers, with the target already run through the
+     * redirect allow-list so an open redirect cannot be constructed here.
+     *
+     * @return array<string, string>
+     */
+    public function headers(): array
+    {
+        $headers = $this->sanitizeHeaders($this->headers);
+        $headers['Location'] = Response::sanitizeRedirectTarget($this->targetUrl, $this->allowExternal);
+
+        return $headers;
+    }
+
+    /**
+     * Flash data has to reach the session before the redirect is written, because
+     * the next request reads it. emitBody() runs after headers are sent, which is
+     * still before the session is closed, so this is the right place for it.
+     */
+    public function emitBody(): void
     {
         foreach ($this->flash as $key => $value) {
             if (function_exists('flashSession') && is_string($key) && $key !== '') {
                 flashSession($key, $value);
             }
         }
+    }
 
-        Response::sendRedirectHeaders($this->targetUrl, $this->status, $this->headers, $this->allowExternal);
-        exit;
+    /** Throws rather than exits so middleware unwind and the Kernel emits once. */
+    public function send(): never
+    {
+        throw new ResponseEmitted($this);
     }
 }

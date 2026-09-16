@@ -5,8 +5,6 @@ namespace Components;
 /**
  * Input Class
  *
- * @category  Form Input
- * @package   Input
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
@@ -17,8 +15,6 @@ class Input
     /**
      * Generate HTML input field of type text.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -30,8 +26,6 @@ class Input
     /**
      * Generate HTML input field of type radio.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param bool $checked Whether the radio button should be checked.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
@@ -44,29 +38,14 @@ class Input
         return self::generateInput('radio', $name, $value, $attributes);
     }
 
-    /**
-     * Generate HTML textarea.
-     *
-     * @param string $name Name attribute of the textarea.
-     * @param string $value Value of the textarea.
-     * @param array $attributes Additional attributes for the textarea.
-     * @return string HTML representation of the textarea.
-     */
+    /** @return string HTML representation of the textarea. */
     public static function textarea($name, $value = '', $attributes = array())
     {
         $attributes['name'] = $name;
-        return '<textarea' . self::formatAttributes($attributes) . '>' . htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') . '</textarea>';
+        return '<textarea' . self::formatAttributes($attributes) . '>' . htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</textarea>';
     }
 
-    /**
-     * Generate HTML select dropdown.
-     *
-     * @param string $name Name attribute of the select dropdown.
-     * @param array $options Associative array of options (value => label).
-     * @param string $selected Value of the selected option.
-     * @param array $attributes Additional attributes for the select dropdown.
-     * @return string HTML representation of the select dropdown.
-     */
+    /** @return string HTML representation of the select dropdown. */
     public static function select($name, $options = array(), $selected = '', $attributes = array())
     {
         $attributes['name'] = $name;
@@ -74,7 +53,7 @@ class Input
         $selectedString = (string) $selected;
         foreach ($options as $value => $label) {
             $isSelected = ((string) $value === $selectedString) ? ' selected="selected"' : '';
-            $html .= '<option value="' . htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') . '"' . $isSelected . '>' . htmlspecialchars((string) $label, ENT_QUOTES, 'UTF-8') . '</option>';
+            $html .= '<option value="' . htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"' . $isSelected . '>' . htmlspecialchars((string) $label, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</option>';
         }
         $html .= '</select>';
         return $html;
@@ -83,8 +62,6 @@ class Input
     /**
      * Generate HTML input field of type checkbox.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param bool $checked Whether the checkbox should be checked.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
@@ -100,8 +77,6 @@ class Input
     /**
      * Generate HTML input field of type hidden.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -113,8 +88,6 @@ class Input
     /**
      * Generate HTML input field of type number.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -126,8 +99,6 @@ class Input
     /**
      * Generate HTML input field of type password.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -139,8 +110,6 @@ class Input
     /**
      * Generate HTML input field of type date.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -152,8 +121,6 @@ class Input
     /**
      * Generate HTML input field of type time.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -165,8 +132,6 @@ class Input
     /**
      * Generate HTML input field of type email.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -178,8 +143,6 @@ class Input
     /**
      * Generate HTML input field of type URL.
      *
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -191,7 +154,6 @@ class Input
     /**
      * Generate HTML input field of type file.
      *
-     * @param string $name Name attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -203,9 +165,6 @@ class Input
     /**
      * Generate HTML input field with specified attributes.
      *
-     * @param string $type Type of input field.
-     * @param string $name Name attribute of the input field.
-     * @param string $value Value attribute of the input field.
      * @param array $attributes Additional attributes for the input field.
      * @return string HTML representation of the input field.
      */
@@ -223,7 +182,6 @@ class Input
      * Attribute names are restricted to ASCII letters, digits, underscore, and
      * dash to prevent attribute-name injection; values are HTML-escaped.
      *
-     * @param array $attributes Associative array of attributes.
      * @return string Formatted attributes for HTML element.
      */
     protected static function formatAttributes($attributes)
@@ -233,7 +191,7 @@ class Input
             if (!is_string($key) || $key === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_\-:]*$/', $key)) {
                 continue;
             }
-            $html .= ' ' . $key . '="' . htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') . '"';
+            $html .= ' ' . $key . '="' . htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
         }
         return $html;
     }

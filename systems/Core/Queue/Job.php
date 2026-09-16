@@ -56,6 +56,42 @@ abstract class Job
     abstract public function handle(): void;
 
     /**
+     * Opt into at-most-one-in-flight by returning a stable key.
+     *
+     * While a job with this id is queued or running, further dispatches of the
+     * same class and id are dropped. Use it for work that must not overlap or
+     * double up: a report a user can trigger twice by double-clicking, a webhook
+     * the sender may retry, a scheduled task that could overlap its own previous
+     * run.
+     *
+     *     public function uniqueId(): string
+     *     {
+     *         return 'invoice-' . $this->invoiceId;
+     *     }
+     *
+     * Returning null (the default) means no uniqueness constraint.
+     *
+     * The claim is released when the job succeeds or fails permanently, but NOT
+     * between retries — a retrying job is still in flight.
+     */
+    public function uniqueId(): ?string
+    {
+        return null;
+    }
+
+    /**
+     * How long the uniqueness claim may survive without being released, in
+     * seconds. This is a safety net for a worker killed mid-job, not the
+     * mechanism — normal completion releases the claim immediately.
+     *
+     * Set it comfortably above the job's worst-case runtime.
+     */
+    public function uniqueFor(): int
+    {
+        return UniqueLock::DEFAULT_TTL;
+    }
+
+    /**
      * Handle a job failure (called after all retries are exhausted).
      */
     public function failed(\Throwable $e): void
@@ -122,7 +158,7 @@ abstract class Job
      */
     public function toPayload(): array
     {
-        return [
+        $payload = [
             'class'   => static::class,
             'data'    => serialize($this),
             'queue'   => $this->queue,
@@ -131,6 +167,16 @@ abstract class Job
             'timeout' => $this->timeout,
             'priority' => $this->normalizePriority($this->priority),
         ];
+
+        // Carried with the job so the worker can release the uniqueness claim once
+        // the work is actually done, rather than waiting for the TTL to lapse.
+        $uniqueKey = UniqueLock::keyFor($this);
+
+        if ($uniqueKey !== null) {
+            $payload['unique_key'] = $uniqueKey;
+        }
+
+        return $payload;
     }
 
     /**

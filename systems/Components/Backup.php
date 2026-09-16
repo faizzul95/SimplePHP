@@ -663,7 +663,6 @@ class Backup
     /**
      * Write a chunk of row inserts to the SQL dump.
      *
-     * @param resource $handle
      * @param array<int, array<string, mixed>> $rows
      */
     private function writeInsertBatch($handle, \PDO $pdo, string $quotedTable, array $rows): void
@@ -852,7 +851,6 @@ class Backup
             return [];
         }
 
-        // Sort by newest first
         usort($files, function ($a, $b) {
             return filemtime($b) - filemtime($a);
         });

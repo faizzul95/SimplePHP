@@ -62,11 +62,10 @@ class EventDispatcher
      * Dispatch an event to every registered listener.
      *
      * - Checks stoppable propagation: if the event extends StoppableEvent and
-     *   a listener calls $event->stopPropagation(), no further listeners run.
+     * a listener calls $event->stopPropagation(), no further listeners run.
      * - Supports wildcard ('*') listeners that receive every event.
      * - ShouldQueue listeners are dispatched to the queue; return value is a job ID.
      *
-     * @param  string|object  $event   Event name string OR a StoppableEvent object
      * @param  array          $payload Additional data for string-based events
      * @return array                   Responses from each synchronous listener
      */

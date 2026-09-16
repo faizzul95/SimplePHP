@@ -11,9 +11,6 @@ use Core\Database\QueryAllowlist;
  * UNION, selectSub, and withAggregate family methods.
  *
  * Consumed by: BaseDatabase
- *
- * @category Database
- * @package  Core\Database\Concerns
  */
 trait HasAggregates
 {
@@ -21,8 +18,6 @@ trait HasAggregates
      * Get the aggregate value for a column.
      * Base method used by sum(), avg(), min(), max().
      *
-     * @param string $function Aggregate function (SUM, AVG, MIN, MAX, COUNT)
-     * @param string $column   Column name or '*'
      * @return mixed
      */
     public function aggregate($function, $column = '*')
@@ -42,12 +37,7 @@ trait HasAggregates
         return $result['aggregate_value'] ?? null;
     }
 
-    /**
-     * Get the sum of a column.
-     *
-     * @param string $column
-     * @return mixed
-     */
+    /** @return mixed */
     public function sum($column)
     {
         return $this->aggregate('SUM', $column);
@@ -56,7 +46,6 @@ trait HasAggregates
     /**
      * Get the average of a column.
      *
-     * @param string $column
      * @return mixed
      */
     public function avg($column)
@@ -64,23 +53,13 @@ trait HasAggregates
         return $this->aggregate('AVG', $column);
     }
 
-    /**
-     * Get the minimum value of a column.
-     *
-     * @param string $column
-     * @return mixed
-     */
+    /** @return mixed */
     public function min($column)
     {
         return $this->aggregate('MIN', $column);
     }
 
-    /**
-     * Get the maximum value of a column.
-     *
-     * @param string $column
-     * @return mixed
-     */
+    /** @return mixed */
     public function max($column)
     {
         return $this->aggregate('MAX', $column);
@@ -89,8 +68,6 @@ trait HasAggregates
     /**
      * Append one or more ORDER BY clauses to the query.
      *
-     * @param array|string $columns
-     * @param string $direction
      * @return $this
      */
     public function orderBy($columns, $direction = 'DESC')
@@ -102,11 +79,11 @@ trait HasAggregates
         if (is_array($columns)) {
             foreach ($columns as $column => $dir) {
                 $direction = strtoupper(!in_array(strtoupper($dir), ['ASC', 'DESC']) ? 'DESC' : $dir);
-                $safeCol = $this->_sanitizeColumnName($column);
+                $safeCol = $this->quoteSortColumn($column);
                 $this->orderBy[] = "$safeCol $direction";
             }
         } else {
-            $safeCol = $this->_sanitizeColumnName($columns);
+            $safeCol = $this->quoteSortColumn($columns);
             $this->orderBy[] = "$safeCol $direction";
         }
 
@@ -119,10 +96,8 @@ trait HasAggregates
      *
      * OrderBy() validates identifier format, but this adds an extra explicit allowlist.
      *
-     * @param string   $column         User-supplied column name
      * @param string   $direction      'ASC' or 'DESC'
      * @param string[] $allowedColumns Explicit allowlist of permitted column names
-     * @return $this
      * @throws \InvalidArgumentException if column is not in the allowlist
      */
     public function orderByAllowed(string $column, string $direction, array $allowedColumns): static
@@ -139,10 +114,7 @@ trait HasAggregates
     /**
      * Order by a user-controlled column after validating it against a positive allowlist.
      *
-     * @param string $column
-     * @param string $direction
      * @param array<string>|null $allowedColumns
-     * @return $this
      */
     public function orderBySafe(string $column, string $direction = 'ASC', ?array $allowedColumns = null): static
     {
@@ -154,7 +126,6 @@ trait HasAggregates
     /**
      * Order by column in descending order (created_at by default).
      *
-     * @param string $column
      * @return $this
      */
     public function latest($column = 'created_at')
@@ -165,7 +136,6 @@ trait HasAggregates
     /**
      * Order by column in ascending order (created_at by default).
      *
-     * @param string $column
      * @return $this
      */
     public function oldest($column = 'created_at')
@@ -176,8 +146,6 @@ trait HasAggregates
     /**
      * Clear existing order by and optionally set new order.
      *
-     * @param string|null $column
-     * @param string $direction
      * @return $this
      */
     public function reorder($column = null, $direction = 'DESC')
@@ -205,8 +173,6 @@ trait HasAggregates
     /**
      * Append a validated raw ORDER BY fragment.
      *
-     * @param string $string
-     * @param mixed $bindParams
      * @return $this
      */
     public function orderByRaw($string, $bindParams = null)
@@ -237,7 +203,6 @@ trait HasAggregates
     /**
      * Shorthand for orderBy($column, 'DESC').
      *
-     * @param string $column
      * @return $this
      */
     public function orderByDesc($column)
@@ -248,7 +213,6 @@ trait HasAggregates
     /**
      * Shorthand for orderBy($column, 'ASC').
      *
-     * @param string $column
      * @return $this
      */
     public function orderByAsc($column)
@@ -256,12 +220,7 @@ trait HasAggregates
         return $this->orderBy($column, 'ASC');
     }
 
-    /**
-     * Define the GROUP BY clause for the query.
-     *
-     * @param array|string $columns
-     * @return $this
-     */
+    /** @return $this */
     public function groupBy($columns)
     {
         if (is_string($columns)) {
@@ -297,8 +256,6 @@ trait HasAggregates
     /**
      * Add a raw GROUP BY clause.
      *
-     * @param string $expression
-     * @param array $bindings
      * @return $this
      */
     public function groupByRaw($expression, array $bindings = [])
@@ -321,9 +278,6 @@ trait HasAggregates
     /**
      * Validate a column or simple SQL expression used in ORDER BY/HAVING clauses.
      * Raw statements are rejected before this helper is called.
-     *
-     * @param string $column
-     * @return string
      */
     protected function _sanitizeColumnName(string $column): string
     {
@@ -337,13 +291,34 @@ trait HasAggregates
     }
 
     /**
-     * Append a parameterized HAVING condition.
+     * Quote a sort column as `column` or `table`.`column`, rejecting anything else.
      *
-     * @param string $column
-     * @param mixed $value
-     * @param string $operator
-     * @return $this
+     * ORDER BY is the one clause where a bare expression reaches the server verbatim,
+     * so a sort column taken from request input is a blind-injection vector — the old
+     * character-class check accepted payloads like
+     * "(SELECT IF(SUBSTRING(pwd,1,1) LIKE 0x61, SLEEP(5), 1) FROM users LIMIT 1)".
+     * Expressions belong in orderByRaw().
      */
+    protected function quoteSortColumn(string $column): string
+    {
+        $pattern = '/^`?([A-Za-z_][A-Za-z0-9_]*)`?(?:\.`?([A-Za-z_][A-Za-z0-9_]*)`?)?$/';
+
+        if (preg_match($pattern, trim($column), $parts) !== 1) {
+            throw new \InvalidArgumentException(
+                "Invalid sort column: {$column}. Expected `column` or `table.column`; "
+                . 'use orderByRaw() for expressions.'
+            );
+        }
+
+        // The pattern above is the security boundary — it admits nothing but a
+        // bare or table-qualified identifier. Quoting is the grammar's, so the
+        // characters change with the engine rather than being fixed to backticks.
+        return isset($parts[2])
+            ? $this->wrapIdentifier($parts[1] . '.' . $parts[2])
+            : $this->wrapIdentifier($parts[1]);
+    }
+
+    /** @return $this */
     public function having($column, $value, $operator = '=')
     {
         if (empty($column)) {
@@ -364,7 +339,6 @@ trait HasAggregates
     /**
      * Append a validated raw HAVING fragment.
      *
-     * @param string $conditions
      * @return $this
      */
     public function havingRaw($conditions)
@@ -381,8 +355,6 @@ trait HasAggregates
     /**
      * Add a HAVING BETWEEN predicate with bound min and max values.
      *
-     * @param string $column
-     * @param array $values
      * @return $this
      */
     public function havingBetween($column, array $values)
@@ -409,8 +381,6 @@ trait HasAggregates
     /**
      * Add a subquery select expression.
      *
-     * @param \Closure|string $query
-     * @param string $alias
      * @return $this
      */
     public function selectSub($query, $alias)
@@ -456,8 +426,6 @@ trait HasAggregates
     /**
      * Append a UNION or UNION ALL query to the current SELECT statement.
      *
-     * @param self|\Closure $query
-     * @param bool $all
      * @return $this
      */
     public function union($query, $all = false)
@@ -487,7 +455,6 @@ trait HasAggregates
     /**
      * Append a UNION ALL query to the current SELECT statement.
      *
-     * @param self|\Closure $query
      * @return $this
      */
     public function unionAll($query)
@@ -498,7 +465,6 @@ trait HasAggregates
     /**
      * Add USE INDEX hint to query for better performance.
      *
-     * @param string|array $indexes
      * @return $this
      */
     public function useIndex($indexes)
@@ -511,7 +477,6 @@ trait HasAggregates
     /**
      * Add FORCE INDEX hint to query — stronger than USE INDEX.
      *
-     * @param string|array $indexes
      * @return $this
      */
     public function forceIndex($indexes)
@@ -521,12 +486,7 @@ trait HasAggregates
         return $this;
     }
 
-    /**
-     * Add IGNORE INDEX hint to query.
-     *
-     * @param string|array $indexes
-     * @return $this
-     */
+    /** @return $this */
     public function ignoreIndex($indexes)
     {
         $indexes = is_array($indexes) ? $indexes : [$indexes];
@@ -537,11 +497,6 @@ trait HasAggregates
     /**
      * Register a to-many eager-loaded relation.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param \Closure|null $callback
      * @return $this
      */
     public function with($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
@@ -561,11 +516,6 @@ trait HasAggregates
     /**
      * Register a to-one eager-loaded relation.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param \Closure|null $callback
      * @return $this
      */
     public function withOne($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
@@ -585,11 +535,6 @@ trait HasAggregates
     /**
      * Add a count subquery to the main query.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param \Closure|null $callback
      * @return $this
      */
     public function withCount($alias, $table, $foreign_key, $local_key, ?\Closure $callback = null)
@@ -600,12 +545,6 @@ trait HasAggregates
     /**
      * Add a sum subquery to the main query.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param string $sum_column
-     * @param \Closure|null $callback
      * @return $this
      */
     public function withSum($alias, $table, $foreign_key, $local_key, $sum_column, ?\Closure $callback = null)
@@ -616,12 +555,6 @@ trait HasAggregates
     /**
      * Add an average subquery to the main query.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param string $avg_column
-     * @param \Closure|null $callback
      * @return $this
      */
     public function withAvg($alias, $table, $foreign_key, $local_key, $avg_column, ?\Closure $callback = null)
@@ -632,12 +565,6 @@ trait HasAggregates
     /**
      * Add a minimum value subquery to the main query.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param string $min_column
-     * @param \Closure|null $callback
      * @return $this
      */
     public function withMin($alias, $table, $foreign_key, $local_key, $min_column, ?\Closure $callback = null)
@@ -648,12 +575,6 @@ trait HasAggregates
     /**
      * Add a maximum value subquery to the main query.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param string $max_column
-     * @param \Closure|null $callback
      * @return $this
      */
     public function withMax($alias, $table, $foreign_key, $local_key, $max_column, ?\Closure $callback = null)
@@ -664,14 +585,6 @@ trait HasAggregates
     /**
      * Register a correlated aggregate subquery on the current select list.
      *
-     * @param string $alias
-     * @param string $table
-     * @param string $foreign_key
-     * @param string $local_key
-     * @param string $aggregate_function
-     * @param string|null $column
-     * @param \Closure|null $callback
-     * @param array $alias_keywords
      * @return $this
      */
     private function withAggregate($alias, $table, $foreign_key, $local_key, $aggregate_function, $column = null, ?\Closure $callback = null, array $alias_keywords = [])

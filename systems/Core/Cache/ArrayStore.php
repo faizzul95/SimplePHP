@@ -50,13 +50,20 @@ class ArrayStore
         return $this->get($key, $this) !== $this;
     }
 
-    public function increment(string $key, int $amount = 1): int
+    /** @param int|null $seconds TTL applied only when this call creates the key. */
+    public function increment(string $key, int $amount = 1, ?int $seconds = null): int
     {
+        $exists = isset($this->storage[$key]);
         $current = (int) $this->get($key, 0);
         $new = $current + $amount;
 
-        $expire = $this->storage[$key]['expire'] ?? 0;
-        $remaining = $expire === 0 ? 0 : max(0, $expire - time());
+        if ($exists) {
+            $expire = $this->storage[$key]['expire'] ?? 0;
+            $remaining = $expire === 0 ? 0 : max(0, $expire - time());
+        } else {
+            $remaining = max(0, (int) $seconds);
+        }
+
         $this->put($key, $new, $remaining);
 
         return $new;

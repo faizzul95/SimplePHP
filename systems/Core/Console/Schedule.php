@@ -113,6 +113,17 @@ class Schedule
                 continue;
             }
 
+            /*
+            | A backgrounded task outlives this process, so releasing its lock in
+            | the finally below would release it the moment the child is
+            | *launched* rather than when it finishes — and withoutOverlapping()
+            | would then permit a second copy on the very next minute, which is
+            | the one thing it exists to prevent. Leaving the lock to expire on
+            | its own is the fail-closed choice, and expiresAt is already the
+            | caller's statement of how long the task may run.
+            */
+            $lockPassedToChild = false;
+
             try {
                 $event->callBeforeCallbacks();
                 $event->startOutputCapture();
@@ -130,6 +141,7 @@ class Schedule
                     }
 
                     if ($event->shouldRunInBackground()) {
+                        $lockPassedToChild = true;
                         $this->runCommandInBackground($commandName);
                     } else {
                         $commands = $kernel->getCommands();
@@ -150,10 +162,13 @@ class Schedule
                     'description' => $event->getDescription(),
                 ];
             } catch (\Throwable $e) {
-                // Ensure output buffer is flushed even on failure
-                if (ob_get_level() > 0) {
-                    $event->flushOutput();
-                }
+                // flushOutput() only touches a buffer this event opened. It used
+                // to be gated on ob_get_level() alone, so a failure before
+                // startOutputCapture() cleaned somebody else's buffer instead.
+                $event->flushOutput();
+
+                // The launch itself failed, so no child is holding the lock.
+                $lockPassedToChild = false;
 
                 $event->callAfterCallbacks(false);
 
@@ -164,7 +179,6 @@ class Schedule
                     'error' => $e->getMessage(),
                 ];
 
-                // Log the error
                 if (function_exists('logger')) {
                     try {
                         logger()->logException($e);
@@ -175,7 +189,9 @@ class Schedule
                     Logger::instance()->logException($e);
                 }
             } finally {
-                $event->releaseLock();
+                if (!$lockPassedToChild) {
+                    $event->releaseLock();
+                }
             }
         }
 
@@ -208,7 +224,8 @@ class Schedule
      */
     private function isInMaintenanceMode(): bool
     {
-        return file_exists(ROOT_DIR . 'storage/framework/down');
+        // Shared with the HTTP layer and the queue worker so all three agree.
+        return \Components\Maintenance::isActive();
     }
 
     /**

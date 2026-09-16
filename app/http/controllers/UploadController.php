@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Core\Http\Controller;
+use Core\Http\Reply;
 use Core\Http\Request;
 use App\Http\Requests\UploadImageCropperRequest;
 
@@ -22,14 +23,14 @@ class UploadController extends Controller
         parent::__construct();
     }
 
-    public function uploadImageCropper(UploadImageCropperRequest $request): void
+    public function uploadImageCropper(UploadImageCropperRequest $request): Reply
     {
         $storedFile = null;
 
         try {
             $entity_id = $request->validated('entity_id');
             if ($entity_id === null || $entity_id === '') {
-                jsonResponse(['code' => 400, 'message' => 'Entity ID is invalid']);
+                return fail('Entity ID is invalid', 400);
             }
 
             $entity_type = $request->validated('entity_type');
@@ -37,7 +38,7 @@ class UploadController extends Controller
             $image = $request->validated('image');
 
             if (!$this->canEditEntity((string) $entity_type, $entity_id)) {
-                jsonResponse(['code' => 403, 'message' => 'You are not allowed to upload to this profile.']);
+                return fail('You are not allowed to upload to this profile.', 403);
             }
 
             $user_id = currentUserID();
@@ -68,11 +69,11 @@ class UploadController extends Controller
                     ->fetch();
 
                 if (empty($dataPrev)) {
-                    jsonResponse(['code' => 404, 'message' => 'Upload target was not found']);
+                    return fail('Upload target was not found', 404);
                 }
 
                 if (!$this->isManagedProfileUploadRecord($dataPrev) || !$this->recordMatchesSubmittedEntity($dataPrev, $entity_id, $entity_type, $entity_file_type)) {
-                    jsonResponse(['code' => 403, 'message' => 'Upload target is not allowed']);
+                    return fail('Upload target is not allowed', 403);
                 }
             }
 
@@ -89,10 +90,7 @@ class UploadController extends Controller
             ]);
 
             if (!$uploadResult['isUpload']) {
-                jsonResponse([
-                    'code' => (int) ($uploadResult['code'] ?? 400),
-                    'message' => (string) ($uploadResult['message'] ?: 'Failed to process uploaded image'),
-                ]);
+                return fail((string) ($uploadResult['message'] ?: 'Failed to process uploaded image'), (int) ($uploadResult['code'] ?? 400));
             }
 
             $stored = $uploadResult['files'];
@@ -132,30 +130,30 @@ class UploadController extends Controller
                     'entity_file_type' => $entity_file_type,
                     'response' => $response,
                 ], \Components\Logger::LOG_LEVEL_ERROR);
-                jsonResponse(['code' => 500, 'message' => 'Database error occurred']);
+                return fail('Database error occurred', 500);
             }
 
             unlinkOldFiles($dataPrev);
-            jsonResponse([
-                'code' => 200,
-                'message' => 'Image uploaded successfully',
-                'data' => $storedFile,
-            ]);
+            return ok('Image uploaded successfully', $storedFile);
+        } catch (\Core\Http\ResponseEmitted $emitted) {
+            // A response is not a failure. Without this the success path below would be
+            // treated as an error, deleting the file it just stored and returning 500.
+            throw $emitted;
         } catch (\Throwable $e) {
             if ($storedFile !== null) {
                 unlinkOldFiles($storedFile);
             }
 
             logger()->logException($e);
-            jsonResponse(['code' => 500, 'message' => 'An unexpected error occurred']);
+            return fail('An unexpected error occurred', 500);
         }
     }
 
-    public function removeUploadFiles(Request $request): void
+    public function removeUploadFiles(Request $request): Reply
     {
         $id = $request->input('id');
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'File ID is required']);
+        if ($id === '') {
+            return fail('File ID is required', 400);
         }
 
         $files = db()->table('entity_files')->select('id, entity_id, entity_type, entity_file_type, files_name, files_path, files_disk_storage, files_path_is_url, files_compression, files_folder')
@@ -163,15 +161,15 @@ class UploadController extends Controller
             ->fetch();
 
         if (empty($files)) {
-            jsonResponse(['code' => 404, 'message' => 'No file data found']);
+            return fail('No file data found', 404);
         }
 
         if (!$this->isManagedProfileUploadRecord($files)) {
-            jsonResponse(['code' => 403, 'message' => 'Upload target is not allowed']);
+            return fail('Upload target is not allowed', 403);
         }
 
         if (!$this->canEditEntity((string) ($files['entity_type'] ?? ''), $files['entity_id'] ?? null)) {
-            jsonResponse(['code' => 403, 'message' => 'You are not allowed to delete this file.']);
+            return fail('You are not allowed to delete this file.', 403);
         }
 
         $result = db()->table('entity_files')->where('id', $id)->delete();
@@ -181,12 +179,12 @@ class UploadController extends Controller
                 'entity_file_id' => $id,
                 'response' => $result,
             ], \Components\Logger::LOG_LEVEL_ERROR);
-            jsonResponse(['code' => 422, 'message' => 'Failed to delete file']);
+            return fail('Failed to delete file');
         }
 
         unlinkOldFiles($files);
 
-        jsonResponse(['code' => 200, 'message' => 'File deleted']);
+        return ok('File deleted');
     }
 
     /**
@@ -195,9 +193,6 @@ class UploadController extends Controller
      * management requires the MANAGE_OTHERS_PERMISSION (Super Administrator
      * satisfies it via the '*' wildcard, Administrator via the seeded
      * 'user-update' grant).
-     *
-     * @param string $entityType
-     * @param mixed  $entityId
      */
     protected function canEditEntity(string $entityType, mixed $entityId): bool
     {
@@ -223,7 +218,7 @@ class UploadController extends Controller
         }
 
         $currentId = $this->currentUserId();
-        if ($currentId === null || $currentId === '') {
+        if ($currentId === '') {
             return false;
         }
 
@@ -232,8 +227,6 @@ class UploadController extends Controller
 
     /**
      * Resolve the current user identifier. Overridable for testing.
-     *
-     * @return int|string|null
      */
     protected function currentUserId(): int|string|null
     {

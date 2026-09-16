@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Middleware\MiddlewareInterface;
 use Core\Http\Request;
 use Core\Security\AuditLogger;
@@ -39,11 +40,6 @@ class BlocklistIp implements MiddlewareInterface
 
     protected function reject(Request $request, int $status, string $message)
     {
-        if (!headers_sent()) {
-            http_response_code($status);
-            header('Content-Length: 0');
-        }
-
-        exit;
+        Abort::status($status);
     }
 }

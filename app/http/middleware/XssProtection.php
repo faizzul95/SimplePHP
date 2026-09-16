@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
 use Core\Http\Middleware\MiddlewareInterface;
 use Middleware\Traits\XssProtectionTrait;
@@ -56,21 +57,20 @@ class XssProtection implements MiddlewareInterface
             return $next($request);
         }
 
-        // Scan all methods (GET included) — detectXss() merges $_GET + $_POST + input stream,
-        // so this closes the reflected-XSS-via-GET gap without any extra calls.
-        if ($this->isXssAttack($this->ignoreFields)) {
-            if ($request->expectsJson()) {
-                \Core\Http\Response::json([
-                    'code'    => 400,
-                    'message' => 'Potentially unsafe content detected',
-                ], 400);
-            }
-
-            http_response_code(400);
-            echo '400 Bad Request - Potentially unsafe content detected';
-            exit;
+        // Detection is a blocklist: it 403s ordinary text such as "C++ template <vector>"
+        // while missing known evasions like "jav&#x09;ascript:". Real protection is Blade's
+        // {{ }} escaping and the CSP nonces, so this logs by default and only blocks when
+        // security.xss_input_blocking is explicitly turned on.
+        if ($this->isXssAttack($this->ignoreFields) && $this->shouldBlock()) {
+            Abort::problem($request, 400, 'Potentially unsafe content detected');
         }
 
         return $next($request);
+    }
+
+    private function shouldBlock(): bool
+    {
+        return function_exists('config')
+            && config('security.xss_input_blocking', false) === true;
     }
 }

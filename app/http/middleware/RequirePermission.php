@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 class RequirePermission implements MiddlewareInterface
@@ -23,11 +23,7 @@ class RequirePermission implements MiddlewareInterface
         // Validate auth using all supported guards (not config-default only)
         // so token/JWT/api_key requests are not rejected when AUTH_METHODS=session.
         if (!auth()->check(self::AUTH_GUARDS)) {
-            if ($request->expectsJson()) {
-                Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
-            }
-
-            Response::redirect(url(REDIRECT_LOGIN));
+            Abort::unauthenticated($request);
         }
 
         if (empty($this->permissions)) {
@@ -38,16 +34,7 @@ class RequirePermission implements MiddlewareInterface
             $hasPermission = auth()->can($permissionSlug);
 
             if (!$hasPermission) {
-                if ($request->expectsJson()) {
-                    Response::json([
-                        'code' => 403,
-                        'message' => 'Forbidden: Missing permission',
-                        'permission' => $permissionSlug,
-                    ], 403);
-                }
-
-                show_403();
-                exit;
+                Abort::denied($request, 'Forbidden: Missing permission', ['permission' => $permissionSlug]);
             }
         }
 

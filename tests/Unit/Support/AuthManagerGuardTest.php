@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Support\Auth\AuthManager;
+use Core\Auth\AuthManager;
 use PHPUnit\Framework\TestCase;
 
 final class AuthManagerProbe extends AuthManager

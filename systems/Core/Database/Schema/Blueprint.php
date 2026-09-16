@@ -16,8 +16,6 @@ namespace Core\Database\Schema;
  *       $table->timestamp('created_at')->nullable()->useCurrent();
  *   });
  *
- * @category  Database
- * @package   Core\Database\Schema
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -543,8 +541,6 @@ class Blueprint
 
     /**
      * Add a primary key.
-     *
-     * @param string|array $columns
      */
     public function primary(string|array $columns, ?string $name = null): self
     {
@@ -558,8 +554,6 @@ class Blueprint
 
     /**
      * Add a unique index.
-     *
-     * @param string|array $columns
      */
     public function unique(string|array $columns, ?string $name = null): self
     {
@@ -573,8 +567,6 @@ class Blueprint
 
     /**
      * Add a regular index.
-     *
-     * @param string|array $columns
      */
     public function index(string|array $columns, ?string $name = null): self
     {
@@ -588,8 +580,6 @@ class Blueprint
 
     /**
      * Add a fulltext index.
-     *
-     * @param string|array $columns
      */
     public function fulltext(string|array $columns, ?string $name = null): self
     {
@@ -603,8 +593,6 @@ class Blueprint
 
     /**
      * Add a spatial index.
-     *
-     * @param string|array $columns
      */
     public function spatialIndex(string|array $columns, ?string $name = null): self
     {
@@ -696,8 +684,6 @@ class Blueprint
 
     /**
      * Drop one or more columns.
-     *
-     * @param string|array $columns
      */
     public function dropColumn(string|array $columns): self
     {

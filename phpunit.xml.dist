@@ -4,5 +4,16 @@
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>
+        <!--
+            End-to-end: drives the real Kernel through the real middleware stack.
+            Catches the composition bugs a unit test cannot see — a middleware that
+            silently stops acting on the response, a status that never reaches the
+            client, an error path that leaks. Only possible because responses no
+            longer call exit().
+        -->
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+            <exclude>tests/Feature/FeatureTestCase.php</exclude>
+        </testsuite>
     </testsuites>
 </phpunit>

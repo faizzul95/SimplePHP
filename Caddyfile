@@ -3,14 +3,28 @@
     order php_server before file_server
 }
 
+# Worker mode is deliberately NOT enabled here.
+#
+# public/index.php only enters its frankenphp_handle_request() loop when
+# MYTH_EXPERIMENTAL_WORKER=1 is set, because per-request state is not yet fully
+# isolated between cycles: Core\Server\WorkerState::flush() resets six classes
+# but leaves the auth, csrf, security and logger service singletons intact, and
+# the session is started once per worker rather than once per request. That can
+# serve one request's authenticated identity to the next caller.
+#
+# See .dev/10-audit-findings.md#w-01 before turning this on. When it is fixed,
+# restore:
+#
+#   php_server {
+#       worker {
+#           file public/index.php
+#           num 4
+#       }
+#   }
+
 localhost {
     root * public/
     encode zstd br gzip
 
-    php_server {
-        worker {
-            file public/index.php
-            num 4
-        }
-    }
+    php_server
 }

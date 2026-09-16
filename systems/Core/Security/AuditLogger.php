@@ -54,14 +54,9 @@ final class AuditLogger
      * Dual-write: structured DB row + append-only flat file.
      * DB write is best-effort — a DB failure never suppresses the file write.
      *
-     * @param string      $eventType   One of the E_* constants
      * @param array       $context     Free-form key-value pairs (never include raw passwords or PII)
      * @param string      $severity    'info' | 'warning' | 'error' | 'critical'
      * @param string|null $resourceType  e.g. 'user', 'order', 'file'
-     * @param int|null    $resourceId
-     * @param int|null    $ownerId
-     * @param bool        $blocked
-     * @param string|null $blockReason
      */
     public static function log(
         string  $eventType,

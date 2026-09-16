@@ -9,12 +9,7 @@ use Core\Database\BaseDatabase;
 /**
  * Database ConnectionInterface Interface
  *
- * @category Database
- * @package Core\Database
- * @author 
  * @license http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @link 
- * @version 0.0.1
  */
 
 interface ConnectionInterface

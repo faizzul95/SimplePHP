@@ -5,12 +5,7 @@ namespace Core\Database\Drivers;
 /**
  * Database MariaDBDriver class
  *
- * @category Database
- * @package Core\Database
- * @author 
  * @license http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @link 
- * @version 0.0.1
  */
 
 use Core\Database\BaseDatabase;
@@ -20,6 +15,11 @@ use Core\Database\DriverRegistry;
 
 class MariaDBDriver extends BaseDatabase
 {
+    // batchInsert() and batchUpdate() were stubs here that returned $this. The
+    // success check treats any object without a `code >= 400` as success, so every
+    // bulk write on a MariaDB connection reported success and wrote nothing.
+    use \Core\Database\Concerns\HasBatchWrites;
+
     public function capabilities(): DriverCapabilities
     {
         return DriverRegistry::capabilities((string) ($this->driver ?: 'mariadb'));
@@ -40,7 +40,7 @@ class MariaDBDriver extends BaseDatabase
             try {
                 // Use ConnectionPool for optimized connection management
                 $this->pdo[$connectionName] = ConnectionPool::getConnection(
-                    $connectionName, 
+                    $connectionName,
                     $this->config[$connectionName]
                 );
             } catch (\Exception $e) {
@@ -107,7 +107,6 @@ class MariaDBDriver extends BaseDatabase
 
     public function whereJsonContains($columnName, $jsonPath, $value)
     {
-        // Validate column name
         $this->validateColumn($columnName);
         $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in whereJsonContains().');
 
@@ -130,12 +129,10 @@ class MariaDBDriver extends BaseDatabase
         // Try to cast the input to an integer
         $limit = filter_var($limit, FILTER_VALIDATE_INT);
 
-        // Check if the input is not an integer after casting
         if ($limit === false) {
             throw new \InvalidArgumentException('Limit must be an integer.');
         }
 
-        // Check if the input is less then 1
         if ($limit < 1) {
             throw new \InvalidArgumentException('Limit must be integer with higher then zero');
         }
@@ -149,12 +146,10 @@ class MariaDBDriver extends BaseDatabase
         // Try to cast the input to an integer
         $offset = filter_var($offset, FILTER_VALIDATE_INT);
 
-        // Check if the input is not an integer after casting
         if ($offset === false) {
             throw new \InvalidArgumentException('Offset must be an integer.');
         }
 
-        // Check if the input is less then 0
         if ($offset < 0) {
             throw new \InvalidArgumentException('Offset must be integer with higher or equal to zero');
         }
@@ -178,7 +173,6 @@ class MariaDBDriver extends BaseDatabase
                 $this->_startProfiler(__FUNCTION__);
             }
 
-            // Check if query is empty then generate it first
             if (empty($this->_query)) {
                 $this->_buildSelectQuery();
             }
@@ -238,7 +232,6 @@ class MariaDBDriver extends BaseDatabase
                 throw new \RuntimeException('Failed to prepare count query');
             }
 
-            // Bind parameters if any
             $bindings = $this->getSelectQueryBindings();
             if (!empty($bindings)) {
                 $this->_bindParams($stmtTotal, $bindings);
@@ -249,7 +242,6 @@ class MariaDBDriver extends BaseDatabase
                 $this->_generateFullQuery($sqlTotal, $bindings);
             }
 
-            // Execute with error handling
             if (!$stmtTotal->execute()) {
                 $errorInfo = $stmtTotal->errorInfo();
                 throw new \RuntimeException('Query execution failed: ' . $errorInfo[2]);
@@ -280,14 +272,12 @@ class MariaDBDriver extends BaseDatabase
 
             $this->logDatabaseError($e, __FUNCTION__, 'Count query failed', $context);
 
-            // Stop profiler on error
             if ($this->enableProfiling && method_exists($this, '_stopProfiler')) {
                 $this->_stopProfiler();
             }
 
             throw new \RuntimeException('Database error in count(): ' . $e->getMessage(), 0, $e);
         } catch (\Exception $e) {
-            // Stop profiler on error
             if ($this->enableProfiling && method_exists($this, '_stopProfiler')) {
                 $this->_stopProfiler();
             }
@@ -307,7 +297,6 @@ class MariaDBDriver extends BaseDatabase
                 $this->_startProfiler(__FUNCTION__);
             }
 
-            // Check if query is empty then generate it first.
             if (empty($this->_query)) {
                 $this->_buildSelectQuery();
             }
@@ -324,7 +313,6 @@ class MariaDBDriver extends BaseDatabase
             $this->connectForOperation('read');
             $stmt = $this->resolvePdo('read')->prepare($existsSql);
 
-            // Bind parameters if any
             $bindings = $this->getSelectQueryBindings();
             if (!empty($bindings)) {
                 $this->_bindParams($stmt, $bindings);
@@ -344,7 +332,6 @@ class MariaDBDriver extends BaseDatabase
 
             return $result !== false;
         } catch (\PDOException $e) {
-            // Log database errors
             $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
@@ -356,22 +343,18 @@ class MariaDBDriver extends BaseDatabase
         $limit = filter_var($limit, FILTER_VALIDATE_INT);
         $offset = filter_var($offset, FILTER_VALIDATE_INT);
 
-        // Check if the input is not an integer after casting
         if ($offset === false) {
             throw new \InvalidArgumentException('Offset must be an integer.');
         }
 
-        // Check if the input is less then 0
         if ($offset < 0) {
             throw new \InvalidArgumentException('Offset must be integer with higher or equal to zero');
         }
 
-        // Check if the input is not an integer after casting
         if ($limit === false) {
             throw new \InvalidArgumentException('Limit must be an integer.');
         }
 
-        // Check if the input is less then 1
         if ($limit < 1) {
             throw new \InvalidArgumentException('Limit must be integer with higher then zero');
         }
@@ -379,19 +362,8 @@ class MariaDBDriver extends BaseDatabase
         return "$query LIMIT $limit OFFSET $offset";
     }
 
-    public function batchInsert($data)
-    {
-        return $this;
-    }
-
-    public function batchUpdate($data)
-    {
-        return $this;
-    }
-
     public function upsert($values, $uniqueBy = 'id', $updateColumns = null, $batchSize = 2000)
     {
-        // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
 
         try {
@@ -420,10 +392,8 @@ class MariaDBDriver extends BaseDatabase
             $totalRecords = count($values);
 
             if ($totalRecords === 0) {
-                // Stop profiler 
                 $this->_stopProfiler();
 
-                // Reset internal properties for next query
                 $this->reset();
 
                 return $this->_returnResult(['code' => 200, 'affected_rows' => 0, 'message' => 'No data to process']);
@@ -472,7 +442,6 @@ class MariaDBDriver extends BaseDatabase
                 foreach ($chunks as $chunk) {
                     $batchCount++;
 
-                    // Sanitize and filter batch data inline
                     $sanitizedBatch = [];
                     foreach ($chunk as $row) {
                         if (!is_array($row) || empty($row)) continue;
@@ -571,10 +540,8 @@ class MariaDBDriver extends BaseDatabase
                 throw $e;
             } finally {
 
-                // Stop profiler 
                 $this->_stopProfiler();
 
-                // Reset internal properties for next query
                 $this->reset();
 
                 // Restore original database settings only if they were changed
@@ -594,10 +561,8 @@ class MariaDBDriver extends BaseDatabase
             return $result;
         } catch (\Exception $e) {
 
-            // Stop profiler 
             $this->_stopProfiler();
 
-            // Reset internal properties for next query
             $this->reset();
 
             $this->logDatabaseError($e, __FUNCTION__);

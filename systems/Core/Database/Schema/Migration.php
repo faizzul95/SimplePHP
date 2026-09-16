@@ -30,8 +30,6 @@ use Core\Database\Interface\ForgeInterface;
  *       }
  *   }
  *
- * @category  Database
- * @package   Core\Database\Schema
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -63,11 +61,7 @@ abstract class Migration implements ForgeInterface
      */
     abstract public function down(): void;
 
-    /**
-     * Create a table schema — delegates to Schema::create().
-     *
-     * @param string|Blueprint $schema Table name or Blueprint instance
-     */
+    /** Create a table schema — delegates to Schema::create(). */
     public function create($schema)
     {
         if ($schema instanceof Blueprint) {
@@ -78,11 +72,7 @@ abstract class Migration implements ForgeInterface
         }
     }
 
-    /**
-     * Alter a table schema — delegates to Schema::table().
-     *
-     * @param string|Blueprint $schema Table name or Blueprint instance
-     */
+    /** Alter a table schema — delegates to Schema::table(). */
     public function alter($schema)
     {
         if ($schema instanceof Blueprint) {

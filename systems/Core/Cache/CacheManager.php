@@ -19,6 +19,9 @@ namespace Core\Cache;
  */
 class CacheManager
 {
+    private const LOCK_SUFFIX = ':__lock';
+    private const POLL_INTERVAL_MICROSECONDS = 25000;
+
     private array $config;
     private string $prefix;
 
@@ -70,20 +73,44 @@ class CacheManager
             $driver = 'file';
         }
 
+        $path = $this->cachePath((string) ($storeConfig['path'] ?? 'storage/cache/app'));
+
         return match ($driver) {
-            'file'  => new FileStore(
-                (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR)
-                . ($storeConfig['path'] ?? 'storage/cache/app')
-            ),
+            'file'  => new FileStore($path),
             'array' => new ArrayStore(),
-            'redis' => extension_loaded('redis')
-                ? new RedisDriver($storeConfig)
-                : new FileStore(
-                    (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR)
-                    . ($storeConfig['path'] ?? 'storage/cache/app')
-                ),
+            'redis' => extension_loaded('redis') ? new RedisDriver($storeConfig) : new FileStore($path),
             default => throw new \InvalidArgumentException("Cache driver [{$driver}] is not supported."),
         };
+    }
+
+    /**
+     * Resolve a configured cache directory.
+     *
+     * An absolute path is a deliberate choice — a tmpfs mount, a shared volume,
+     * a disk that is not the deployment. Prefixing ROOT_DIR onto it built a path
+     * that could never exist, and because every write is @-suppressed the store
+     * then failed silently: every get() a miss, every put() a no-op, and a cache
+     * that looked configured while caching nothing.
+     */
+    private function cachePath(string $path): string
+    {
+        if ($this->isAbsolutePath($path)) {
+            return $path;
+        }
+
+        return (defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR) . $path;
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        if ($path === '') {
+            return false;
+        }
+
+        // POSIX root, UNC share, or a Windows drive letter.
+        return $path[0] === '/'
+            || $path[0] === '\\'
+            || preg_match('#^[A-Za-z]:[\\\\/]#', $path) === 1;
     }
 
     // ─── Proxy Methods (default store) ───────────────────────
@@ -99,8 +126,6 @@ class CacheManager
     /**
      * Store an item in the cache.
      *
-     * @param string $key
-     * @param mixed  $value
      * @param int    $seconds  TTL in seconds (0 = forever)
      */
     public function put(string $key, mixed $value, int $seconds = 0): bool
@@ -119,25 +144,104 @@ class CacheManager
     /**
      * Get an item from the cache, or execute the given Closure and store
      * the result.
+     *
+     * Two things this had to get right and did not:
+     *
+     * A cached null was indistinguishable from a miss, so remember() around a
+     * lookup that legitimately returns null re-ran the callback on every single
+     * request — the one call it was added to avoid. A sentinel separates the two.
+     *
+     * And the callback ran *before* the atomic add(), so when a hot key expired
+     * every concurrent request recomputed it and only the write was deduplicated.
+     * That is a cache stampede, and on an expensive query it is how an expiring
+     * key takes the database down. One caller now takes a short lock and
+     * computes; the others wait briefly for the result instead of repeating the
+     * work, and fall back to computing if the holder is slow or dies — a delay
+     * is acceptable, a hang is not.
      */
     public function remember(string $key, int $seconds, \Closure $callback): mixed
     {
-        // Fast path: key already exists — no callback needed.
-        $cached = $this->get($key);
-        if ($cached !== null) {
+        $sentinel = new \stdClass();
+
+        $cached = $this->get($key, $sentinel);
+        if ($cached !== $sentinel) {
             return $cached;
         }
 
-        // Compute the value, then attempt an atomic add().
-        // add() is a SET NX operation — only the first caller wins.
-        // This eliminates the TOCTOU race where two concurrent requests
-        // both see a cache miss and both execute the expensive callback.
-        // NOTE: if the computed value IS null, we fall back to put() so
-        // that null results can still be cached (unusual but valid).
+        if (!$this->stampedeProtectionEnabled()) {
+            $value = $callback();
+            $this->put($key, $value, $seconds);
+
+            return $value;
+        }
+
+        $lockKey = $key . self::LOCK_SUFFIX;
+
+        if ($this->add($lockKey, 1, $this->lockSeconds())) {
+            try {
+                $value = $callback();
+                $this->put($key, $value, $seconds);
+
+                return $value;
+            } finally {
+                $this->forget($lockKey);
+            }
+        }
+
+        $published = $this->awaitPublishedValue($key, $sentinel);
+        if ($published !== $sentinel) {
+            return $published;
+        }
+
+        // The holder is slower than we are willing to wait, or it died before
+        // publishing. Recomputing duplicates work; not answering fails a request.
         $value = $callback();
-        $this->add($key, $value, $seconds) || $this->put($key, $value, $seconds);
+        $this->put($key, $value, $seconds);
 
         return $value;
+    }
+
+    /**
+     * Poll for the value the lock holder is computing.
+     *
+     * Bounded on purpose: every millisecond here is a request-handling worker
+     * doing nothing, so waiting longer than the work itself would take is a
+     * worse failure than the stampede.
+     */
+    private function awaitPublishedValue(string $key, object $sentinel): mixed
+    {
+        $waitMicroseconds = $this->waitMilliseconds() * 1000;
+        $intervalMicroseconds = self::POLL_INTERVAL_MICROSECONDS;
+        $waited = 0;
+
+        while ($waited < $waitMicroseconds) {
+            usleep($intervalMicroseconds);
+            $waited += $intervalMicroseconds;
+
+            $value = $this->get($key, $sentinel);
+            if ($value !== $sentinel) {
+                return $value;
+            }
+        }
+
+        return $sentinel;
+    }
+
+    private function stampedeProtectionEnabled(): bool
+    {
+        return ($this->config['stampede']['enabled'] ?? true) === true;
+    }
+
+    /** How long a computation may hold the lock before another caller may take over. */
+    private function lockSeconds(): int
+    {
+        return max(1, (int) ($this->config['stampede']['lock_seconds'] ?? 10));
+    }
+
+    /** How long a waiting caller blocks before giving up and computing itself. */
+    private function waitMilliseconds(): int
+    {
+        return max(0, (int) ($this->config['stampede']['wait_ms'] ?? 250));
     }
 
     /**
@@ -178,9 +282,14 @@ class CacheManager
     /**
      * Increment a numeric value.
      */
-    public function increment(string $key, int $amount = 1): int
+    /**
+     * @param int|null $seconds TTL applied only when this call creates the key.
+     *                          Pass it for anything windowed — a counter created
+     *                          without one never expires on any driver.
+     */
+    public function increment(string $key, int $amount = 1, ?int $seconds = null): int
     {
-        return $this->store()->increment($this->prefix . $key, $amount);
+        return $this->store()->increment($this->prefix . $key, $amount, $seconds);
     }
 
     /**
@@ -246,7 +355,6 @@ class CacheManager
      * Store multiple items in the cache.
      *
      * @param array<string, mixed> $values
-     * @param int $seconds
      */
     public function putMany(array $values, int $seconds = 0): bool
     {

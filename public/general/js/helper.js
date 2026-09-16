@@ -1,6 +1,40 @@
 let csrf_token_name = 'csrf_token';
 let csrf_cookie_name = 'csrf_cookie';
 
+/**
+ * Escape a value bound for element content or a quoted HTML attribute.
+ *
+ * Not a sanitiser — it makes a *text* value safe in those two positions, which
+ * is what the template literals in this file need. Markup that is HTML by
+ * design (API responses, caller-supplied content) is not run through it.
+ */
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+	'&': '&amp;',
+	'<': '&lt;',
+	'>': '&gt;',
+	'"': '&quot;',
+	"'": '&#39;',
+}[character]));
+
+/**
+ * Escape a value bound for a JavaScript string literal inside an HTML attribute
+ * — an onclick="fn('here')".
+ *
+ * Two layers apply in that position: the JS string ends at the first quote or
+ * backslash, and the attribute ends at the first matching HTML quote. Both are
+ * neutralised, so a filename with an apostrophe in it stays one argument
+ * instead of becoming code.
+ */
+const escapeJsAttr = (value) => escapeHtml(
+	String(value ?? '').replace(/[\\'"\r\n]/g, (character) => ({
+		'\\': '\\\\',
+		"'": "\\'",
+		'"': '\\"',
+		'\r': '',
+		'\n': '',
+	}[character]))
+);
+
 const getCsrfToken = () => {
 	const secureTokenMeta = document.querySelector('meta[name="secure_token"]');
 	if (secureTokenMeta && typeof secureTokenMeta.content === 'string' && secureTokenMeta.content !== '') {
@@ -574,7 +608,6 @@ const urls = (path) => {
 const redirect = (url) => {
 	const pathUrl = base_url() + url;
 	window.location.replace(pathUrl);
-	// window.location.href = pathUrl;
 }
 
 const refreshPage = () => {
@@ -950,10 +983,8 @@ const hasData = (data = null, arrKey = null, returnData = false, defaultValue = 
 		return returnData ? (defaultValue ?? data) : true;
 	}
 
-	// Replace square brackets with dots in arrKey
 	arrKey = arrKey.replace(/\[/g, '.').replace(/\]/g, '');
 
-	// Split the keys into an array
 	const keys = arrKey.split('.');
 
 	// Helper function to recursively traverse the data
@@ -964,7 +995,6 @@ const hasData = (data = null, arrKey = null, returnData = false, defaultValue = 
 
 		const key = keys.shift();
 
-		// Check if currentData is an object or an array
 		if (currentData && typeof currentData === 'object' && key in currentData) {
 			return traverse(keys, currentData[key]);
 		} else {
@@ -1384,7 +1414,6 @@ const getClock = (format = '24', lang = 'en', showSeconds = true) => {
 		// Get the appropriate day name based on the current day index and language
 		const dayName = dayNames[lang][currentDayIndex];
 
-		// Get hours, minutes, and seconds
 		let hours = currentTime.getHours();
 		const minutes = currentTime.getMinutes();
 		const seconds = currentTime.getSeconds();
@@ -1469,7 +1498,6 @@ const showClock = (id, customize = null) => {
     // Function to update the clock
     const updateClock = () => {
         try {
-            // Get the clock and date strings using existing functions
             const clockStr = getClock(
                 config.timeFormat,
                 config.lang,
@@ -1491,13 +1519,11 @@ const showClock = (id, customize = null) => {
     // Initial update
     updateClock();
 
-    // Set up the interval to update every second
     const timerId = setInterval(updateClock, 1000);
 
     // Store the timer ID on the element for cleanup if needed
     element.dataset.clockTimerId = timerId;
 
-    // Return a cleanup function
     return () => {
         clearInterval(timerId);
         delete element.dataset.clockTimerId;
@@ -1542,7 +1568,6 @@ const date = (formatted = null, timestamp = null) => {
 		// Convert the timestamp to a Date object if it is provided
 		const currentDate = timestamp === null ? new Date() : (timestamp instanceof Date ? timestamp : new Date(timestamp));
 
-		// Get various date components
 		const year = currentDate.getFullYear().toString();
 		const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
 		const day = currentDate.getDate().toString().padStart(2, '0');
@@ -1556,7 +1581,6 @@ const date = (formatted = null, timestamp = null) => {
 		const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 		const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-		// Replace placeholders in the format string
 		return format.replace(/[a-zA-Z]/g, (match) => {
 			switch (match) {
 				case 'd': return day; // Day of the month, two digits with leading zeros (01 to 31)
@@ -1689,12 +1713,10 @@ const calculateDays = (date1, date2, exception = []) => {
 		const date1Obj = typeof date1 === 'string' ? new Date(date1) : date1;
 		const date2Obj = typeof date2 === 'string' ? new Date(date2) : date2;
 
-		// Check if both parameters are valid dates
 		if (!(date1Obj instanceof Date) || isNaN(date1Obj) || !(date2Obj instanceof Date) || isNaN(date2Obj)) {
 			throw new Error("Invalid date input");
 		}
 
-		// Check if the dates are the same
 		if (date1Obj.getTime() === date2Obj.getTime()) {
 			return 0; // Dates are the same, 0 days difference
 		}
@@ -1749,7 +1771,6 @@ const getDatesByDay = (startDate, endDate, dayOfWeek) => {
 		const startDateObj = typeof startDate === 'string' ? new Date(startDate) : startDate;
 		const endDateObj = typeof endDate === 'string' ? new Date(endDate) : endDate;
 
-		// Check if both parameters are valid dates
 		if (!(startDateObj instanceof Date) || isNaN(startDateObj) || !(endDateObj instanceof Date) || isNaN(endDateObj)) {
 			throw new Error("Invalid date input");
 		}
@@ -1804,7 +1825,6 @@ const getDayIndex = (dayOfWeek) => {
  * @returns {string} - The formatted currency value as a string.
  */
 const formatCurrency = (value, code = null, includeSymbol = false) => {
-	// Check if the "Intl" object is available in the browser
 	if (typeof Intl === 'undefined' || typeof Intl.NumberFormat === 'undefined') {
 		return 'Error: The "Intl" object is not available in this browser, which is required for number formatting.';
 	}
@@ -2152,7 +2172,6 @@ const callApi = async (method = 'POST', url, dataObj = null, option = {}, token 
 	let dataSent = null;
 	const lowerMethod = method.toLowerCase();
 
-	// Resolve Bearer token
 	const bearerToken = _resolveToken(token);
 
 	// Append CSRF token for state-changing methods
@@ -2956,7 +2975,7 @@ const previewPDF = (fileLoc, fileMime, divToLoadID, modalId = null) => {
 	const url = base_url() + fileLoc;
 	const view = (fileMime === 'application/pdf') ?
 		`<iframe src="http://docs.google.com/gview?url=${url}"&embedded=true" frameborder="0"></iframe>` :
-		`<object type="${fileMime}" data="${fileLoc}" width="100%" height="${height}"></object>`;
+		`<object type="${escapeHtml(fileMime)}" data="${escapeHtml(fileLoc)}" width="100%" height="${escapeHtml(height)}"></object>`;
 
 	$(`#${divToLoadID}`).empty();
 	$(`#${divToLoadID}`).css('display', 'block');
@@ -3036,7 +3055,6 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 
 	// Enhanced MIME types mapping with categories
 	const mimeTypeCategories = {
-		// Documents
 		documents: {
 			"application/pdf": { viewer: "pdf", icon: "fas fa-file-pdf", color: "#dc3545" },
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": { viewer: "google", icon: "fas fa-file-excel", color: "#198754" },
@@ -3048,7 +3066,6 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 			"text/plain": { viewer: "text", icon: "fas fa-file-alt", color: "#6c757d" },
 			"text/csv": { viewer: "text", icon: "fas fa-file-csv", color: "#198754" },
 		},
-		// Images
 		images: {
 			"image/jpeg": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
 			"image/jpg": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
@@ -3058,14 +3075,12 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 			"image/webp": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
 			"image/svg+xml": { viewer: "image", icon: "fas fa-image", color: "#0dcaf0" },
 		},
-		// Videos
 		videos: {
 			"video/mp4": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
 			"video/webm": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
 			"video/ogg": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
 			"video/avi": { viewer: "video", icon: "fas fa-video", color: "#6f42c1" },
 		},
-		// Audio
 		audios: {
 			"audio/mp3": { viewer: "audio", icon: "fas fa-music", color: "#d63384" },
 			"audio/wav": { viewer: "audio", icon: "fas fa-music", color: "#d63384" },
@@ -3074,7 +3089,6 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 		}
 	};
 
-	// Get all supported MIME types
 	const getAllSupportedTypes = () => {
 		const allTypes = {};
 		Object.values(mimeTypeCategories).forEach(category => {
@@ -3137,8 +3151,8 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 			<div class="alert alert-danger d-flex align-items-center" role="alert">
 				<i class="fas fa-exclamation-triangle me-2"></i>
 				<div>
-					<strong>Preview Error:</strong> ${message}
-					${details ? `<br><small class="text-muted">${details}</small>` : ''}
+					<strong>Preview Error:</strong> ${escapeHtml(message)}
+					${details ? `<br><small class="text-muted">${escapeHtml(details)}</small>` : ''}
 				</div>
 			</div>
 			<div class="text-center mt-3">
@@ -3146,7 +3160,7 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 					<i class="fas fa-refresh me-1"></i> Retry
 				</button>
 				${settings.enableDownload ? `
-					<a href="${url}" class="btn btn-outline-secondary ms-2" download>
+					<a href="${escapeHtml(url)}" class="btn btn-outline-secondary ms-2" download>
 						<i class="fas fa-download me-1"></i> Download
 					</a>
 				` : ''}
@@ -3155,13 +3169,12 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 		$container.html(errorView);
 	};
 
-	// Create action buttons
 	const createActionButtons = (fileType) => {
 		let buttons = '';
 		
 		if (settings.enableDownload) {
 			buttons += `
-				<button class="btn btn-sm btn-outline-primary me-2" onclick="downloadFile('${url}', '${fileLoc.split('/').pop()}')">
+				<button class="btn btn-sm btn-outline-primary me-2" onclick="downloadFile('${escapeJsAttr(url)}', '${escapeJsAttr(fileLoc.split('/').pop())}')">
 					<i class="fas fa-download me-1"></i> Download
 				</button>
 			`;
@@ -3217,7 +3230,7 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 						/>
 						<div class="image-overlay" style="position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: white; padding: 5px 10px; border-radius: 3px; font-size: 0.8em;">
 							<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
-							${fileLoc.split('/').pop()}
+							${escapeHtml(fileLoc.split('/').pop())}
 						</div>
 					</div>
 				`;
@@ -3296,7 +3309,7 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 							<div class="card-body">
 								<h5 class="card-title">
 									<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
-									${fileLoc.split('/').pop()}
+									${escapeHtml(fileLoc.split('/').pop())}
 								</h5>
 								<audio controls style="width: 100%;" preload="metadata">
 									<source src="${url}" type="${fileMime}">
@@ -3317,7 +3330,7 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 					<div class="card">
 						<div class="card-header">
 							<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
-							${fileLoc.split('/').pop()}
+							${escapeHtml(fileLoc.split('/').pop())}
 						</div>
 						<div class="card-body">
 							<pre style="max-height: ${settings.height}; overflow-y: auto; white-space: pre-wrap; font-size: 0.9em;">${textContent}</pre>
@@ -3342,7 +3355,7 @@ const previewFiles = async (fileLoc, fileMime, options = {}) => {
 						></iframe>
 						<div style="position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.9); padding: 5px 10px; border-radius: 3px; font-size: 0.8em;">
 							<i class="${fileInfo.icon}" style="color: ${fileInfo.color}"></i>
-							${fileLoc.split('/').pop()}
+							${escapeHtml(fileLoc.split('/').pop())}
 						</div>
 					</div>
 				`;
@@ -3446,7 +3459,6 @@ const toggleFullscreen = (containerId) => {
 			createCustomFullscreen(containerId);
 		}
 	} else {
-		// Exit fullscreen
 		const exitFullscreen = document.exitFullscreen || 
 			document.webkitExitFullscreen || 
 			document.mozCancelFullScreen || 
@@ -3458,7 +3470,6 @@ const toggleFullscreen = (containerId) => {
 				restoreNormalView(containerId);
 			});
 		} else {
-			// Exit custom fullscreen
 			exitCustomFullscreen(containerId);
 		}
 	}
@@ -3468,7 +3479,6 @@ const toggleFullscreen = (containerId) => {
 const createCustomFullscreen = (containerId) => {
 	const container = document.getElementById(containerId);
 	
-	// Create fullscreen overlay
 	const overlay = document.createElement('div');
 	overlay.id = `fullscreen-overlay-${containerId}`;
 	overlay.className = 'custom-fullscreen-overlay';
@@ -3494,7 +3504,6 @@ const createCustomFullscreen = (containerId) => {
 	// Store original content for restoration
 	container.setAttribute('data-original-content', originalContent);
 	
-	// Append to body
 	document.body.appendChild(overlay);
 	document.getElementById(`fullscreen-content-${containerId}`).appendChild(contentClone);
 	
@@ -3534,11 +3543,9 @@ const exitCustomFullscreen = (containerId) => {
 		// Restore body scrolling
 		document.body.style.overflow = '';
 		
-		// Remove overlay
 		overlay.remove();
 	}
 	
-	// Restore normal view
 	restoreNormalView(containerId);
 };
 
@@ -3588,7 +3595,6 @@ const switchPdfViewer = (containerId, viewerType) => {
 		.removeClass('btn-outline-primary').addClass('btn-primary active');
 };
 
-// Handle iframe load events for better error handling
 const handleIframeLoad = (iframe, containerId) => {
 	// Check if Google Docs viewer shows "No preview available"
 	setTimeout(() => {

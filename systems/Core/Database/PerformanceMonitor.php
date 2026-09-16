@@ -11,8 +11,6 @@ use Core\Database\StatementCache;
  * query execution times, connection usage, memory consumption,
  * and slow query detection.
  * 
- * @category Database
- * @package  Core\Database
  * @author   Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license  http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version  1.0.0
@@ -119,10 +117,6 @@ class PerformanceMonitor
     /**
      * Start monitoring a query
      *
-     * @param string $queryId Unique identifier for the query
-     * @param string $sql SQL query
-     * @param array  $binds Query parameters
-     * @param string $queryType Type of query (select, insert, update, delete)
      * @return void
      */
     public static function startQuery($queryId, $sql, array $binds = [], $queryType = 'select')
@@ -147,7 +141,6 @@ class PerformanceMonitor
     /**
      * End monitoring a query
      *
-     * @param string $queryId Unique identifier for the query
      * @param int    $rowCount Number of rows affected/returned
      * @return void
      */
@@ -189,10 +182,8 @@ class PerformanceMonitor
         // Add to query log
         self::addToLog($entry);
 
-        // Update statistics
         self::updateStats($executionTime, $memoryUsed, $queryType);
 
-        // Check if slow query — use per-type threshold for finer-grained detection
         $threshold = self::$slowThresholdsByType[$queryType] ?? self::$slowQueryThreshold;
         if ($executionTime > $threshold) {
             self::$slowQueries[] = $entry;
@@ -210,7 +201,6 @@ class PerformanceMonitor
     /**
      * Add entry to query log
      *
-     * @param array $entry Log entry
      * @return void
      */
     protected static function addToLog(array $entry)
@@ -227,9 +217,6 @@ class PerformanceMonitor
      * Lightweight N+1 tracking entry-point used when full profiling is OFF.
      * Called from HasProfiling::_startProfiler() before the profiling guard.
      * No-ops when both conditions are already handled elsewhere.
-     *
-     * @param string $sql Raw SQL string
-     * @return void
      */
     public static function trackSql(string $sql): void
     {
@@ -249,7 +236,6 @@ class PerformanceMonitor
      * are a separate concern (batching) and not flagged here.
      *
      * @param string $sql Raw SQL (may contain PDO ? placeholders)
-     * @return void
      */
     protected static function trackQueryFingerprint(string $sql): void
     {
@@ -263,7 +249,6 @@ class PerformanceMonitor
             return;
         }
 
-        // Normalize: collapse whitespace to produce a stable fingerprint
         $normalized = preg_replace('/\s+/', ' ', strtolower(trim($sql))) ?? $sql;
         $key        = md5($normalized);
 
@@ -325,7 +310,6 @@ class PerformanceMonitor
      * Set the repeated-query count that triggers an N+1 warning.
      *
      * @param int $threshold Minimum repeat count before warning is emitted (min 2)
-     * @return void
      */
     public static function setN1WarnThreshold(int $threshold): void
     {
@@ -335,9 +319,6 @@ class PerformanceMonitor
     /**
      * Explicitly enable or disable N+1 fingerprint tracking independent of
      * the main monitoring toggle. Set to true when APP_DEBUG is on.
-     *
-     * @param bool $enabled
-     * @return void
      */
     public static function setN1DetectionEnabled(bool $enabled): void
     {
@@ -347,9 +328,6 @@ class PerformanceMonitor
     /**
      * Update performance statistics
      *
-     * @param float $executionTime Query execution time
-     * @param int   $memoryUsed Memory used
-     * @param string $queryType Type of query
      * @return void
      */
     protected static function updateStats($executionTime, $memoryUsed, $queryType = 'other')
@@ -424,7 +402,6 @@ class PerformanceMonitor
      * tuning behavior across streaming and eager-loading paths.
      *
      * @param array<string, mixed> $decision
-     * @return void
      */
     public static function recordAdaptiveChunkDecision(array $decision): void
     {
@@ -450,7 +427,6 @@ class PerformanceMonitor
     /**
      * Return recorded adaptive chunk-size decisions.
      *
-     * @param int|null $limit
      * @return array<int, array<string, mixed>>
      */
     public static function getAdaptiveChunkDecisions(?int $limit = null): array
@@ -511,12 +487,7 @@ class PerformanceMonitor
         return $stats;
     }
 
-    /**
-     * Get query log
-     *
-     * @param int $limit Number of entries to return
-     * @return array
-     */
+    /** @return array */
     public static function getQueryLog($limit = null)
     {
         if ($limit === null) {
@@ -526,17 +497,11 @@ class PerformanceMonitor
         return array_slice(self::$queryLog, -$limit);
     }
 
-    /**
-     * Get slow queries
-     *
-     * @param int $limit Number of entries to return
-     * @return array
-     */
+    /** @return array */
     public static function getSlowQueries($limit = null)
     {
         $queries = self::$slowQueries;
 
-        // Sort by execution time descending
         usort($queries, function($a, $b) {
             return $b['execution_time'] <=> $a['execution_time'];
         });
@@ -551,8 +516,6 @@ class PerformanceMonitor
     /**
      * Get queries by execution time range
      *
-     * @param float $minTime Minimum execution time
-     * @param float $maxTime Maximum execution time
      * @return array
      */
     public static function getQueriesByTime($minTime, $maxTime = null)
@@ -568,12 +531,7 @@ class PerformanceMonitor
         return array_values($filtered);
     }
 
-    /**
-     * Get most frequent queries
-     *
-     * @param int $limit Number of queries to return
-     * @return array
-     */
+    /** @return array */
     public static function getMostFrequentQueries($limit = 10)
     {
         $frequency = [];
@@ -597,7 +555,6 @@ class PerformanceMonitor
             $item['avg_time'] = $item['total_time'] / $item['count'];
         }
 
-        // Sort by count descending
         usort($frequency, function($a, $b) {
             return $b['count'] <=> $a['count'];
         });
@@ -608,7 +565,6 @@ class PerformanceMonitor
     /**
      * Get the most recent queries.
      *
-     * @param int $limit Number of queries to return
      * @return array
      */
     public static function getRecentQueries($limit = 10)
@@ -623,7 +579,6 @@ class PerformanceMonitor
     /**
      * Get queries with the highest total execution time.
      *
-     * @param int $limit Number of queries to return
      * @return array
      */
     public static function getHeaviestQueries($limit = 10)
@@ -728,8 +683,6 @@ class PerformanceMonitor
      * Useful in Octane/worker mode where query logs are kept across requests
      * for aggregated metrics, but the per-request fingerprint set must be
      * cleared on each new request to avoid false positives.
-     *
-     * @return void
      */
     public static function resetQueryLog(): void
     {
@@ -785,12 +738,7 @@ class PerformanceMonitor
         self::$enabled = false;
     }
 
-    /**
-     * Enable or disable stack trace capture for monitored queries.
-     *
-     * @param bool $enabled
-     * @return void
-     */
+    /** Enable or disable stack trace capture for monitored queries. */
     public static function setCaptureBacktraces($enabled): void
     {
         self::$captureBacktraces = (bool) $enabled;
@@ -798,8 +746,6 @@ class PerformanceMonitor
 
     /**
      * Check whether stack trace capture is enabled.
-     *
-     * @return bool
      */
     public static function isCapturingBacktraces(): bool
     {
@@ -816,12 +762,7 @@ class PerformanceMonitor
         return self::$enabled;
     }
 
-    /**
-     * Export logs to file
-     *
-     * @param string $filePath File path to export to
-     * @return bool Success status
-     */
+    /** @return bool Success status */
     public static function exportLogs($filePath)
     {
         $data = [

@@ -14,17 +14,28 @@ final class ConfigClearCommand
 {
     public function handle(): void
     {
-        $cacheFile = ROOT_DIR . 'storage/cache/config.cache.php';
+        $files = [
+            ROOT_DIR . 'storage/cache/config.php', // legacy name
+            ROOT_DIR . 'storage/cache/config.cache.php',
+            helperCacheFile(),
+        ];
 
-        if (!file_exists($cacheFile)) {
-            echo "Config cache file not found — nothing to clear.\n";
-            return;
+        $cleared = 0;
+
+        foreach ($files as $cacheFile) {
+            if (!file_exists($cacheFile)) {
+                continue;
+            }
+
+            if (!unlink($cacheFile)) {
+                throw new \RuntimeException("Failed to delete config cache: {$cacheFile}");
+            }
+
+            $cleared++;
         }
 
-        if (unlink($cacheFile)) {
-            echo "Config cache cleared.\n";
-        } else {
-            throw new \RuntimeException("Failed to delete config cache: {$cacheFile}");
-        }
+        echo $cleared > 0
+            ? "Config cache cleared ({$cleared} file(s)).\n"
+            : "Config cache file not found — nothing to clear.\n";
     }
 }

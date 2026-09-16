@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Support\Auth\TokenService;
+use Core\Auth\TokenService;
 use Components\Auth;
 use PHPUnit\Framework\TestCase;
 

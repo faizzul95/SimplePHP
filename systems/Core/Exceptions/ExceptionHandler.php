@@ -42,7 +42,6 @@ class ExceptionHandler
      *  3. $e->getCode() when it is a valid HTTP status code (100–599)
      *  4. 500 fallback
      *
-     * @param \Throwable $e
      * @return int HTTP status code
      */
     protected static function resolveStatusCode(\Throwable $e): int
@@ -97,7 +96,7 @@ class ExceptionHandler
         $uri = $_SERVER['REQUEST_URI'] ?? '/';
         $message = $e->getMessage() ?: 'Unknown Error';
         $exceptionClass = get_class($e);
-        $statusCode = self::normalizeStatusCode((int) $e->getCode());
+        $statusCode = \Core\Http\Emitter::normalizeStatus((int) $e->getCode());
         $frames = self::getFrames($e);
         $globals = self::getGlobalsHtml();
         $phpVersion = phpversion();
@@ -1244,12 +1243,4 @@ class ExceptionHandler
         ];
     }
 
-    private static function normalizeStatusCode(int $statusCode): int
-    {
-        if ($statusCode < 100 || $statusCode >= 600) {
-            return 500;
-        }
-
-        return $statusCode;
-    }
 }

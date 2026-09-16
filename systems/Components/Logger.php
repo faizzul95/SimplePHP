@@ -11,8 +11,6 @@ use ZipArchive;
  *
  * Handles logging with file rotation, error handling, and additional utilities.
  *
- * @category  Components
- * @package   CT
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -32,11 +30,7 @@ class Logger
     private const MAX_LOG_SIZE = 50 * 1024 * 1024; // 50MB
     private const DATE_FORMAT = 'Y-m-d H:i:s';
 
-    /**
-     * Constructor - Initializes the logger and sets a default log path if none is provided.
-     *
-     * @param string|null $logPath Path to the log file.
-     */
+    /** Constructor - Initializes the logger and sets a default log path if none is provided. */
     public function __construct($logPath = null)
     {
         $this->logPath = $logPath ?: self::defaultLogPath();
@@ -71,7 +65,6 @@ class Logger
     /**
      * Logs a message to the default log file.
      *
-     * @param string $message Log message.
      * @param string $level Log level (INFO, ERROR, WARNING, DEBUG).
      */
     public function log($message, $level = self::LOG_LEVEL_INFO)
@@ -98,41 +91,25 @@ class Logger
         }
     }
 
-    /**
-     * Logs info message to the default log file.
-     *
-     * @param string $message Log message.
-     */
+    /** Logs info message to the default log file. */
     public function log_info($message)
     {
         $this->log($message);
     }
 
-    /**
-     * Logs debug message to the default log file.
-     *
-     * @param string $message Log message.
-     */
+    /** Logs debug message to the default log file. */
     public function log_debug($message)
     {
         $this->log($message, self::LOG_LEVEL_DEBUG);
     }
 
-    /**
-     * Logs error message to the default log file.
-     *
-     * @param string $message Log message.
-     */
+    /** Logs error message to the default log file. */
     public function log_error($message)
     {
         $this->log($message, self::LOG_LEVEL_ERROR);
     }
 
-    /**
-     * Logs warning message to the default log file.
-     *
-     * @param string $message Log message.
-     */
+    /** Logs warning message to the default log file. */
     public function log_warning($message)
     {
         $this->log($message, self::LOG_LEVEL_WARNING);
@@ -166,31 +143,78 @@ class Logger
             : $this->logWithContext($message, $context, self::LOG_LEVEL_ERROR);
     }
 
-    /**
-     * Logs an exception with its message and stack trace.
-     *
-     * @param Throwable $exception The exception to log.
-     */
+    /** Logs an exception with its message and stack trace. */
     public function logException($exception)
     {
-        $message = sprintf(
-            "Exception: %s in %s on line %d\nStack trace:\n%s",
-            $exception->getMessage(),
-            $exception->getFile(),
-            $exception->getLine(),
-            $exception->getTraceAsString()
-        );
-
-        $this->log($message, self::LOG_LEVEL_ERROR);
+        $this->log($this->describeException($exception), self::LOG_LEVEL_ERROR);
     }
 
     /**
-     * Logs a message with additional context.
+     * A one-line description you can actually read.
      *
-     * @param string $message Log message.
-     * @param array $context Additional context data.
-     * @param string $level Log level.
+     * Records are kept single-line so they stay greppable, which turned a full
+     * getTraceAsString() into a wall of `[NL]` escapes nobody reads. What is
+     * useful is the class, the throw site, the handful of frames leading to it,
+     * and the cause chain — a wrapped PDOException says far more than the
+     * RuntimeException wrapping it.
      */
+    private function describeException(Throwable $exception): string
+    {
+        $parts = [sprintf(
+            '%s: %s at %s:%d',
+            $exception::class,
+            $exception->getMessage(),
+            $this->relativePath($exception->getFile()),
+            $exception->getLine()
+        )];
+
+        $trace = $this->summarizeTrace($exception);
+        if ($trace !== '') {
+            $parts[] = 'trace: ' . $trace;
+        }
+
+        $depth = 0;
+        $previous = $exception->getPrevious();
+        while ($previous !== null && $depth < 3) {
+            $parts[] = sprintf(
+                'caused by %s: %s at %s:%d',
+                $previous::class,
+                $previous->getMessage(),
+                $this->relativePath($previous->getFile()),
+                $previous->getLine()
+            );
+            $previous = $previous->getPrevious();
+            $depth++;
+        }
+
+        return implode(' | ', $parts);
+    }
+
+    private function summarizeTrace(Throwable $exception, int $limit = 6): string
+    {
+        $frames = [];
+        $total = 0;
+
+        foreach ($exception->getTrace() as $frame) {
+            $total++;
+            if (count($frames) >= $limit || empty($frame['file'])) {
+                continue;
+            }
+
+            $frames[] = $this->relativePath((string) $frame['file']) . ':' . (int) ($frame['line'] ?? 0);
+        }
+
+        if ($frames === []) {
+            return '';
+        }
+
+        $summary = implode(' < ', $frames);
+        $hidden = $total - count($frames);
+
+        return $hidden > 0 ? $summary . sprintf(' (+%d more)', $hidden) : $summary;
+    }
+
+    /** Logs a message with additional context. */
     public function logWithContext($message, $context = [], $level = self::LOG_LEVEL_INFO)
     {
         $contextString = json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -315,14 +339,67 @@ class Logger
     /**
      * Formats the log message with a timestamp and log level.
      *
-     * @param string $message The log message.
-     * @param string $level The log level.
      * @return string The formatted log message.
      */
     private function formatLogMessage($message, $level)
     {
         $timestamp = date(self::DATE_FORMAT);
-        return "[{$timestamp}] [{$this->sanitizeLogValue((string) $level)}] {$this->sanitizeLogValue((string) $message)}" . PHP_EOL;
+        $level = $this->sanitizeLogValue((string) $level);
+        $tag = \Core\Support\LogContext::tag();
+        $prefix = "[{$timestamp}] [{$level}]" . ($tag !== '' ? ' ' . $this->sanitizeLogValue($tag) : '');
+
+        // A message tells you what went wrong; the call site tells you where to
+        // look. Only paid for on the levels someone actually investigates.
+        if ($level === self::LOG_LEVEL_ERROR || $level === self::LOG_LEVEL_WARNING) {
+            $origin = $this->callerOrigin();
+            if ($origin !== '') {
+                $prefix .= ' ' . $origin;
+            }
+        }
+
+        return "{$prefix} {$this->sanitizeLogValue((string) $message)}" . PHP_EOL;
+    }
+
+    /**
+     * The first frame outside the logging plumbing — where the log call was
+     * actually made, not where it was written to disk.
+     */
+    private function callerOrigin(): string
+    {
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+
+        foreach ($frames as $frame) {
+            $file = $frame['file'] ?? '';
+            if ($file === '' || $this->isLoggingInternals($file)) {
+                continue;
+            }
+
+            return '(' . $this->relativePath($file) . ':' . (int) ($frame['line'] ?? 0) . ')';
+        }
+
+        return '';
+    }
+
+    private function isLoggingInternals(string $file): bool
+    {
+        $normalized = str_replace('\\', '/', $file);
+
+        foreach (['/systems/Components/Logger.php', '/systems/Core/Support/SafeLog.php', '/systems/hooks.php'] as $internal) {
+            if (str_ends_with($normalized, $internal)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Absolute paths make every line long and every diff machine-specific. */
+    private function relativePath(string $file): string
+    {
+        $file = str_replace('\\', '/', $file);
+        $root = str_replace('\\', '/', defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 2) . '/');
+
+        return str_starts_with($file, $root) ? substr($file, strlen($root)) : $file;
     }
 
     /**

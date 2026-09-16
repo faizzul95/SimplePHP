@@ -39,7 +39,6 @@ assume Laravel-compatible APIs unless confirmed in the relevant reference file.
 |-------|-----------|
 | Auth, Tokens & API (overview) | [03-auth-tokens-api.md](../../../docs/framework_knowledge/03-auth-tokens-api.md) |
 | Auth Component Reference | [15-auth-component-reference.md](../../../docs/framework_knowledge/15-auth-component-reference.md) |
-| API Component Reference | [16-api-component-reference.md](../../../docs/framework_knowledge/16-api-component-reference.md) |
 
 ### Controllers & Validation
 | Topic | Reference |

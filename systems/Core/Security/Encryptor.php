@@ -10,8 +10,8 @@ namespace Core\Security;
  * Provides authenticated encryption with no padding oracle risk.
  * Uses blind-index pattern for searchability without exposing plaintext.
  *
- * Requires: ext-sodium (included in PHP 8.0+ by default).
- * Requires: APP_KEY set in .env (64 hex chars for a 256-bit key, or any string).
+ * Requires ext-sodium and a CPU with AES-NI; probe with isHardwareAccelerated().
+ * Requires APP_KEY in .env, surfaced as config('app.key') by app/config/app.php.
  *
  * Usage:
  *   $enc   = Encryptor::encrypt($email);
@@ -29,6 +29,7 @@ final class Encryptor
      */
     public static function encrypt(string $plaintext): string
     {
+        self::assertSupported();
         $key   = self::deriveKey();
         $nonce = \random_bytes(SODIUM_CRYPTO_AEAD_AES256GCM_NPUBBYTES);
 
@@ -51,6 +52,7 @@ final class Encryptor
      */
     public static function decrypt(string $encoded): string
     {
+        self::assertSupported();
         $key  = self::deriveKey();
         $data = \base64_decode($encoded, strict: true);
 
@@ -88,6 +90,7 @@ final class Encryptor
      */
     public static function blindIndex(string $plaintext, string $context = 'blind_index'): string
     {
+        self::assertSodium();
         $key  = self::deriveKey($context);
         $hash = \sodium_crypto_generichash($plaintext, $key, 32);
         \sodium_memzero($key);
@@ -95,13 +98,38 @@ final class Encryptor
     }
 
     /**
-     * Check whether hardware AES-256-GCM is available (for performance awareness).
-     * If false, consider using XChaCha20-Poly1305 instead (software-fast).
+     * Whether this host can perform AES-256-GCM. False when ext-sodium is missing
+     * or the CPU has no AES-NI, which libsodium requires for this cipher.
      */
     public static function isHardwareAccelerated(): bool
     {
         return \function_exists('sodium_crypto_aead_aes256gcm_is_available')
             && \sodium_crypto_aead_aes256gcm_is_available();
+    }
+
+    /** @throws \RuntimeException when ext-sodium is not loaded */
+    private static function assertSodium(): void
+    {
+        if (!\extension_loaded('sodium')) {
+            throw new \RuntimeException(
+                'Encryptor requires ext-sodium, which is not loaded. '
+                . 'Enable extension=sodium in php.ini, then restart PHP.'
+            );
+        }
+    }
+
+    /** @throws \RuntimeException when the host cannot perform AES-256-GCM */
+    private static function assertSupported(): void
+    {
+        self::assertSodium();
+
+        if (!self::isHardwareAccelerated()) {
+            throw new \RuntimeException(
+                'Encryptor requires AES-256-GCM, which libsodium reports as unavailable on '
+                . 'this CPU (no AES-NI). Switch to sodium_crypto_aead_xchacha20poly1305_ietf_*, '
+                . 'which has no hardware requirement.'
+            );
+        }
     }
 
     /**
@@ -115,7 +143,10 @@ final class Encryptor
         $appKey = config('app.key') ?? null;
 
         if ($appKey === null || $appKey === '') {
-            throw new \RuntimeException('APP_KEY is not set. Run: php myth key:generate');
+            throw new \RuntimeException(
+                'APP_KEY is not set. Run: php myth key:generate '
+                . '(reads config(\'app.key\'), which comes from APP_KEY in .env).'
+            );
         }
 
         $appKey = (string) $appKey;

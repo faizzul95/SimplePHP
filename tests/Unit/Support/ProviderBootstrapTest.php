@@ -84,9 +84,9 @@ final class ProviderBootstrapTest extends TestCase
         self::assertInstanceOf(\Components\Files::class, framework_service('files'));
         self::assertInstanceOf(\Core\Filesystem\StorageManager::class, framework_service('storage'));
         self::assertInstanceOf(\Components\Auth::class, framework_service('auth'));
-        self::assertInstanceOf(\App\Support\Auth\LoginPolicy::class, framework_service('auth.login_policy'));
-        self::assertInstanceOf(\App\Support\Auth\AuthorizationService::class, framework_service('auth.authorization'));
-        self::assertInstanceOf(\App\Support\Auth\TokenService::class, framework_service('auth.tokens'));
+        self::assertInstanceOf(\Core\Auth\LoginPolicy::class, framework_service('auth.login_policy'));
+        self::assertInstanceOf(\Core\Auth\AuthorizationService::class, framework_service('auth.authorization'));
+        self::assertInstanceOf(\Core\Auth\TokenService::class, framework_service('auth.tokens'));
         self::assertInstanceOf(\Components\FeatureManager::class, framework_service('feature'));
         self::assertInstanceOf(\Core\Http\ResponseFactory::class, framework_service('response'));
         self::assertInstanceOf(\Core\Routing\RouteServiceProvider::class, framework_service('route.provider'));

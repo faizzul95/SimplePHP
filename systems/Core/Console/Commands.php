@@ -33,6 +33,63 @@ class Commands
 
     private static function cacheCommands(Kernel $console): void
     {
+        $console->command('deploy', function (array $args = [], array $options = []) use ($console) {
+            // Clear then rebuild, so the first request after a deploy does not pay for
+            // the config glob, the route index build and a compile of every view.
+            $dryRun = isset($options['dry']);
+
+            $steps = [
+                ['view:clear',   'Prune stale compiled views'],
+                ['config:clear', 'Drop the old config cache'],
+                ['route:clear',  'Drop the old route cache'],
+            ];
+
+            // Opt-in: a deploy step that silently alters the schema is a bad default.
+            if (isset($options['fresh'])) {
+                $steps[] = ['migrate', 'Apply pending migrations'];
+            }
+
+            $steps[] = ['config:cache', 'Compile config'];
+            $steps[] = ['route:cache',  'Compile routes'];
+            $steps[] = ['view:cache',   'Precompile views'];
+
+            $console->newLine();
+            $console->info($dryRun ? '  Deploy plan (dry run)' : '  Warming caches');
+            $console->newLine();
+
+            $failed = 0;
+
+            foreach ($steps as [$command, $label]) {
+                if ($dryRun) {
+                    $console->line("  would run: php myth {$command}");
+                    continue;
+                }
+
+                $exit = $console->has($command) ? $console->callSilently($command) : 1;
+                $console->task($label, $exit === 0, $exit === 0 ? '' : "exit {$exit}");
+                $failed += $exit === 0 ? 0 : 1;
+            }
+
+            $console->newLine();
+
+            if ($dryRun) {
+                $console->comment('  Dry run — nothing was changed.');
+                $console->newLine();
+                return 0;
+            }
+
+            if ($failed > 0) {
+                $console->error("  {$failed} step(s) failed. The app may be serving a stale cache.");
+                $console->newLine();
+                return 1;
+            }
+
+            $console->success('  Deploy caches warmed.');
+            $console->newLine();
+
+            return 0;
+        }, 'Warm config, route and view caches for production [--fresh] [--dry]');
+
         $console->command('cache:clear', function (array $args = [], array $options = []) use ($console) {
             $dirs = [
                 'views'      => ROOT_DIR . 'storage/cache/views',
@@ -114,24 +171,12 @@ class Commands
         }, 'Compile all config files into storage/cache/config.cache.php');
 
         $console->command('config:clear', function () use ($console) {
-            // Remove both the legacy name and the current cache file name
-            $files = [
-                ROOT_DIR . 'storage/cache/config.php',
-                ROOT_DIR . 'storage/cache/config.cache.php',
-            ];
-            $cleared = false;
-            foreach ($files as $cacheFile) {
-                if (file_exists($cacheFile)) {
-                    @unlink($cacheFile);
-                    $cleared = true;
-                }
+            try {
+                (new \Core\Console\Commands\ConfigClearCommand())->handle();
+            } catch (\Throwable $e) {
+                $console->error('  ' . $e->getMessage());
             }
-            if ($cleared) {
-                $console->success('  Configuration cache cleared.');
-            } else {
-                $console->info('  Configuration cache file not found. Nothing to clear.');
-            }
-        }, 'Remove the configuration cache file');
+        }, 'Remove the configuration and helper cache files');
     }
 
     // ─── Route Commands ──────────────────────────────────────
@@ -216,13 +261,19 @@ class Commands
             $console->newLine();
         }, 'Display all registered routes [--method=GET] [--name=] [--path=]');
 
-        $console->command('route:cache', function () use ($console) {
+        $console->command('route:cache', function (array $args = [], array $options = []) use ($console) {
             try {
-                (new \Core\Console\Commands\RouteCacheCommand())->handle();
+                // The exit code is returned, not swallowed: a closure route that
+                // silently drops out of the cache 404s in production while still
+                // working in development, so a deploy pipeline has to be able to
+                // fail on it.
+                return (new \Core\Console\Commands\RouteCacheCommand())->handle($options);
             } catch (\Throwable $e) {
                 $console->error('  ' . $e->getMessage());
+
+                return 1;
             }
-        }, 'Compile all routes into storage/cache/routes.cache.php');
+        }, 'Compile all routes into storage/cache/routes.cache.php [--allow-closures]');
 
         $console->command('route:clear', function () use ($console) {
             try {
@@ -1194,7 +1245,6 @@ PHP;
 
             $console->newLine();
 
-            // Migrations
             $console->info("  Migrations");
             $console->line('  ' . str_repeat('─', 56));
 
@@ -1215,7 +1265,6 @@ PHP;
 
             $console->newLine();
 
-            // Seeders
             $console->info("  Seeders");
             $console->line('  ' . str_repeat('─', 56));
 
@@ -1485,17 +1534,125 @@ PHP;
 
     // ─── Key Generation ──────────────────────────────────────
 
+    /**
+     * Write or replace one KEY=value pair in a .env file, preserving comments,
+     * ordering and line endings. Writes to a temp file and renames, so an
+     * interrupted write cannot truncate the .env.
+     *
+     * @param string $value Quoted automatically when it contains whitespace or quotes
+     */
+    public static function writeEnvValue(string $key, string $value, string $envFile): bool
+    {
+        if ($key === '' || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $key) !== 1) {
+            return false;
+        }
+
+        if (!is_file($envFile) || !is_readable($envFile) || !is_writable($envFile)) {
+            return false;
+        }
+
+        $contents = @file_get_contents($envFile);
+        if ($contents === false) {
+            return false;
+        }
+
+        // Quote only when the value would be ambiguous to a .env parser.
+        $needsQuotes = $value === '' || preg_match('/[\s"\'#=]/', $value) === 1;
+        $encoded = $needsQuotes
+            ? '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $value) . '"'
+            : $value;
+
+        $eol = str_contains($contents, "\r\n") ? "\r\n" : "\n";
+        $line = $key . '=' . $encoded;
+
+        // Anchor to line start and require the '=' so APP_KEY never matches APP_KEYSTORE.
+        // [^\r\n]* rather than .* — with /m a greedy .* swallows the CR of a CRLF line
+        // and the replacement then silently converts that one line to LF.
+        $pattern = '/^(?![ \t]*#)[ \t]*' . preg_quote($key, '/') . '[ \t]*=[^\r\n]*/m';
+
+        if (preg_match($pattern, $contents) === 1) {
+            // Callback form: the replacement is taken verbatim, so neither "$" nor a
+            // backslash in the value is reinterpreted as a backreference or an escape.
+            $updated = preg_replace_callback($pattern, static fn(): string => $line, $contents, 1);
+            if (!is_string($updated)) {
+                return false;
+            }
+        } else {
+            $updated = rtrim($contents, "\r\n") . $eol . $line . $eol;
+        }
+
+        $tmp = $envFile . '.' . bin2hex(random_bytes(4)) . '.tmp';
+        if (@file_put_contents($tmp, $updated, LOCK_EX) === false) {
+            @unlink($tmp);
+            return false;
+        }
+
+        // Keep a 0600 .env at 0600.
+        $mode = @fileperms($envFile);
+        if ($mode !== false) {
+            @chmod($tmp, $mode & 0777);
+        }
+
+        if (!@rename($tmp, $envFile)) {
+            @unlink($tmp);
+            return false;
+        }
+
+        if (function_exists('setEnvValue')) {
+            setEnvValue($key, $value);
+        }
+
+        return true;
+    }
+
     private static function keyCommand(Kernel $console): void
     {
-        $console->command('key:generate', function () use ($console) {
-            $key = 'base64:' . base64_encode(random_bytes(32));
+        $console->command('key:generate', function (array $args = [], array $options = []) use ($console) {
+            // 64 hex characters = a raw 256-bit key, which Encryptor uses directly
+            // without stretching. Any other string is SHA-256'd first.
+            $key = bin2hex(random_bytes(32));
+            $envFile = ROOT_DIR . '.env';
+            $force = isset($options['force']);
+
             $console->newLine();
-            $console->success("  Application key generated:");
-            $console->line("  {$key}");
+
+            if (isset($options['show'])) {
+                $console->success('  Application key generated:');
+                $console->line("  {$key}");
+                $console->newLine();
+                $console->comment('  Set it as APP_KEY in your .env file.');
+                $console->newLine();
+                return;
+            }
+
+            if (!is_file($envFile)) {
+                $console->error('  No .env file found at ' . $envFile);
+                $console->comment('  Copy .env.example to .env first, or run: php myth key:generate --show');
+                $console->newLine();
+                return;
+            }
+
+            $existing = (string) env('APP_KEY', '');
+            if ($existing !== '' && !$force) {
+                $console->warn('  APP_KEY is already set. Overwriting it makes every encrypted');
+                $console->warn('  column and every outstanding signed URL unreadable.');
+                $console->line('  Re-run with --force if that is what you intend.');
+                $console->newLine();
+                return;
+            }
+
+            if (!self::writeEnvValue('APP_KEY', $key, $envFile)) {
+                $console->error('  Failed to write APP_KEY to ' . $envFile);
+                $console->comment('  Set it by hand, or run: php myth key:generate --show');
+                $console->newLine();
+                return;
+            }
+
+            $console->success('  Application key set in .env');
             $console->newLine();
-            $console->comment("  Add this to your config/config.php as 'app_key'.");
+            $console->comment('  Run "php myth config:clear" if the config cache is warm.');
             $console->newLine();
-        }, 'Generate a new application key');
+        }, 'Generate the application key and write it to .env [--show] [--force]');
     }
 
     // ─── Maintenance Commands ────────────────────────────────
@@ -2445,5 +2602,44 @@ PHP;
             $count = $worker->clear($queue);
             $console->success("  Cleared {$count} job(s) from [{$queue}] queue.");
         }, 'Clear all jobs from a queue [queue_name]');
+
+        $console->command('queue:restart', function (array $args = [], array $options = []) use ($console) {
+            if (!empty($options['clear'])) {
+                \Core\Queue\RestartSignal::clear();
+                $console->success('  Restart signal cleared.');
+                return 0;
+            }
+
+            $timestamp = \Core\Queue\RestartSignal::request();
+
+            if ($timestamp === 0) {
+                $console->error('  No cache store is available, so the signal could not be published.');
+                $console->line('  Workers read the signal from the shared cache; configure CACHE_DRIVER first.');
+                return 1;
+            }
+
+            $console->success('  Restart requested at ' . date('Y-m-d H:i:s', $timestamp) . '.');
+            $console->line('  Workers finish the job in hand, then exit. Your supervisor restarts them on the new code.');
+            $console->line('  Nothing happens without a supervisor (systemd, supervisord, Docker restart policy).');
+
+            return 0;
+        }, 'Ask running queue workers to exit gracefully after their current job [--clear]');
+
+        $console->command('queue:supervise', function (array $args = [], array $options = []) use ($console) {
+            $queue = $args[0] ?? 'default';
+            $workers = max(1, (int) ($options['workers'] ?? 4));
+
+            $supervisor = new \Core\Queue\Supervisor();
+
+            $console->info("  Supervising {$workers} worker(s) on the [{$queue}] queue. Ctrl-C to stop.");
+
+            return $supervisor->run($queue, $workers, $options, function (string $level, string $message) use ($console): void {
+                match ($level) {
+                    'error' => $console->error('  ' . $message),
+                    'warn' => $console->warn('  ' . $message),
+                    default => $console->line('  ' . $message),
+                };
+            });
+        }, 'Run N queue workers in parallel and restart any that die [queue] [--workers=4]');
     }
 }

@@ -11,8 +11,6 @@ use Core\Database\Schema\ForeignKeyDefinition;
  *
  * Supports MySQL 5.7+ and MariaDB 10.2+.
  *
- * @category  Database
- * @package   Core\Database\Schema\Grammars
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -68,7 +66,6 @@ class MySQLGrammar extends SchemaGrammar
             );
         }
 
-        // Build column definitions
         $columnsSql = [];
         $inlineConstraints = [];
 
@@ -557,7 +554,6 @@ class MySQLGrammar extends SchemaGrammar
     {
         $sql = $this->wrap($column->name) . ' ' . $this->getColumnType($column);
 
-        // UNSIGNED
         if ($column->isUnsigned && $this->isNumericType($column->type)) {
             $sql .= ' UNSIGNED';
         }
@@ -583,7 +579,6 @@ class MySQLGrammar extends SchemaGrammar
                 $sql .= ' NOT NULL';
             }
 
-            // AUTO_INCREMENT
             if ($column->isAutoIncrement) {
                 $sql .= ' AUTO_INCREMENT PRIMARY KEY';
             }
@@ -601,7 +596,6 @@ class MySQLGrammar extends SchemaGrammar
             }
         }
 
-        // COMMENT
         if ($column->comment !== null) {
             $sql .= " COMMENT '" . str_replace(["'", "\\"], ["''", "\\\\"], $column->comment) . "'";
         }

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Support\Auth\TokenService;
+use Core\Auth\TokenService;
 use PHPUnit\Framework\TestCase;
 
 final class InspectableTokenService extends TokenService
@@ -155,7 +155,10 @@ final class TokenServiceTest extends TestCase
         );
 
         self::assertSame('91|plain-token-value', $plainToken);
-        self::assertCount(1, $service->queries);
+        // No CREATE TABLE IF NOT EXISTS: the table comes from migration
+        // 20260308_005, so running DDL on every login is a redundant round-trip
+        // and a metadata lock. Opt back in with auth.token.auto_migrate.
+        self::assertCount(0, $service->queries);
         self::assertCount(1, $service->inserted);
         self::assertSame(hash('sha256', 'plain-token-value'), $service->inserted[0]['payload']['token']);
         self::assertSame('["reports.read"]', $service->inserted[0]['payload']['abilities']);
@@ -457,5 +460,156 @@ final class TokenServiceTest extends TestCase
         self::assertSame(88, $service->inserted[0]['payload']['user_id']);
         self::assertSame('Mobile', $service->inserted[0]['payload']['name']);
         self::assertSame('["exports.read"]', $service->inserted[0]['payload']['abilities']);
+    }
+
+    /**
+     * @param array<string,mixed> $extraConfig
+     * @param array<string,mixed> $tokenRecordOverrides
+     */
+    private function resolvingService(array $extraConfig = [], array $tokenRecordOverrides = []): InspectableTokenService
+    {
+        $service = new InspectableTokenService(array_replace_recursive([
+            'token_table' => 'users_access_tokens',
+            'users_table' => 'users',
+            'token_columns' => [
+                'id' => 'id',
+                'user_id' => 'user_id',
+                'name' => 'name',
+                'token' => 'token',
+                'abilities' => 'abilities',
+                'expires_at' => 'expires_at',
+                'last_used_at' => 'last_used_at',
+                'updated_at' => 'updated_at',
+            ],
+            'user_columns' => [
+                'id' => 'id',
+                'name' => 'name',
+                'preferred_name' => 'preferred_name',
+                'email' => 'email',
+                'username' => 'username',
+                'status' => 'user_status',
+            ],
+        ], $extraConfig));
+
+        $service->tokenRecord = array_replace([
+            'id' => 9,
+            'user_id' => 88,
+            'name' => 'Mobile',
+            'abilities' => '["exports.read"]',
+            'expires_at' => null,
+            'last_used_at' => null,
+        ], $tokenRecordOverrides);
+
+        $service->userRecord = [
+            'id' => 88,
+            'name' => 'Alya',
+            'preferred_name' => 'Alya',
+            'email' => 'alya@example.com',
+            'username' => 'alya',
+            'user_status' => 1,
+        ];
+
+        return $service;
+    }
+
+    private function resolve(InspectableTokenService $service): ?array
+    {
+        return $service->tokenUser(
+            fn(): ?string => '9|bearer-token',
+            fn(string $column, string $fallback = 'id'): string => $column !== '' ? $column : $fallback,
+            fn(string $table): string => $table,
+            fn(mixed $value): bool => true,
+            fn(array $row): bool => ((int) ($row['user_status'] ?? 0)) === 1
+        );
+    }
+
+    /**
+     * Writing last_used_at on every authenticated request turns a read-only GET
+     * into a write, taking a row lock and pinning the request to the primary
+     * through sticky read/write routing.
+     */
+    public function testRecentlyUsedTokenIsNotRewritten(): void
+    {
+        $service = $this->resolvingService(
+            ['token' => ['last_used_precision' => 60]],
+            ['last_used_at' => date('Y-m-d H:i:s', time() - 5)]
+        );
+
+        self::assertNotNull($this->resolve($service));
+        self::assertSame([], $service->touched);
+    }
+
+    public function testStaleTokenIsRewritten(): void
+    {
+        $service = $this->resolvingService(
+            ['token' => ['last_used_precision' => 60]],
+            ['last_used_at' => date('Y-m-d H:i:s', time() - 3600)]
+        );
+
+        self::assertNotNull($this->resolve($service));
+        self::assertCount(1, $service->touched);
+    }
+
+    public function testNeverUsedTokenIsRewritten(): void
+    {
+        $service = $this->resolvingService(['token' => ['last_used_precision' => 60]]);
+
+        self::assertNotNull($this->resolve($service));
+        self::assertCount(1, $service->touched);
+    }
+
+    public function testZeroPrecisionRestoresWriteOnEveryRequest(): void
+    {
+        $service = $this->resolvingService(
+            ['token' => ['last_used_precision' => 0]],
+            ['last_used_at' => date('Y-m-d H:i:s')]
+        );
+
+        self::assertNotNull($this->resolve($service));
+        self::assertCount(1, $service->touched);
+    }
+
+    /** A future timestamp (clock skew) must not pin the column forever. */
+    public function testFutureLastUsedAtIsTreatedAsStale(): void
+    {
+        $service = $this->resolvingService(
+            ['token' => ['last_used_precision' => 60]],
+            ['last_used_at' => date('Y-m-d H:i:s', time() + 86400)]
+        );
+
+        self::assertNotNull($this->resolve($service));
+        self::assertCount(1, $service->touched);
+    }
+
+    public function testAutoMigrateRunsDdlWhenExplicitlyEnabled(): void
+    {
+        $service = new InspectableTokenService([
+            'token_table' => 'users_access_tokens',
+            'token' => ['auto_migrate' => true],
+            'token_columns' => [
+                'id' => 'id',
+                'user_id' => 'user_id',
+                'name' => 'name',
+                'token' => 'token',
+                'abilities' => 'abilities',
+                'expires_at' => 'expires_at',
+                'last_used_at' => 'last_used_at',
+                'created_at' => 'created_at',
+                'updated_at' => 'updated_at',
+            ],
+        ]);
+        $service->insertResult = ['code' => 200, 'id' => 5];
+
+        $service->createToken(
+            1,
+            'CLI',
+            null,
+            ['*'],
+            fn(string $column, string $fallback = 'id'): string => $column !== '' ? $column : $fallback,
+            fn(string $table): string => $table
+        );
+
+        self::assertCount(1, $service->queries);
+        self::assertStringContainsString('CREATE TABLE IF NOT EXISTS', $service->queries[0]);
     }
 }

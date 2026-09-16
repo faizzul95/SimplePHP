@@ -2,8 +2,10 @@
 
 namespace Core\Http;
 
-class HtmlResponse
+class HtmlResponse implements Responsable
 {
+    use HeaderSanitizer;
+
     public function __construct(
         private string $content,
         private int $status = 200,
@@ -26,38 +28,20 @@ class HtmlResponse
         return $this->sanitizeHeaders($this->headers);
     }
 
-    public function send(): never
+    public function emitBody(): void
     {
-        if (!headers_sent()) {
-            http_response_code($this->status);
-
-            foreach ($this->headers() as $name => $value) {
-                header($name . ': ' . (string) $value, true);
-            }
-        }
-
         echo $this->content;
-        exit;
     }
 
-    private function sanitizeHeaders(array $headers): array
+    /**
+     * Hand the response to the Kernel.
+     *
+     * Throws rather than exits: `never` still holds, every call site keeps working,
+     * and middleware post-$next() code now runs on the way out.
+     *
+     */
+    public function send(): never
     {
-        $sanitized = [];
-
-        foreach ($headers as $name => $value) {
-            if (!is_string($name) || !is_scalar($value)) {
-                continue;
-            }
-
-            $headerName = str_replace(["\r", "\n", "\0"], '', $name);
-            $headerValue = str_replace(["\r", "\n", "\0"], '', (string) $value);
-            if ($headerName === '') {
-                continue;
-            }
-
-            $sanitized[$headerName] = $headerValue;
-        }
-
-        return $sanitized;
+        throw new ResponseEmitted($this);
     }
 }

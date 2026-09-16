@@ -395,7 +395,6 @@ abstract class Model implements JsonSerializable
     /**
      * Find a row by primary key or throw RuntimeException.
      *
-     * @return static
      * @throws RuntimeException
      */
     public static function findOrFail(mixed $id, array|string $columns = ['*']): static
@@ -411,8 +410,6 @@ abstract class Model implements JsonSerializable
 
     /**
      * Create and persist a new model instance (respects $fillable/$guarded).
-     *
-     * @return static
      */
     public static function create(array $attributes): static
     {
@@ -423,8 +420,6 @@ abstract class Model implements JsonSerializable
 
     /**
      * Create and persist a new model, bypassing $fillable/$guarded.
-     *
-     * @return static
      */
     public static function forceCreate(array $attributes): static
     {
@@ -616,8 +611,6 @@ abstract class Model implements JsonSerializable
 
     /**
      * Find the first row matching $conditions, or create it.
-     *
-     * @return static
      */
     public static function firstOrCreate(array $conditions, array $extra = []): static
     {
@@ -634,8 +627,6 @@ abstract class Model implements JsonSerializable
 
     /**
      * Find the first row matching $conditions, or return a new (unsaved) instance.
-     *
-     * @return static
      */
     public static function firstOrNew(array $conditions, array $extra = []): static
     {
@@ -652,8 +643,6 @@ abstract class Model implements JsonSerializable
 
     /**
      * Update an existing row matched by $conditions, or create it.
-     *
-     * @return static
      */
     public static function updateOrCreateRecord(array $conditions, array $data = []): static
     {

@@ -36,6 +36,7 @@ $config['db'] = [
         'default_limit' => (int) env('DB_PAGINATION_DEFAULT_LIMIT', 10),
         'max_limit' => (int) env('DB_PAGINATION_MAX_LIMIT', 500),
     ],
+
     'default' => [
         'development' => [
             'driver'   => (string) env('DB_CONNECTION', 'mysql'),
@@ -45,6 +46,10 @@ $config['db'] = [
             'database' => (string) env('DB_DATABASE', 'example_db'),
             'port'     => (string) env('DB_PORT', '3306'),
             'charset'  => (string) env('DB_CHARSET', 'utf8mb4'),
+            // Persistent PDO sockets are OFF by default: pdo_mysql does not reset session
+            // state on reuse, so an aborted request can hand its open transaction and locks
+            // to the next one. Set DB_PERSISTENT=true only after measuring the benefit.
+            'persistent' => (bool) env('DB_PERSISTENT', false),
             'write' => [
                 'host' => (string) env('DB_HOST', 'localhost'),
                 'username' => (string) env('DB_USERNAME', 'root'),

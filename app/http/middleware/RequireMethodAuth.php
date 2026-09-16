@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 abstract class RequireMethodAuth implements MiddlewareInterface
@@ -33,12 +33,13 @@ abstract class RequireMethodAuth implements MiddlewareInterface
                 header('WWW-Authenticate: ' . auth()->digestChallengeHeader());
             }
 
-            if ($request->expectsJson() || !$this->redirectOnFailure) {
-                Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
-            }
-
-            Response::redirect(url(REDIRECT_LOGIN));
+            Abort::unauthenticated($request, forceJson: !$this->redirectOnFailure);
         }
+
+        // Who the failing request belonged to is the second thing you want after
+        // the request id, and it is only knowable once auth has resolved.
+        $methods = $this->methods;
+        \Core\Support\LogContext::putSafely('user_id', static fn() => auth()->id($methods));
 
         return $next($request);
     }

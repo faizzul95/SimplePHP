@@ -84,7 +84,15 @@ class ApcuStore
      * retries apcu_inc() which now succeeds. This eliminates the classic
      * check-then-act (TOCTOU) race of apcu_exists() + apcu_store().
      */
-    public function increment(string $key, int $amount = 1): int
+    /**
+     * @param int|null $seconds TTL applied only when this call creates the key.
+     *                          It used to create with TTL 0 — never expires — so
+     *                          a counter brought into existence this way lived
+     *                          until the process restarted, and a rate-limit
+     *                          counter created that way pinned the caller at the
+     *                          limit for the lifetime of the worker.
+     */
+    public function increment(string $key, int $amount = 1, ?int $seconds = null): int
     {
         $fullKey = $this->prefix . $key;
 
@@ -95,7 +103,7 @@ class ApcuStore
         }
 
         // Slow path: key does not exist — atomically create with apcu_add (NX).
-        if (call_user_func('apcu_add', $fullKey, $amount, 0)) {
+        if (call_user_func('apcu_add', $fullKey, $amount, max(0, (int) $seconds))) {
             return $amount;
         }
 

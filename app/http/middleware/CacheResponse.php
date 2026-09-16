@@ -61,8 +61,10 @@ class CacheResponse implements MiddlewareInterface
         $cached = $cache->get($request, $options);
 
         if (is_array($cached)) {
-            $this->sendCachedPayload($request, $cached);
-            return null;
+            // Returned rather than echoed: a cache hit is an ordinary response and
+            // must travel out through the same emission point as everything else,
+            // so compression, timing headers and HEAD handling still apply.
+            return $this->cachedResponse($cached);
         }
 
         $stored = false;
@@ -193,32 +195,38 @@ class CacheResponse implements MiddlewareInterface
         ];
     }
 
-    /** @param array<string, mixed> $payload */
-    private function sendCachedPayload(Request $request, array $payload): void
+    /**
+     * Rebuild a stored payload as a response object.
+     *
+     * @param  array<string, mixed> $payload
+     */
+    private function cachedResponse(array $payload): HtmlResponse
     {
-        if (!headers_sent()) {
-            http_response_code((int) ($payload['status'] ?? 200));
+        $headers = [];
 
-            foreach ((array) ($payload['headers'] ?? []) as $header) {
-                if (!is_array($header)) {
-                    continue;
-                }
-
-                $name = trim((string) ($header['name'] ?? ''));
-                $value = trim((string) ($header['value'] ?? ''));
-                if ($name === '') {
-                    continue;
-                }
-
-                header($name . ': ' . $value, false);
+        foreach ((array) ($payload['headers'] ?? []) as $header) {
+            if (!is_array($header)) {
+                continue;
             }
 
-            header('X-Response-Cache: HIT', false);
+            $name = trim((string) ($header['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            $headers[$name] = trim((string) ($header['value'] ?? ''));
         }
 
-        if ($request->method() !== 'HEAD') {
-            echo (string) ($payload['body'] ?? '');
-        }
+        $headers['X-Response-Cache'] = 'HIT';
+
+        // HEAD is not special-cased here any more — the kernel drops the body for
+        // HEAD on every response, so doing it again would be a second rule to keep
+        // in sync.
+        return new HtmlResponse(
+            (string) ($payload['body'] ?? ''),
+            (int) ($payload['status'] ?? 200),
+            $headers
+        );
     }
 
     private function cleanupBuffer(): void

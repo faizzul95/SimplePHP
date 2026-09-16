@@ -7,7 +7,6 @@ class HTML
     /**
      * Generate an unordered list (ul) HTML element.
      *
-     * @param array $items List items
      * @return string Generated HTML
      */
     public static function ul(array $items)
@@ -18,7 +17,6 @@ class HTML
     /**
      * Generate an ordered list (ol) HTML element.
      *
-     * @param array $items List items
      * @return string Generated HTML
      */
     public static function ol(array $items)
@@ -26,13 +24,7 @@ class HTML
         return '<ol>' . self::generateListItems($items) . '</ol>';
     }
 
-    /**
-     * Generate a div HTML element.
-     *
-     * @param string $content Content inside the div
-     * @param array $attributes Additional attributes for the div
-     * @return string Generated HTML
-     */
+    /** @return string Generated HTML */
     public static function div($content, $attributes = [])
     {
         $html = '<div';
@@ -46,9 +38,6 @@ class HTML
     /**
      * Generate an image (img) HTML element.
      *
-     * @param string $src Image source
-     * @param string $alt Alternative text for the image
-     * @param array $attributes Additional attributes for the image
      * @return string Generated HTML
      */
     public static function image($src, $alt = '', $attributes = [])
@@ -64,9 +53,6 @@ class HTML
     /**
      * Generate a link (a) HTML element.
      *
-     * @param string $href URL of the link
-     * @param string $text Text to display for the link
-     * @param array $attributes Additional attributes for the link
      * @return string Generated HTML
      */
     public static function href($href, $text, $attributes = [])
@@ -82,8 +68,6 @@ class HTML
     /**
      * Generate a <link> HTML element for CSS files.
      *
-     * @param string $href URL of the CSS file
-     * @param array $attributes Additional attributes for the link
      * @return string Generated HTML
      */
     public static function css($href, $attributes = [])
@@ -97,10 +81,7 @@ class HTML
     }
 
     /**
-     * Generate an HTML table.
-     *
      * @param array $data Two-dimensional array representing the table data
-     * @param array $attributes Additional attributes for the table
      * @return string Generated HTML
      */
     public static function table(array $data, $attributes = [])
@@ -124,7 +105,6 @@ class HTML
     /**
      * Generate list items for ul or ol.
      *
-     * @param array $items List items
      * @return string Generated HTML for list items
      */
     private static function generateListItems(array $items)

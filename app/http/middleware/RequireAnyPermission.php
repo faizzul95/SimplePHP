@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 class RequireAnyPermission implements MiddlewareInterface
@@ -21,11 +21,7 @@ class RequireAnyPermission implements MiddlewareInterface
     public function handle(Request $request, callable $next)
     {
         if (!auth()->check(self::AUTH_GUARDS)) {
-            if ($request->expectsJson()) {
-                Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
-            }
-
-            Response::redirect(url(REDIRECT_LOGIN));
+            Abort::unauthenticated($request);
         }
 
         if (empty($this->permissions)) {
@@ -35,16 +31,7 @@ class RequireAnyPermission implements MiddlewareInterface
         $hasPermission = auth()->hasAnyPermission($this->permissions);
 
         if (!$hasPermission) {
-            if ($request->expectsJson()) {
-                Response::json([
-                    'code' => 403,
-                    'message' => 'Forbidden: Missing permission',
-                    'permissions' => $this->permissions,
-                ], 403);
-            }
-
-            show_403();
-            exit;
+            Abort::denied($request, 'Forbidden: Missing permission', ['permissions' => $this->permissions]);
         }
 
         return $next($request);

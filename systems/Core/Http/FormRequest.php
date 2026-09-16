@@ -340,7 +340,6 @@ abstract class FormRequest
             );
         }
 
-        // Reset state for re-entrant safety
         $this->validatedData    = [];
         $this->castFailures     = [];
         $this->computedFailures = [];
@@ -382,9 +381,21 @@ abstract class FormRequest
 
         // Step 6 — Whitelist: keep only keys defined in rules()
         foreach (array_keys($rules) as $key) {
-            if (array_key_exists($key, $allData)) {
-                $this->validatedData[$key] = $allData[$key];
+            if (!str_contains($key, '.')) {
+                if (array_key_exists($key, $allData)) {
+                    $this->validatedData[$key] = $allData[$key];
+                }
+
+                continue;
             }
+
+            // Dotted and wildcard rules validated fine but matched no top-level key,
+            // so nested payloads silently vanished from the DTO and every write below it.
+            $this->validatedData = $this->copyValidatedPath(
+                $this->validatedData,
+                $allData,
+                explode('.', $key)
+            );
         }
 
         // Step 7 — Defaults
@@ -412,6 +423,51 @@ abstract class FormRequest
      * Guards against memory exhaustion from huge field values.
      * Silently truncates — no error thrown. Run before sanitize and rules.
      */
+    /**
+     * Copy one dotted rule path out of the raw input, keeping the nesting.
+     *
+     * Only the matched leaves are copied, so a rule on address.city never drags
+     * address.secret through with it — the allowlist stays an allowlist.
+     *
+     * @param array<string,mixed> $target    DTO built so far
+     * @param mixed               $source    Raw input at this depth
+     * @param list<string>        $segments  Remaining path, '*' matches every key
+     * @return array<string,mixed>
+     */
+    private function copyValidatedPath(array $target, mixed $source, array $segments): array
+    {
+        if (!is_array($source) || $segments === []) {
+            return $target;
+        }
+
+        $segment = array_shift($segments);
+        $keys = $segment === '*' ? array_keys($source) : [$segment];
+
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $source)) {
+                continue;
+            }
+
+            if ($segments === []) {
+                $target[$key] = $source[$key];
+                continue;
+            }
+
+            $child = $this->copyValidatedPath(
+                is_array($target[$key] ?? null) ? $target[$key] : [],
+                $source[$key],
+                $segments
+            );
+
+            // Skip empties, or a missing leaf would leave an empty parent behind.
+            if ($child !== []) {
+                $target[$key] = $child;
+            }
+        }
+
+        return $target;
+    }
+
     protected function applyMaxInputLength(): void
     {
         $max = $this->maxInputLength();

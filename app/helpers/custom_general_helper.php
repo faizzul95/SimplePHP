@@ -97,7 +97,6 @@ if (!function_exists('currencySymbol')) {
 if (!function_exists('formatCurrency')) {
 	function formatCurrency($value, $code, $includeSymbol = false)
 	{
-		// Check if the "intl" extension is installed and enabled
 		if (!extension_loaded('intl')) {
 			return 'Error: The "intl" extension is not installed or enabled, which is required for number formatting.';
 		}
@@ -133,12 +132,9 @@ if (!function_exists('formatCurrency')) {
 			}
 		}
 
-		// Format the currency value using the NumberFormatter
 		return $formatVal;
 	}
 }
-
-// ENCODE & DECODE HELPERS SECTION
 
 if (!function_exists('encodeID')) {
 	function encodeID($id, $salt = 'w3bpr0j3ct!')
@@ -183,7 +179,6 @@ if (!function_exists('decodeID')) {
 		}
 
 		try {
-			// Base64 decode
 			$decoded = decode_base64($encoded);
 			if ($decoded === false || $decoded === '') {
 				return false;
@@ -242,14 +237,12 @@ if (!function_exists('encode_base64')) {
 	function encode_base64($sData = NULL)
 	{
 		if (hasData($sData)) {
-			// Encode the data to Base64
 			$sBase64 = base64_encode($sData);
 
 			// Replace URL-unsafe characters (+ and /) with URL-safe characters (- and _)
 			// Strip = padding — it causes 404 in route parameter matching
 			return rtrim(strtr($sBase64, '+/', '-_'), '=');
 		} else {
-			// Return an empty string if input data is empty or not provided
 			return '';
 		}
 	}
@@ -271,10 +264,8 @@ if (!function_exists('decode_base64')) {
 			// Re-add padding stripped by encode_base64()
 			$sBase64 = str_pad($sBase64, (int) (ceil(strlen($sBase64) / 4) * 4), '=');
 
-			// Decode the Base64-encoded data
 			return base64_decode($sBase64);
 		} else {
-			// Return an empty string if input data is empty or not provided
 			return '';
 		}
 	}
@@ -316,7 +307,6 @@ function base_url($path = null)
 		throw new InvalidArgumentException('Path cannot contain directory traversal sequences');
 	}
 
-	// Sanitize the parameter to prevent XSS
 	$param = filter_var($param, FILTER_SANITIZE_URL);
 
 	// Remove any potentially dangerous characters
@@ -329,7 +319,7 @@ function base_url($path = null)
 	$url = rtrim(BASE_URL, '/') . '/' . $param;
 
 	// Optionally encode for HTML output
-	return htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+	return htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
 /**
@@ -359,7 +349,6 @@ if (!function_exists('asset')) {
 			throw new InvalidArgumentException('Asset path cannot be empty and must be a string');
 		}
 
-		// Sanitize the asset path
 		$param = filter_var($param, FILTER_SANITIZE_URL);
 
 		// Prevent directory traversal attacks
@@ -426,7 +415,6 @@ if (!function_exists('url')) {
 		// HTML-encode the URL parameter.
 		$param = htmlspecialchars($param, ENT_NOQUOTES, 'UTF-8');
 
-		// Return the complete URL with sanitized parameters.
 		return base_url($param);
 	}
 }
@@ -475,7 +463,6 @@ if (!function_exists('paramUrl')) {
 			throw new InvalidArgumentException('Invalid or excessively long URL');
 		}
 
-		// Parse the URL to separate path and query string
 		$urlParts = parse_url($url);
 
 		if ($urlParts === false) {
@@ -486,7 +473,6 @@ if (!function_exists('paramUrl')) {
 		$query = $urlParts['query'] ?? '';
 		$fragment = isset($urlParts['fragment']) ? '#' . $urlParts['fragment'] : '';
 
-		// Sanitize path component
 		$path = filter_var($path, FILTER_SANITIZE_URL);
 
 		// Internal function to sanitize parameters
@@ -548,7 +534,6 @@ if (!function_exists('paramUrl')) {
 		$existingParams = [];
 		if (!$resetParam && !empty($query)) {
 			parse_str($query, $existingParams);
-			// Sanitize existing parameters
 			$existingParams = $sanitizeParams($existingParams);
 		}
 
@@ -571,7 +556,6 @@ if (!function_exists('paramUrl')) {
 			throw new InvalidArgumentException('Parameters must be string or array');
 		}
 
-		// Sanitize new parameters
 		$newParams = $sanitizeParams($newParams);
 
 		// Merge parameters based on resetParam flag
@@ -583,7 +567,6 @@ if (!function_exists('paramUrl')) {
 			$mergedParams = array_merge($existingParams, $newParams);
 		}
 
-		// Build the new query string
 		$newQuery = http_build_query($mergedParams, '', '&', PHP_QUERY_RFC3986);
 
 		// Construct the final URL — preserve the current path
@@ -658,7 +641,6 @@ if (!function_exists('isAjax')) {
 if (!function_exists('isMobileDevice')) {
 	function isMobileDevice()
 	{
-		// Check if the HTTP_USER_AGENT server variable is not empty.
 		if (!empty($_SERVER['HTTP_USER_AGENT'])) {
 			// Use a regular expression to match common mobile device keywords. This pattern is case-insensitive ('i' flag).
 			$pattern = "/(android|webos|avantgo|iphone|ipad|ipod|blackberry|iemobile|bolt|boost|cricket|docomo|fone|hiptop|mini|opera mini|kitkat|mobi|palm|phone|pie|tablet|up\.browser|up\.link|webos|wos)/i";
@@ -757,7 +739,6 @@ if (!function_exists('genCodeByString')) {
 			while (!$found) {
 				$tempcode = $codeType . $code . str_pad($counter, $numLength, '0', STR_PAD_LEFT);
 
-				// Check if the tempcode exists in the code list
 				if (!in_array($tempcode, $codeList)) {
 					$code = $tempcode;
 					$found = true;
@@ -821,7 +802,6 @@ if (!function_exists('deleteFolder')) {
 		// Define the default files to exclude
 		$defaultExcludedFiles = ['index.html', '.htaccess'];
 
-		// Merge the default and user-defined excluded files
 		$excFile = array_merge($defaultExcludedFiles, $excludedFiles);
 
 		if (is_dir($folder)) {
@@ -842,7 +822,6 @@ if (!function_exists('deleteFolder')) {
 				}
 			}
 
-			// Check if the folder is empty, then remove it
 			if (count(glob("$folder/*")) === 0) {
 				rmdir($folder);
 			}
@@ -918,7 +897,7 @@ if (!function_exists('sanitize')) {
 				return '';
 			}
 			// Apply XSS protection and trim in one operation
-			return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
+			return htmlspecialchars(trim($value), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 		}
 
 		if (is_array($value)) {

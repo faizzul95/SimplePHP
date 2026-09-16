@@ -28,8 +28,6 @@ namespace Core\Database\Schema;
  *   $runner->seed('MasterRoles');    // Run a specific seeder
  *   $runner->status();               // Get migration/seeder status
  *
- * @category  Database
- * @package   Core\Database\Schema
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -73,6 +71,12 @@ class MigrationRunner
      */
     public function migrate(?callable $output = null): array
     {
+        return $this->withLedgerLock(fn (): array => $this->migrateLocked($output));
+    }
+
+    /** @return array{migrated: string[], errors: array} */
+    private function migrateLocked(?callable $output): array
+    {
         $deployData = $this->loadDeployData();
         $pending = $this->getPendingMigrations($deployData);
 
@@ -92,6 +96,9 @@ class MigrationRunner
             try {
                 $migration = $this->resolveMigration($this->migrationsPath . $file);
                 $migration->up();
+
+                // sanitizeColumn() filters writes against the cached column list.
+                \Core\Database\BaseDatabase::clearTableColumnsCache();
 
                 $elapsed = round((microtime(true) - $startTime) * 1000, 2);
 
@@ -117,13 +124,16 @@ class MigrationRunner
     }
 
     /**
-     * Rollback the last batch of migrations.
-     *
-     * @param callable|null $output Optional callback for progress output
      * @param int|null $steps Number of batches to rollback (null = last batch only)
      * @return array{rolled_back: string[], errors: array}
      */
     public function rollback(?callable $output = null, ?int $steps = null): array
+    {
+        return $this->withLedgerLock(fn (): array => $this->rollbackLocked($output, $steps));
+    }
+
+    /** @return array{rolled_back: string[], errors: array} */
+    private function rollbackLocked(?callable $output, ?int $steps): array
     {
         $deployData = $this->loadDeployData();
         $migrated = $this->getMigratedEntries($deployData);
@@ -160,6 +170,9 @@ class MigrationRunner
                 $migration = $this->resolveMigration($filePath);
                 $migration->down();
 
+                // sanitizeColumn() filters writes against the cached column list.
+                \Core\Database\BaseDatabase::clearTableColumnsCache();
+
                 // Add rollback record
                 $deployData[] = [
                     'file' => $file,
@@ -190,10 +203,15 @@ class MigrationRunner
     /**
      * Reset all migrations (rollback everything).
      *
-     * @param callable|null $output Optional callback for progress output
      * @return array{rolled_back: string[], errors: array}
      */
     public function reset(?callable $output = null): array
+    {
+        return $this->withLedgerLock(fn (): array => $this->resetLocked($output));
+    }
+
+    /** @return array{rolled_back: string[], errors: array} */
+    private function resetLocked(?callable $output): array
     {
         $deployData = $this->loadDeployData();
         $migrated = $this->getMigratedEntries($deployData);
@@ -204,16 +222,25 @@ class MigrationRunner
         }
 
         $maxBatch = max(array_column($migrated, 'batch'));
-        return $this->rollback($output, $maxBatch);
+
+        // rollbackLocked, not rollback: the lock is already held, and flock is
+        // per handle — a second acquire from this same process would fail the
+        // non-blocking check and report a conflict against ourselves.
+        return $this->rollbackLocked($output, $maxBatch);
     }
 
     /**
      * Drop all tables and re-run all migrations from scratch.
      *
-     * @param callable|null $output Optional callback for progress output
      * @return array{migrated: string[], errors: array}
      */
     public function fresh(?callable $output = null): array
+    {
+        return $this->withLedgerLock(fn (): array => $this->freshLocked($output));
+    }
+
+    /** @return array{migrated: string[], errors: array} */
+    private function freshLocked(?callable $output): array
     {
         $output && $output('info', 'Dropping all tables...');
 
@@ -246,7 +273,8 @@ class MigrationRunner
         $this->saveDeployData([]);
         $output && $output('info', 'All tables dropped. Running migrations...');
 
-        return $this->migrate($output);
+        // Locked variant: the lock is already held by fresh().
+        return $this->migrateLocked($output);
     }
 
     // ─── Seeder Operations ───────────────────────────────────
@@ -255,10 +283,15 @@ class MigrationRunner
      * Run pending seeders, or a specific seeder by name.
      *
      * @param string|null $specific Seeder filename (without .php) or null for all pending
-     * @param callable|null $output Optional callback for progress output
      * @return array{seeded: string[], errors: array}
      */
     public function seed(?string $specific = null, ?callable $output = null): array
+    {
+        return $this->withLedgerLock(fn (): array => $this->seedLocked($specific, $output));
+    }
+
+    /** @return array{seeded: string[], errors: array} */
+    private function seedLocked(?string $specific, ?callable $output): array
     {
         $deployData = $this->loadDeployData();
 
@@ -371,7 +404,6 @@ class MigrationRunner
         $migratedFiles = $this->getMigratedFileNames($deployData);
         $seededFiles = $this->getSeededFileNames($deployData);
 
-        // Get all migration files
         $allMigrations = $this->getMigrationFiles();
         $allSeeders = $this->getSeederFiles();
 
@@ -428,6 +460,16 @@ class MigrationRunner
     /**
      * Save the deploy.json tracking data.
      */
+    /**
+     * Rewrite the ledger atomically.
+     *
+     * This is the only record of what has been applied. An in-place write that
+     * is interrupted — a killed deploy, a full disk, a container stopped
+     * mid-migration — truncates it, and the next `migrate` then believes nothing
+     * has ever run and replays every migration against a populated schema.
+     * Writing to a temp file and renaming means the file is either the old
+     * ledger or the new one, never a fragment.
+     */
     private function saveDeployData(array $data): void
     {
         $dir = dirname($this->deployFile);
@@ -436,7 +478,76 @@ class MigrationRunner
         }
 
         $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        file_put_contents($this->deployFile, $json, LOCK_EX);
+        if ($json === false) {
+            throw new \RuntimeException('Unable to encode the migration ledger.');
+        }
+
+        $temp = $this->deployFile . '.' . bin2hex(random_bytes(4)) . '.tmp';
+
+        if (@file_put_contents($temp, $json, LOCK_EX) === false) {
+            throw new \RuntimeException('Unable to write the migration ledger: ' . $temp);
+        }
+
+        if (!@rename($temp, $this->deployFile)) {
+            // Windows cannot replace an existing destination with rename().
+            if (!is_file($this->deployFile) || !@unlink($this->deployFile) || !@rename($temp, $this->deployFile)) {
+                @unlink($temp);
+                throw new \RuntimeException('Unable to replace the migration ledger: ' . $this->deployFile);
+            }
+        }
+    }
+
+    /**
+     * Run an operation with an exclusive lock on the ledger.
+     *
+     * Reading the pending list, running the migrations, and recording them is a
+     * read-modify-write across the whole run, and nothing guarded it. Two
+     * deploys starting together — two containers, a retried CI job, an impatient
+     * second terminal — both saw the same pending list and both applied it. The
+     * per-write LOCK_EX did nothing for that: it makes each write atomic, not
+     * the sequence.
+     *
+     * Non-blocking on purpose. A second deploy should be told the first is
+     * running, not queue up behind it and apply the same migrations afterwards.
+     *
+     * @template T
+     *
+     * @param callable(): T $operation
+     * @return T
+     */
+    private function withLedgerLock(callable $operation): mixed
+    {
+        $lockFile = $this->deployFile . '.lock';
+        $dir = dirname($lockFile);
+
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        $handle = @fopen($lockFile, 'c+b');
+
+        if ($handle === false) {
+            // Cannot lock, so cannot prove exclusivity. Running anyway is how the
+            // double-apply happens, so refuse instead.
+            throw new \RuntimeException('Unable to open the migration lock file: ' . $lockFile);
+        }
+
+        if (!flock($handle, LOCK_EX | LOCK_NB)) {
+            fclose($handle);
+
+            throw new \RuntimeException(
+                'Another migration run is in progress. Wait for it to finish, or remove '
+                . $lockFile . ' if no process is actually running.'
+            );
+        }
+
+        try {
+            return $operation();
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+            @unlink($lockFile);
+        }
     }
 
     // ─── File Discovery ──────────────────────────────────────

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Support\Auth\AuthMethodResolver;
+use Core\Auth\AuthMethodResolver;
 use PHPUnit\Framework\TestCase;
 
 final class AuthMethodResolverTest extends TestCase

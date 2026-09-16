@@ -551,12 +551,10 @@ class ScheduleEvent
             }
         }
 
-        // When callback
         if ($this->whenCallback !== null && !call_user_func($this->whenCallback)) {
             return false;
         }
 
-        // Skip callback
         if ($this->skipCallback !== null && call_user_func($this->skipCallback)) {
             return false;
         }
@@ -655,31 +653,56 @@ class ScheduleEvent
     }
 
     /**
-     * Start output buffering for this event
+     * The buffer depth this event opened at, or null when it opened none.
+     *
+     * Recorded because "is there a buffer" is not the same question as "is the
+     * buffer mine". flushOutput() used to check ob_get_level() alone, so a task
+     * that threw before startOutputCapture() ran would ob_get_clean() whatever
+     * buffer happened to be open — the console's own, or an outer event's — and
+     * write that to this event's log file while discarding it from the caller.
      */
+    private ?int $captureDepth = null;
+
     public function startOutputCapture(): void
     {
-        if ($this->outputPath !== null) {
-            ob_start();
+        if ($this->outputPath === null) {
+            return;
+        }
+
+        if (ob_start()) {
+            $this->captureDepth = ob_get_level();
         }
     }
 
     /**
-     * Flush captured output to file
+     * Write this event's captured output to its log file.
+     *
+     * Safe to call twice and safe to call when nothing was captured, because the
+     * failure path calls it without knowing how far the try block got.
      */
     public function flushOutput(): void
     {
-        if ($this->outputPath !== null && ob_get_level() > 0) {
-            $output = ob_get_clean();
-
-            $dir = dirname($this->outputPath);
-            if (!is_dir($dir)) {
-                mkdir($dir, 0775, true);
-            }
-
-            $flags = LOCK_EX | ($this->appendOutput ? FILE_APPEND : 0);
-            file_put_contents($this->outputPath, $output, $flags);
+        if ($this->outputPath === null || $this->captureDepth === null) {
+            return;
         }
+
+        // Only unwind to the depth we opened at: a command that opened its own
+        // buffers and did not close them must not cost us ours.
+        $output = '';
+        while (ob_get_level() >= $this->captureDepth) {
+            $chunk = ob_get_clean();
+            $output = ($chunk === false ? '' : $chunk) . $output;
+        }
+
+        $this->captureDepth = null;
+
+        $dir = dirname($this->outputPath);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        $flags = LOCK_EX | ($this->appendOutput ? FILE_APPEND : 0);
+        file_put_contents($this->outputPath, $output, $flags);
     }
 
     public function shouldRunInBackground(): bool

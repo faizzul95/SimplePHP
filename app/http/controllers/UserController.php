@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\SaveUserRequest;
 use Core\Http\Controller;
+use Core\Http\Reply;
 use Core\Http\Request;
 
 class UserController extends Controller
@@ -29,7 +30,7 @@ class UserController extends Controller
         $this->view('directory.users');
     }
 
-    public function listUserDatatable(Request $request): void
+    public function listUserDatatable(Request $request): array
     {
         $statusFilter = $request->input('user_status_filter');
         $genderFilter = $request->input('user_gender_filter');
@@ -81,13 +82,16 @@ class UserController extends Controller
             $result['data'] = array_map(fn($row) => $this->mapUserDatatableRow($row), $result['data']);
         }
 
-        jsonResponse($result);
+        // Already the exact shape DataTables expects (draw / recordsTotal /
+        // data), and Emitter turns a returned array into a JSON response — so
+        // wrapping it would only nest the payload a level deeper.
+        return $result;
     }
 
-    public function show(int|string $id): void
+    public function show(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'User ID is required']);
+        if ($id === '') {
+            return fail('User ID is required', 400);
         }
 
         $user = db()->table('users')
@@ -105,13 +109,13 @@ class UserController extends Controller
             ->fetch();
 
         if (!$user) {
-            jsonResponse(['code' => 404, 'message' => 'User not found']);
+            return fail('User not found', 404);
         }
 
-        jsonResponse(['code' => 200, 'data' => $user]);
+        return ok(null, $user);
     }
 
-    public function save(SaveUserRequest $request): void
+    public function save(SaveUserRequest $request): Reply
     {
         $data = $request->validated();
         $requestId = $data['id'] ?? null;
@@ -134,7 +138,7 @@ class UserController extends Controller
                     ->fetch();
 
                 if (!$user) {
-                    jsonResponse(['code' => 404, 'message' => 'User not found']);
+                    return fail('User not found', 404);
                 }
 
                 $conditions = [];
@@ -174,10 +178,7 @@ class UserController extends Controller
                         }
 
                         if (!empty($duplicateFields)) {
-                            jsonResponse([
-                                'code' => 422,
-                                'message' => implode(', ', array_unique($duplicateFields)) . ' already exist',
-                            ]);
+                            return fail(implode(', ', array_unique($duplicateFields)) . ' already exist');
                         }
                     }
                 }
@@ -196,7 +197,7 @@ class UserController extends Controller
         );
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to save user']);
+            return fail('Failed to save user');
         }
 
         $userId = $requestId ?: ($result['id'] ?? null);
@@ -232,17 +233,13 @@ class UserController extends Controller
             ->safeOutput()
             ->fetch();
 
-        jsonResponse([
-            'code' => 200,
-            'message' => 'User saved',
-            'data' => !empty($row) ? $this->mapUserDatatableRow($row) : null,
-        ]);
+        return ok('User saved', !empty($row) ? $this->mapUserDatatableRow($row) : null);
     }
 
-    public function destroy(int|string $id): void
+    public function destroy(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'User ID is required']);
+        if ($id === '') {
+            return fail('User ID is required', 400);
         }
 
         $result = db()->table('users')
@@ -256,10 +253,10 @@ class UserController extends Controller
         );
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to delete user']);
+            return fail('Failed to delete user');
         }
 
-        jsonResponse(['code' => 200, 'message' => 'User deleted']);
+        return ok('User deleted');
     }
 
     private function mapUserDatatableRow(array $row): array

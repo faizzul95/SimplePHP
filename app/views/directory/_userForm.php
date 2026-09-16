@@ -79,7 +79,6 @@
 
 <script>
     async function getPassData(baseUrl, data) {
-        // console.log('form : ', data);
         await getProfileList('role_id', false);
 
         if (empty(data)) {

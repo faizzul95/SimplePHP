@@ -11,8 +11,6 @@ use Components\Logger;
 /**
  * Macroable trait for adding custom methods dynamically
  *
- * @category  Database
- * @package   Core\Database\Traits
  * @author    Your Name <your.email@example.com>
  * @license   MIT License
  * @version   1.0.0
@@ -26,14 +24,7 @@ trait Macroable
      */
     protected static array $_macros = [];
 
-    /**
-     * Register a custom macro function
-     *
-     * @param string $name The name of the macro
-     * @param callable $callback The macro implementation
-     * @return void
-     * @throws InvalidArgumentException If name is empty or callback is not callable
-     */
+    /** @throws InvalidArgumentException If name is empty or callback is not callable */
     public static function macro(string $name, callable $callback): void
     {
         if (empty($name)) {
@@ -51,7 +42,6 @@ trait Macroable
      * Register multiple macros at once
      *
      * @param array<string, callable> $macros Array of macro name => callback pairs
-     * @return void
      * @throws InvalidArgumentException If any macro is invalid
      */
     public static function macros(array $macros): void
@@ -61,12 +51,7 @@ trait Macroable
         }
     }
 
-    /**
-     * Check if a macro is registered
-     *
-     * @param string $name The name of the macro
-     * @return bool
-     */
+    /** Check if a macro is registered */
     public static function hasMacro(string $name): bool
     {
         return isset(static::$_macros[static::class][$name]);
@@ -95,7 +80,6 @@ trait Macroable
     /**
      * Remove a registered macro
      *
-     * @param string $name The name of the macro to remove
      * @return bool True if macro was removed, false if it didn't exist
      */
     public static function removeMacro(string $name): bool
@@ -110,8 +94,6 @@ trait Macroable
 
     /**
      * Clear all macros for this class
-     *
-     * @return void
      */
     public static function clearMacros(): void
     {
@@ -121,8 +103,6 @@ trait Macroable
     /**
      * Handle static macro calls
      *
-     * @param string $method The method name
-     * @param array $parameters The method parameters
      * @return mixed
      * @throws BadMethodCallException If macro doesn't exist
      */
@@ -153,10 +133,6 @@ trait Macroable
     }
 
     /**
-     * Handle instance macro calls
-     *
-     * @param string $method The method name
-     * @param array $parameters The method parameters
      * @return mixed
      * @throws BadMethodCallException If method doesn't exist
      */
@@ -201,13 +177,7 @@ trait Macroable
         }
     }
 
-    /**
-     * Log error message
-     *
-     * @param string $message The error message
-     * @param array $context Additional context
-     * @return void
-     */
+    /** Log error message */
     protected static function logErrorMacro(string $message, array $context = []): void
     {
         $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR;

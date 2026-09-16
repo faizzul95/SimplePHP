@@ -76,10 +76,7 @@ final class HttpClient
     }
 
     /**
-     * Perform a GET request to an external URL.
-     *
      * @param string $url     Must use http:// or https://. Private IPs are blocked.
-     * @param array  $options ['timeout' => int, 'headers' => string[]]
      * @return string Response body
      * @throws \InvalidArgumentException for disallowed URL schemes
      * @throws \RuntimeException if host resolves to a private IP or request fails
@@ -90,13 +87,7 @@ final class HttpClient
         return self::execute('GET', $url, $options, $resolution);
     }
 
-    /**
-     * Perform a POST request to an external URL.
-     *
-     * @param string       $url
-     * @param array|string $body    POST data
-     * @param array        $options ['timeout' => int, 'headers' => string[]]
-     */
+    /** Perform a POST request to an external URL. */
     public static function post(string $url, array|string $body = [], array $options = []): string
     {
         $resolution = self::resolveSafeUrl($url);

@@ -11,6 +11,11 @@ if ($apiVersioningEnabled && $apiVersion !== '') {
 
 $defaultApiWhitelist .= '/auth/login';
 
+$apiDriver = strtolower(trim((string) env('API_AUTH_DRIVER', 'token')));
+if (!in_array($apiDriver, ['token', 'session', 'hybrid'], true)) {
+    $apiDriver = 'token';
+}
+
 /*
 |--------------------------------------------------------------------------
 | API
@@ -18,6 +23,30 @@ $defaultApiWhitelist .= '/auth/login';
 */
 
 $config['api'] =  [
+    /*
+    |----------------------------------------------------------------------
+    | Auth Driver
+    |----------------------------------------------------------------------
+    |
+    | The one switch that decides how the application's own API authenticates.
+    | A fresh clone is token-first; change this (or API_AUTH_DRIVER) to opt back
+    | into cookies. It only governs the `api.app` middleware group — the external
+    | API under `api.external.auth` is always credential-based.
+    |
+    |   token    Bearer credentials only. No session is started and no CSRF token
+    |            is needed, which is what a mobile app or a separately hosted SPA
+    |            actually wants. Which credentials count is `api.auth.methods`.
+    |
+    |   session  Cookie session, CSRF, and a strict origin check. Correct when the
+    |            front-end is served from the same host as the API.
+    |
+    |   hybrid   Accepts either. CSRF is enforced only for callers that
+    |            authenticated with the cookie — a bearer token cannot be attached
+    |            to a cross-site request by the browser, so it carries no CSRF
+    |            risk. Use while migrating an existing cookie front-end to tokens.
+    */
+    'driver' => $apiDriver,
+
     'cors' => [
         // Fail-secure default: no origins allowed. Set API_CORS_ALLOW_ORIGIN explicitly in .env (e.g. ['https://yourdomain.com']).
         'allow_origin' => env_list('API_CORS_ALLOW_ORIGIN', []),

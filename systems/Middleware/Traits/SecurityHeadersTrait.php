@@ -38,6 +38,45 @@ trait SecurityHeadersTrait
 		}
 	}
 
+	/**
+	 * The same headers as a name => value map, for attaching to a response.
+	 *
+	 * set_security_headers() writes with raw header(), which puts the values
+	 * outside the response object: the response cache stores a body with no
+	 * security headers on it, a test cannot observe them, and a worker SAPI that
+	 * builds its own response never sees them at all. Everything else in the
+	 * framework moved onto the response object; this is the last middleware that
+	 * had not.
+	 *
+	 * @return array<string, string>
+	 */
+	protected function securityHeaderMap(): array
+	{
+		$map = [];
+
+		foreach ($this->buildSecurityHeaders() as $headerLine) {
+			$separator = strpos($headerLine, ':');
+			if ($separator === false) {
+				continue;
+			}
+
+			$name = trim(substr($headerLine, 0, $separator));
+			$value = trim(substr($headerLine, $separator + 1));
+
+			if ($name === '') {
+				continue;
+			}
+
+			// Content-Security-Policy and its report-only twin are distinct
+			// headers, so a later one must not silently replace an earlier one
+			// that happens to share a prefix — but a genuine repeat should be
+			// joined rather than dropped.
+			$map[$name] = isset($map[$name]) ? $map[$name] . ', ' . $value : $value;
+		}
+
+		return $map;
+	}
+
 	protected function buildSecurityHeaders(): array
 	{
 		$security = \config('security') ?? [];
@@ -62,13 +101,10 @@ trait SecurityHeadersTrait
 
 		$headers = array_merge($headers, $this->buildCspHeaders($security));
 
-		// X-Frame-Options
 		$headers[] = 'X-Frame-Options: ' . (string) ($headersConfig['x_frame_options'] ?? 'SAMEORIGIN');
 
-		// X-Content-Type-Options
 		$headers[] = 'X-Content-Type-Options: ' . (string) ($headersConfig['x_content_type_options'] ?? 'nosniff');
 
-		// Referrer-Policy
 		$headers[] = 'Referrer-Policy: ' . (string) ($headersConfig['referrer_policy'] ?? 'strict-origin-when-cross-origin');
 
 		// Cross-origin isolation helpers

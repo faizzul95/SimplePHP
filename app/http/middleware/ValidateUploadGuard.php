@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Middleware\MiddlewareInterface;
 use Core\Http\Request;
-use Core\Http\Response;
 
 class ValidateUploadGuard implements MiddlewareInterface
 {
@@ -72,13 +72,13 @@ class ValidateUploadGuard implements MiddlewareInterface
             'isUpload' => false,
         ];
 
-        if ($request->expectsJson() || $this->isAjaxRequest($request)) {
-            Response::json($payload, $status);
+        // XHR clients get JSON even without an Accept header, because the upload
+        // widgets post via XMLHttpRequest and parse the body as JSON.
+        if ($this->isAjaxRequest($request)) {
+            Abort::json($payload, $status);
         }
 
-        http_response_code($status);
-        echo $message;
-        exit;
+        Abort::problem($request, $status, $message, array_diff_key($payload, ['code' => 0, 'message' => 0]));
     }
 
     private function isAjaxRequest(Request $request): bool

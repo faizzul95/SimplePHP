@@ -63,7 +63,6 @@ function validationJs(formElement, rules, messages = {}, attributeType = 'name')
                     const fieldMessages = messages[fieldName] || {};
                     const fieldLabel = fieldMessages.label || baseFieldName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                     
-                    // Remove previous validation classes before evaluating
                     fieldElement.classList.remove(validationErrorClass, validationSuccessClass);
                     
                     if (validationDebug) {
@@ -86,7 +85,6 @@ function validationJs(formElement, rules, messages = {}, attributeType = 'name')
                             }
                             validationErrors[indexedFieldName].push(errorMessage);
                             
-                            // Add error class to field
                             fieldElement.classList.add(validationErrorClass);
                             
                             if (validationDebug) {
@@ -116,7 +114,6 @@ function validationJs(formElement, rules, messages = {}, attributeType = 'name')
                 const fieldMessages = messages[fieldName] || {};
                 const fieldLabel = fieldMessages.label || fieldName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 
-                // Remove previous validation classes before evaluating
                 fieldElement.classList.remove(validationErrorClass, validationSuccessClass);
                 
                 if (validationDebug) {
@@ -139,7 +136,6 @@ function validationJs(formElement, rules, messages = {}, attributeType = 'name')
                         }
                         validationErrors[fieldName].push(errorMessage);
                         
-                        // Add error class to field
                         fieldElement.classList.add(validationErrorClass);
                         
                         if (validationDebug) {
@@ -249,11 +245,24 @@ function parseRules(rulesString) {
     }
     
     return rulesString.split('|').map(rule => {
-        const parts = rule.split(':');
-        const name = parts[0];
-        const parameters = parts.slice(1).join(':').split(',').filter(p => p !== '');
-        
-        return { name, parameters };
+        const separator = rule.indexOf(':');
+
+        if (separator === -1) {
+            return { name: rule.trim(), parameters: [] };
+        }
+
+        const name = rule.slice(0, separator).trim();
+        const argument = rule.slice(separator + 1);
+
+        // A regex routinely contains commas — {2,3}, {4,} — so splitting on them
+        // truncated the pattern and the rule could then never pass. The PHP
+        // validator special-cases these two for the same reason; both sides have
+        // to agree or a field passes in the browser and fails on the server.
+        if (name === 'regex' || name === 'not_regex') {
+            return { name, parameters: [argument] };
+        }
+
+        return { name, parameters: argument.split(',').filter(p => p !== '') };
     });
 }
 
@@ -275,13 +284,13 @@ function validateRule(value, rule, element, form, attributeType) {
                 return validateRequired(value, element);
             
             case 'required_if':
-                return validateRequiredIf(value, parameters, form, attributeType);
+                return validateRequiredIf(value, parameters, form, attributeType, element);
 
             case 'required_with':
-                return validateRequiredWith(value, parameters, form, attributeType);
+                return validateRequiredWith(value, parameters, form, attributeType, element);
                 
             case 'required_unless':
-                return validateRequiredUnless(value, parameters, form, attributeType);
+                return validateRequiredUnless(value, parameters, form, attributeType, element);
             
             case 'string':
                 return validateString(value);
@@ -446,6 +455,83 @@ function validateRule(value, rule, element, form, attributeType) {
                 
             case 'image':
                 return validateImage(value);
+
+            // ─── Parity with the PHP validator ───────────────────────
+            // A rule the browser knows and the server does not is a suggestion,
+            // not validation. These mirror systems/Components/Validation.php so
+            // one rule string means the same thing on both sides.
+
+            case 'gte':
+                return validateGreaterThanOrEqual(value, parameters, form, attributeType);
+
+            case 'not_regex':
+                return validateNotRegex(value, parameters);
+
+            case 'filled':
+                return validateFilled(value, element);
+
+            case 'prohibited':
+                return validateProhibited(value);
+
+            case 'prohibited_if':
+                return validateProhibitedIf(value, parameters, form, attributeType);
+
+            case 'required_without':
+                return validateRequiredWithout(value, parameters, form, attributeType, element);
+
+            case 'required_without_all':
+                return validateRequiredWithoutAll(value, parameters, form, attributeType, element);
+
+            case 'date_equals':
+                return validateDateEquals(value, parameters, form, attributeType);
+
+            case 'password':
+                return validatePassword(value, parameters);
+
+            case 'starts_with':
+                return validateStartsWith(value, parameters);
+
+            case 'ends_with':
+                return validateEndsWith(value, parameters);
+
+            case 'file_extension':
+                return validateFileExtension(value, parameters);
+
+            case 'max_file_size':
+                return validateMaxFileSize(value, parameters);
+
+            case 'deep_array':
+                return validateDeepArray(value, parameters);
+
+            case 'array_keys':
+                return validateArrayKeys(value, parameters);
+
+            case 'distinct':
+                return validateDistinct(value, element, form, attributeType);
+
+            case 'exclude_if':
+            case 'exclude_unless':
+                // Server-side only: these remove the field from the validated
+                // payload, which is a server concept. Nothing to check here.
+                return { valid: true };
+
+            case 'unique':
+            case 'unique_with':
+            case 'exists':
+            case 'current_password':
+                // Require a database round trip. Listed explicitly rather than
+                // falling through to the default so it is obvious the browser is
+                // not checking them, and the server must.
+                return { valid: true };
+
+            case 'xss':
+            case 'safe_html':
+            case 'secure_value':
+            case 'secure_filename':
+            case 'no_sql_injection':
+                // Server-side sanitisation. A client-side pass would be trivially
+                // bypassed and would give false confidence.
+                return { valid: true };
             
             default:
                 return { valid: true };
@@ -464,14 +550,21 @@ function validateRule(value, rule, element, form, attributeType) {
  * @returns {Object} - Object with valid property indicating validation result
  */
 function validateRequired(value, element) {
-    if (element.type === 'file') {
-        return { valid: value && value.length > 0 };
+    // element is optional: required_if, required_unless and required_with all
+    // delegate here and used to pass [] or nothing at all. `[].type` is
+    // undefined, so the file branch never ran and String(FileList) — which is
+    // the non-empty "[object FileList]" — made an empty file input pass every
+    // conditional required rule. required_with was worse: with no element at
+    // all, `element.type` threw, the catch turned it into invalid, and the rule
+    // failed whenever its condition was met.
+    if (value instanceof FileList || (element && element.type === 'file')) {
+        return { valid: !!value && value.length > 0 };
     }
-    
+
     if (Array.isArray(value)) {
         return { valid: value.length > 0 };
     }
-    
+
     return { valid: value !== null && value !== undefined && String(value).trim() !== '' };
 }
 
@@ -483,7 +576,7 @@ function validateRequired(value, element) {
  * @param {string} attributeType - The attribute type to use ('name' or 'id')
  * @returns {Object} - Object with valid property indicating validation result
  */
-function validateRequiredIf(value, parameters, form, attributeType) {
+function validateRequiredIf(value, parameters, form, attributeType, element) {
     if (parameters.length < 2) return { valid: true };
     
     const [field, operator, ...values] = parameters;
@@ -688,7 +781,7 @@ function validateRequiredIf(value, parameters, form, attributeType) {
     }
     
     if (shouldBeRequired) {
-        return validateRequired(value, [], form, attributeType);
+        return validateRequired(value, element);
     }
     
     return { valid: true };
@@ -702,7 +795,7 @@ function validateRequiredIf(value, parameters, form, attributeType) {
  * @param {string} attributeType - The attribute type to use ('name' or 'id')
  * @returns {Object} - Object with valid property indicating validation result
  */
-function validateRequiredUnless(value, parameters, form, attributeType) {
+function validateRequiredUnless(value, parameters, form, attributeType, element) {
     try {
         if (parameters.length < 2) return { valid: true };
         
@@ -711,7 +804,7 @@ function validateRequiredUnless(value, parameters, form, attributeType) {
         
         if (!targetElement) {
             // If target field doesn't exist, assume field is required
-            return validateRequired(value, [], form, attributeType);
+            return validateRequired(value, element);
         }
         
         const targetValue = getFieldValue(targetElement);
@@ -768,7 +861,6 @@ function validateRequiredUnless(value, parameters, form, attributeType) {
         switch (operator) {
             case '=':
             case '==':
-                // Check if target value matches any of the comparison values
                 if (normalizedComparisonValues.includes('null') || normalizedComparisonValues.includes(null)) {
                     conditionMet = isNullOrEmpty(targetValue);
                 } else {
@@ -778,7 +870,6 @@ function validateRequiredUnless(value, parameters, form, attributeType) {
                 
             case '!=':
             case '!==':
-                // Check if target value does NOT match any of the comparison values
                 if (normalizedComparisonValues.includes('null') || normalizedComparisonValues.includes(null)) {
                     conditionMet = !isNullOrEmpty(targetValue);
                 } else {
@@ -939,7 +1030,7 @@ function validateRequiredUnless(value, parameters, form, attributeType) {
         }
         
         // Condition not met, field is required
-        const requiredResult = validateRequired(value, [], form, attributeType);
+        const requiredResult = validateRequired(value, element);
         if (!requiredResult.valid) {
            return requiredResult;
         }
@@ -1088,12 +1179,10 @@ function validateMimes(value, parameters) {
  * @returns {boolean} - True if the value is numeric, false otherwise
  */
 function isNumericValue(value) {
-    // Check if value is already a number
     if (typeof value === 'number') {
         return !isNaN(value) && isFinite(value);
     }
     
-    // Check if string represents a valid number
     if (typeof value === 'string') {
         const trimmed = value.trim();
         if (trimmed === '' || trimmed === '.' || trimmed === '-' || trimmed === '+') return false;
@@ -1829,7 +1918,6 @@ function validateLowercase(value) {
     if (value === '' || value === null || value === undefined) return { valid: true };
     
     try {
-        // Check if the string is all lowercase
         return { valid: String(value).toLowerCase() === String(value) };
     } catch (error) {
         console.error('Error in lowercase validation:', error);
@@ -1841,7 +1929,6 @@ function validateUppercase(value) {
     if (value === '' || value === null || value === undefined) return { valid: true };
     
     try {
-        // Check if the string is all uppercase
         return { valid: String(value).toUpperCase() === String(value) };
     } catch (error) {
         console.error('Error in uppercase validation:', error);
@@ -1870,7 +1957,6 @@ function validateDecimal(value, parameters) {
             }
         }
         
-        // Check if value is a valid number
         if (!/^[+-]?\d*\.?\d+$/.test(String(value))) {
             return { valid: false };
         }
@@ -1884,7 +1970,6 @@ function validateDecimal(value, parameters) {
         
         const decimalPlaces = parts[1].length;
         
-        // Check if decimal places match requirements
         if (maxDecimalPlaces !== null) {
             return { valid: decimalPlaces >= minDecimalPlaces && decimalPlaces <= maxDecimalPlaces };
         } else {
@@ -1983,6 +2068,32 @@ function validateLessThanOrEqual(value, parameters, form, attributeType) {
     }
 }
 
+/**
+ * Measured image dimensions, keyed by File.
+ *
+ * A WeakMap so entries disappear with the File itself rather than pinning every
+ * image the user ever selected. `null` records a file that could not be decoded.
+ */
+const imageDimensionCache = new WeakMap();
+
+/** Measure in the background and cache the result for the next validation pass. */
+function measureImageDimensions(file) {
+    const img = new Image();
+    const objectURL = URL.createObjectURL(file);
+
+    img.onload = function () {
+        URL.revokeObjectURL(objectURL);
+        imageDimensionCache.set(file, { width: img.width, height: img.height });
+    };
+
+    img.onerror = function () {
+        URL.revokeObjectURL(objectURL);
+        imageDimensionCache.set(file, null);
+    };
+
+    img.src = objectURL;
+}
+
 function validateDimensions(value, parameters) {
     if (value === '' || value === null || value === undefined || !value || !value.length) return { valid: true };
     
@@ -2008,34 +2119,40 @@ function validateDimensions(value, parameters) {
             return { valid: true };
         }
         
-        return new Promise((resolve) => {
-            const img = new Image();
-            const objectURL = URL.createObjectURL(file);
-            
-            img.onload = function() {
-                URL.revokeObjectURL(objectURL);
-                const width = img.width;
-                const height = img.height;
-                let valid = true;
-                
-                // Check each constraint
-                if (constraints.min_width && width < constraints.min_width) valid = false;
-                if (constraints.max_width && width > constraints.max_width) valid = false;
-                if (constraints.min_height && height < constraints.min_height) valid = false;
-                if (constraints.max_height && height > constraints.max_height) valid = false;
-                if (constraints.width && width !== constraints.width) valid = false;
-                if (constraints.height && height !== constraints.height) valid = false;
-                
-                resolve({ valid });
-            };
-            
-            img.onerror = function() {
-                URL.revokeObjectURL(objectURL);
-                resolve({ valid: false });
-            };
-            
-            img.src = objectURL;
-        });
+        /*
+        | Decoding the image to read its dimensions is asynchronous, and
+        | validateRule() is synchronous: returning a Promise here meant the
+        | caller evaluated `!result.valid` against `undefined`, so `dimensions`
+        | reported *every* image as invalid — including ones that met the
+        | constraints.
+        |
+        | measureImageDimensions() below caches a measurement per file, so the
+        | first submit passes this through and the second has a real answer. The
+        | server re-checks either way, which is the only place the constraint can
+        | actually be enforced.
+        */
+        const measured = imageDimensionCache.get(file);
+
+        if (measured === undefined) {
+            measureImageDimensions(file);
+
+            return { valid: true };
+        }
+
+        if (measured === null) {
+            return { valid: false };
+        }
+
+        const { width, height } = measured;
+
+        if (constraints.min_width && width < constraints.min_width) return { valid: false };
+        if (constraints.max_width && width > constraints.max_width) return { valid: false };
+        if (constraints.min_height && height < constraints.min_height) return { valid: false };
+        if (constraints.max_height && height > constraints.max_height) return { valid: false };
+        if (constraints.width && width !== constraints.width) return { valid: false };
+        if (constraints.height && height !== constraints.height) return { valid: false };
+
+        return { valid: true };
     } catch (error) {
         console.error('Error in dimensions validation:', error);
         return { valid: false };
@@ -2047,7 +2164,7 @@ function validateNullable() {
     return { valid: true };
 }
 
-function validateRequiredWith(value, parameters, form, attributeType) {
+function validateRequiredWith(value, parameters, form, attributeType, element) {
     try {
         // Check if any of the specified fields have values
         let anyFieldHasValue = false;
@@ -2065,7 +2182,7 @@ function validateRequiredWith(value, parameters, form, attributeType) {
         
         // If any field has value, then validate as required
         if (anyFieldHasValue) {
-            return validateRequired(value);
+            return validateRequired(value, element);
         }
         
         // Otherwise, field is optional
@@ -2156,6 +2273,267 @@ function validateImage(value) {
     * @param {string} customMessage - Custom error message from validation
     * @returns {string} - Error message
     */
+
+// ─── Rules added for parity with systems/Components/Validation.php ──────────
+
+/**
+ * Greater than or equal. gt, lt and lte already existed; gte did not, so a rule
+ * string valid on the server silently did nothing in the browser.
+ */
+function validateGreaterThanOrEqual(value, parameters, form, attributeType) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+    if (!parameters.length) return { valid: false };
+
+    const compareElement = form.querySelector(`[${attributeType}="${parameters[0]}"]`);
+    const compareValue = compareElement ? getFieldValue(compareElement) : parameters[0];
+
+    if (isNumericValue(value) && isNumericValue(compareValue)) {
+        return { valid: parseFloat(value) >= parseFloat(compareValue) };
+    }
+
+    return { valid: String(value).length >= String(compareValue).length };
+}
+
+/** The inverse of regex. Same no-comma-splitting handling — see parseRules(). */
+function validateNotRegex(value, parameters) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+
+    try {
+        const pattern = new RegExp(String(parameters[0]).replace(/^\/|\/$/g, ''));
+        return { valid: !pattern.test(value) };
+    } catch {
+        return { valid: false, message: 'Invalid regex pattern' };
+    }
+}
+
+/** Present and not blank — unlike required, absent is fine; blank is not. */
+function validateFilled(value, element) {
+    if (value === null || value === undefined) return { valid: true };
+
+    return validateRequired(value, element);
+}
+
+/** Must not be submitted at all. */
+function validateProhibited(value) {
+    if (value === null || value === undefined) return { valid: true };
+    if (value instanceof FileList) return { valid: value.length === 0 };
+    if (Array.isArray(value)) return { valid: value.length === 0 };
+
+    return { valid: String(value).trim() === '' };
+}
+
+/** Prohibited when another field matches. Reuses required_if's operator table. */
+function validateProhibitedIf(value, parameters, form, attributeType) {
+    if (parameters.length < 2) return { valid: true };
+
+    // required_if answers "is the condition met" by returning invalid on an
+    // empty value; invert by asking it about a deliberately non-empty one.
+    const conditionMet = !validateRequiredIf('', parameters, form, attributeType, null).valid;
+
+    return conditionMet ? validateProhibited(value) : { valid: true };
+}
+
+/** Required when any of the named fields are absent or blank. */
+function validateRequiredWithout(value, parameters, form, attributeType, element) {
+    const anyMissing = parameters.some(fieldName => {
+        const field = form.querySelector(`[${attributeType}="${fieldName}"]`);
+        if (!field) return true;
+
+        const fieldValue = getFieldValue(field);
+        return fieldValue === null || fieldValue === undefined || String(fieldValue).trim() === '';
+    });
+
+    return anyMissing ? validateRequired(value, element) : { valid: true };
+}
+
+/** Required only when every named field is absent or blank. */
+function validateRequiredWithoutAll(value, parameters, form, attributeType, element) {
+    const allMissing = parameters.every(fieldName => {
+        const field = form.querySelector(`[${attributeType}="${fieldName}"]`);
+        if (!field) return true;
+
+        const fieldValue = getFieldValue(field);
+        return fieldValue === null || fieldValue === undefined || String(fieldValue).trim() === '';
+    });
+
+    return allMissing ? validateRequired(value, element) : { valid: true };
+}
+
+/** Same calendar date as a literal or another field. */
+function validateDateEquals(value, parameters, form, attributeType) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+
+    const compareElement = form.querySelector(`[${attributeType}="${parameters[0]}"]`);
+    const compareRaw = compareElement ? getFieldValue(compareElement) : parameters[0];
+
+    const left = new Date(value);
+    const right = new Date(compareRaw);
+
+    if (isNaN(left.getTime()) || isNaN(right.getTime())) return { valid: false };
+
+    return { valid: left.toDateString() === right.toDateString() };
+}
+
+/**
+ * Password strength.
+ *
+ * password:min=12,mixed,numbers,symbols — the same switches the server rule
+ * takes, so one rule string configures both.
+ */
+function validatePassword(value, parameters) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+
+    const text = String(value);
+    let minLength = 8;
+
+    for (const param of parameters) {
+        const match = /^min=(\d+)$/.exec(param);
+        if (match) minLength = parseInt(match[1], 10);
+    }
+
+    if (text.length < minLength) return { valid: false };
+    if (parameters.includes('mixed') && !(/[a-z]/.test(text) && /[A-Z]/.test(text))) return { valid: false };
+    if (parameters.includes('numbers') && !/\d/.test(text)) return { valid: false };
+    if (parameters.includes('symbols') && !/[^A-Za-z0-9]/.test(text)) return { valid: false };
+    if (parameters.includes('uncompromised')) {
+        // A breach-corpus lookup is a network call the server already makes.
+        return { valid: true };
+    }
+
+    return { valid: true };
+}
+
+function validateStartsWith(value, parameters) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+
+    const text = String(value);
+    return { valid: parameters.some(prefix => text.startsWith(prefix)) };
+}
+
+function validateEndsWith(value, parameters) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+
+    const text = String(value);
+    return { valid: parameters.some(suffix => text.endsWith(suffix)) };
+}
+
+/**
+ * Extension allow-list.
+ *
+ * Distinct from `mimes`, which checks the same thing under a different name —
+ * both are name-based and neither proves content. The server re-derives the
+ * extension from the detected MIME type, which is the check that counts.
+ */
+function validateFileExtension(value, parameters) {
+    if (!value || !value.length) return { valid: true };
+
+    const allowed = parameters.map(extension => extension.toLowerCase().replace(/^\./, ''));
+
+    for (const file of value) {
+        const extension = file.name.toLowerCase().split('.').pop();
+        if (!allowed.includes(extension)) return { valid: false };
+    }
+
+    return { valid: true };
+}
+
+/** max_file_size:2048 — kilobytes, matching the server rule's unit. */
+function validateMaxFileSize(value, parameters) {
+    if (!value || !value.length) return { valid: true };
+
+    const maxBytes = (parseFloat(parameters[0]) || 2048) * 1024;
+
+    for (const file of value) {
+        if (file.size > maxBytes) return { valid: false };
+    }
+
+    return { valid: true };
+}
+
+/**
+ * Bounded nesting depth.
+ *
+ * Iterative for the same reason the PHP side is: measuring the depth of a
+ * deeply nested structure by recursing into it exhausts the stack before the
+ * limit can be reported.
+ */
+function validateDeepArray(value, parameters) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+
+    let parsed = value;
+    if (typeof value === 'string') {
+        try {
+            parsed = JSON.parse(value);
+        } catch {
+            return { valid: false };
+        }
+    }
+
+    if (typeof parsed !== 'object' || parsed === null) return { valid: false };
+
+    const maxDepth = parameters.length ? parseInt(parameters[0], 10) : 10;
+    const maxElements = parameters.length > 1 ? parseInt(parameters[1], 10) : 1000;
+
+    let elements = 0;
+    const pending = [[parsed, 1]];
+
+    while (pending.length) {
+        const [node, depth] = pending.pop();
+
+        if (depth > maxDepth) return { valid: false };
+
+        for (const key of Object.keys(node)) {
+            if (++elements > maxElements) return { valid: false };
+
+            const child = node[key];
+            if (child !== null && typeof child === 'object') {
+                pending.push([child, depth + 1]);
+            }
+        }
+    }
+
+    return { valid: true };
+}
+
+/** Allow-list of object keys. A Set lookup, not a scan per key. */
+function validateArrayKeys(value, parameters) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+    if (!parameters.length) return { valid: true };
+
+    let parsed = value;
+    if (typeof value === 'string') {
+        try {
+            parsed = JSON.parse(value);
+        } catch {
+            return { valid: false };
+        }
+    }
+
+    if (typeof parsed !== 'object' || parsed === null) return { valid: false };
+
+    const allowed = new Set(parameters.map(String));
+
+    return { valid: Object.keys(parsed).every(key => allowed.has(String(key))) };
+}
+
+/** No duplicate values among sibling inputs sharing this field's name. */
+function validateDistinct(value, element, form, attributeType) {
+    if (value === '' || value === null || value === undefined) return { valid: true };
+    if (!element || !form) return { valid: true };
+
+    const fieldName = element.getAttribute(attributeType);
+    if (!fieldName) return { valid: true };
+
+    const siblings = Array.from(form.querySelectorAll(`[${attributeType}="${fieldName}"]`));
+    if (siblings.length < 2) return { valid: true };
+
+    const values = siblings
+        .map(sibling => String(getFieldValue(sibling)))
+        .filter(item => item !== '');
+
+    return { valid: new Set(values).size === values.length };
+}
+
 function getErrorMessage(fieldName, rule, fieldMessages, fieldLabel, customMessage) {
     const { name, parameters } = rule;
     
@@ -2214,7 +2592,6 @@ function getErrorMessage(fieldName, rule, fieldMessages, fieldLabel, customMessa
         return replacedMessage;
     };
     
-    // Check for custom message for this specific rule
     if (fieldMessages[name]) {
         return replacePlaceholders(fieldMessages[name]);
     }
@@ -2224,7 +2601,6 @@ function getErrorMessage(fieldName, rule, fieldMessages, fieldLabel, customMessa
         return replacePlaceholders(customMessage);
     }
     
-    // Default messages
     const defaultMessages = {
         required: `The ${fieldLabel} field is required.`,
         required_if: `The ${fieldLabel} field is required when specified conditions are met.`,
@@ -2292,7 +2668,6 @@ function getErrorMessage(fieldName, rule, fieldMessages, fieldLabel, customMessa
  * @param {string} mode - Display mode ('single' or 'multi')
  */
 function showToastrErrors(errorMessages, mode = 'single') {
-    // Check if toastr is available
     if (typeof toastr !== 'undefined') {
         let optionsToastr = {
             enableHtml: true,

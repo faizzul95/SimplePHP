@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 class RequireSessionAuth implements MiddlewareInterface
@@ -20,12 +20,12 @@ class RequireSessionAuth implements MiddlewareInterface
                 }
             }
 
-            if ($request->expectsJson()) {
-                Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
-            }
-
-            Response::redirect(url(REDIRECT_LOGIN));
+            Abort::unauthenticated($request);
         }
+
+        // Who the failing request belonged to is the second thing you want after
+        // the request id, and it is only knowable once auth has resolved.
+        \Core\Support\LogContext::putSafely('user_id', static fn() => auth()->id(['session']));
 
         return $next($request);
     }

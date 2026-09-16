@@ -18,8 +18,6 @@ namespace Core\Database\Schema;
  *       }
  *   };
  *
- * @category  Database
- * @package   Core\Database\Schema
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -51,12 +49,7 @@ abstract class Seeder
         }
     }
 
-    /**
-     * Insert data into a table.
-     *
-     * @param string $table Table name
-     * @param array $data Array of column => value pairs, or array of arrays for bulk insert
-     */
+    /** @param array $data Array of column => value pairs, or array of arrays for bulk insert */
     protected function insert(string $table, array $data): void
     {
         if (function_exists('db')) {
@@ -74,10 +67,7 @@ abstract class Seeder
     /**
      * Insert or update a record based on conditions.
      *
-     * @param string $table Table name
      * @param array $conditions Conditions to find existing record
-     * @param array $data Data to insert or update
-     * @param string $primaryKey Primary key column name
      * @return array|null Result from insertOrUpdate
      */
     protected function insertOrUpdate(string $table, array $conditions, array $data, string $primaryKey = 'id'): ?array

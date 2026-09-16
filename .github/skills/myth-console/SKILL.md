@@ -127,7 +127,7 @@ Generate the stub:
 php myth make:command SyncUsersCommand
 ```
 
-Implement the command (`app/console/Commands/SyncUsersCommand.php`):
+Implement the command (`app/console/commands/SyncUsersCommand.php`):
 
 ```php
 use Core\Console\Command;

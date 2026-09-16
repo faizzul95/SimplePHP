@@ -172,14 +172,13 @@ class Response
      * still valid (a 304 has already been sent; caller should return immediately).
      *
      * Usage:
-     *   $html = view('home');
-     *   if (Response::withCacheHeaders($html)) return;
-     *   echo $html;
+     * $html = view('home');
+     * if (Response::withCacheHeaders($html)) return;
+     * echo $html;
      *
      * Shared hosting safe: no external service needed; pure HTTP headers.
      *
      * @param string                  $content      Full response body to fingerprint.
-     * @param \DateTimeImmutable|null $lastModified  Defaults to now.
      * @return bool  true = 304 sent and caller should stop; false = send full response.
      */
     public static function withCacheHeaders(string $content, ?\DateTimeImmutable $lastModified = null): bool
@@ -210,19 +209,54 @@ class Response
         return false;
     }
 
-    public static function json(array $data, int $status = 200): void
+    /**
+     * Emit a JSON response and stop processing the current request.
+     *
+     * Throws Core\Http\ResponseEmitted rather than calling exit. Declared `never`
+     * because that is the truth and it lets static analysis prove that code after
+     * a call is unreachable — the same guarantee `exit` used to give, without
+     * killing the process.
+     *
+     * The difference is what happens on the way out: middleware post-$next() code
+     * runs, the Kernel emits once through Core\Http\Emitter, and a worker SAPI
+     * finishes the request instead of terminating the process.
+     *
+     * @throws ResponseEmitted always
+     */
+    public static function json(array $data, int $status = 200): never
     {
-        http_response_code($status);
-        self::flushPendingLinkHeaders();
-        header('Content-Type: application/json; charset=UTF-8');
-        echo json_encode($data);
-        exit;
+        throw new ResponseEmitted(new JsonResponse(
+            $data,
+            Emitter::normalizeStatus($status),
+            self::pendingLinkHeaderMap()
+        ));
     }
 
-    public static function redirect(string $url, int $status = 302): void
+    /**
+     * Redirect and stop processing the current request.
+     *
+     * @throws ResponseEmitted always
+     */
+    public static function redirect(string $url, int $status = 302): never
     {
-        self::sendRedirectHeaders($url, $status);
-        exit;
+        throw new ResponseEmitted(new RedirectResponse($url, Emitter::normalizeStatus($status)));
+    }
+
+    /**
+     * Pending Link: headers as a header map.
+     *
+     * Multiple preloads are folded into one comma-separated Link header, which is
+     * the form RFC 8288 defines for repeated link values.
+     *
+     * @return array<string, string>
+     */
+    private static function pendingLinkHeaderMap(): array
+    {
+        if (self::$pendingLinkHeaders === []) {
+            return [];
+        }
+
+        return ['Link' => implode(', ', self::$pendingLinkHeaders)];
     }
 
     public static function preload(string $url, string $as, ?string $type = null, bool $crossOrigin = false): void
@@ -304,10 +338,4 @@ class Response
         return preg_match('/^[a-z0-9.-]+$/', $host) === 1 ? $host : '';
     }
 
-    private static function flushPendingLinkHeaders(): void
-    {
-        foreach (self::$pendingLinkHeaders as $headerValue) {
-            header('Link: ' . $headerValue, false);
-        }
-    }
 }

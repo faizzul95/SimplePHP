@@ -18,7 +18,6 @@ $hotFiles = [
     __DIR__ . '/../Http/Response.php',
     __DIR__ . '/../Http/JsonResponse.php',
 
-    // Router
     __DIR__ . '/../Routing/Router.php',
 
     // Database layer — base + all concern traits
@@ -44,7 +43,6 @@ $hotFiles = [
     __DIR__ . '/../Security/Encryptor.php',
     __DIR__ . '/../Security/AuditLogger.php',
 
-    // Cache layer
     __DIR__ . '/../Cache/CacheManager.php',
     __DIR__ . '/../Cache/FileStore.php',
     __DIR__ . '/../Cache/ArrayStore.php',
@@ -59,7 +57,6 @@ $hotFiles = [
     __DIR__ . '/../../Components/FeatureManager.php',
     __DIR__ . '/../../Components/Input.php',
 
-    // Middleware traits
     __DIR__ . '/../../Middleware/Traits/SecurityHeadersTrait.php',
     __DIR__ . '/../../Middleware/Traits/XssProtectionTrait.php',
     __DIR__ . '/../../Middleware/Traits/RateLimitingThrottleTrait.php',

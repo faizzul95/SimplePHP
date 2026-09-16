@@ -28,21 +28,32 @@ class Maintenance
 
         if ($this->shouldIssueBypassCookie($payload)) {
             $this->issueBypassCookie($payload);
-            \Core\Http\Response::sendRedirectHeaders($this->bypassRedirectTarget($payload), 302, [], true);
-            exit;
+
+            throw new \Core\Http\ResponseEmitted(
+                new \Core\Http\RedirectResponse($this->bypassRedirectTarget($payload), 302, [], true)
+            );
         }
 
         if ($this->hasValidBypassCookie($payload)) {
             return;
         }
 
-        if ($this->shouldRedirectRequest($payload)) {
-            \Core\Http\Response::sendRedirectHeaders($this->redirectTarget($payload), 302, [], true);
-            exit;
+        // Health checks, webhook receivers and status endpoints have to stay up
+        // through a maintenance window — a load balancer that cannot reach /health
+        // pulls the node out, and a payment provider that gets a 503 stops retrying.
+        if ($this->isExemptPath()) {
+            return;
         }
 
-        $this->sendMaintenanceResponse($payload);
-        exit;
+        if ($this->shouldRedirectRequest($payload)) {
+            throw new \Core\Http\ResponseEmitted(
+                new \Core\Http\RedirectResponse($this->redirectTarget($payload), 302, [], true)
+            );
+        }
+
+        // Throws rather than exits so a maintenance window does not kill a worker
+        // process on every request.
+        throw new \Core\Http\ResponseEmitted($this->maintenanceResponse($payload));
     }
 
     public function active(): bool
@@ -71,43 +82,178 @@ class Maintenance
         return $this->payloadCache = is_array($decoded) ? $decoded : [];
     }
 
-    private function sendMaintenanceResponse(array $payload): void
+    /**
+     * Build the maintenance page as a response object.
+     *
+     * The view is buffered rather than written straight out, so the status code
+     * and Retry-After header are decided before anything reaches the client and
+     * the whole thing can travel out through the normal emission path.
+     */
+    private function maintenanceResponse(array $payload): \Core\Http\Responsable
     {
         $statusCode = $this->statusCode($payload);
         $retryAfterSeconds = $this->retryAfterSeconds($payload);
         $refreshAfterSeconds = $this->refreshAfterSeconds($payload);
         $redirectTarget = $this->redirectTarget($payload);
 
-        if (!headers_sent()) {
-            http_response_code($statusCode);
+        $headers = [];
 
-            if ($retryAfterSeconds !== null) {
-                header('Retry-After: ' . $retryAfterSeconds);
-            }
-
-            if ($refreshAfterSeconds !== null) {
-                $refreshHeader = (string) $refreshAfterSeconds;
-                if ($redirectTarget !== null && $redirectTarget !== '') {
-                    $refreshHeader .= ';url=' . $redirectTarget;
-                }
-
-                header('Refresh: ' . $refreshHeader);
-            }
+        if ($retryAfterSeconds !== null) {
+            $headers['Retry-After'] = (string) $retryAfterSeconds;
         }
 
-        $title = 'Maintenance Mode';
         $message = trim((string) ($payload['message'] ?? 'Service Unavailable'));
         if ($message === '') {
             $message = 'Service Unavailable';
         }
 
-        $viewPath = $this->viewPath($payload);
-        if (is_file($viewPath)) {
-            require $viewPath;
-            return;
+        // An API client handed an HTML 503 cannot parse it, so a mobile app in a
+        // maintenance window shows a blank screen instead of the message. The same
+        // negotiation every other error path does applies here.
+        if ($this->expectsJson()) {
+            return new \Core\Http\JsonResponse([
+                'code' => $statusCode,
+                'error' => 'service_unavailable',
+                'message' => $message,
+                'retry_after' => $retryAfterSeconds,
+            ], $statusCode, $headers);
         }
 
-        echo $title . ': ' . $message;
+        $headers['Content-Type'] = 'text/html; charset=UTF-8';
+
+        if ($refreshAfterSeconds !== null) {
+            $refreshHeader = (string) $refreshAfterSeconds;
+            if ($redirectTarget !== null && $redirectTarget !== '') {
+                $refreshHeader .= ';url=' . $redirectTarget;
+            }
+
+            $headers['Refresh'] = $refreshHeader;
+        }
+
+        return new \Core\Http\HtmlResponse(
+            $this->renderMaintenanceBody($payload, 'Maintenance Mode', $message),
+            $statusCode,
+            $headers
+        );
+    }
+
+    /**
+     * Whether this request wants JSON.
+     *
+     * Resolved from the superglobals rather than a Request object because
+     * maintenance runs before routing, and before the kernel exists.
+     */
+    private function expectsJson(): bool
+    {
+        $accept = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
+
+        if (str_contains($accept, 'application/json') || str_contains($accept, '+json')) {
+            return true;
+        }
+
+        if (strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest') {
+            return true;
+        }
+
+        $contentType = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
+
+        if (str_contains($contentType, 'application/json')) {
+            return true;
+        }
+
+        // A request under the configured API prefix is an API request whatever it
+        // claims to accept.
+        return $this->isApiPath();
+    }
+
+    private function isApiPath(): bool
+    {
+        $prefix = trim((string) (function_exists('config') ? config('api.versioning.prefix', '/api') : '/api'), '/');
+
+        if ($prefix === '') {
+            return false;
+        }
+
+        return preg_match('#(?:^|/)' . preg_quote($prefix, '#') . '(?:/|$)#i', $this->relativeRequestPath()) === 1;
+    }
+
+    /**
+     * Whether the current path is exempt from maintenance.
+     *
+     * Configured as `framework.maintenance.allowed_paths`, each entry matched with
+     * fnmatch() so `webhooks/*` works.
+     */
+    private function isExemptPath(): bool
+    {
+        $allowed = (array) ($this->config['allowed_paths'] ?? []);
+
+        if ($allowed === []) {
+            return false;
+        }
+
+        $path = trim($this->relativeRequestPath(), '/');
+
+        foreach ($allowed as $pattern) {
+            $pattern = trim((string) $pattern, '/');
+
+            if ($pattern === '') {
+                continue;
+            }
+
+            if ($path === $pattern || fnmatch($pattern, $path)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether the application is down, without needing an instance.
+     *
+     * The scheduler and the queue worker both need this and neither has a
+     * Maintenance object; each previously re-implemented the file check, which is
+     * how the three could disagree about whether the app was down.
+     */
+    public static function isActive(): bool
+    {
+        return is_file(rtrim(ROOT_DIR, '/\\') . DIRECTORY_SEPARATOR
+            . 'storage' . DIRECTORY_SEPARATOR . 'framework' . DIRECTORY_SEPARATOR . 'down');
+    }
+
+    private function renderMaintenanceBody(array $payload, string $title, string $message): string
+    {
+        $viewPath = $this->viewPath($payload);
+
+        if (!is_file($viewPath)) {
+            return $title . ': ' . $message;
+        }
+
+        $level = ob_get_level();
+
+        try {
+            ob_start();
+            require $viewPath;
+
+            return (string) ob_get_clean();
+        } catch (\Throwable $e) {
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+
+            $this->logMaintenanceError('Maintenance view failed to render: ' . $e->getMessage());
+
+            return $title . ': ' . $message;
+        }
+    }
+
+    private function logMaintenanceError(string $message): void
+    {
+        try {
+            \Components\Logger::instance()->log_error($message);
+        } catch (\Throwable) {
+            // Maintenance mode must render even when logging is unavailable.
+        }
     }
 
     private function shouldIssueBypassCookie(array $payload): bool
@@ -303,7 +449,15 @@ class Maintenance
         );
     }
 
-    private function runsInCli(): bool
+    /**
+     * A CLI process is not a request, and blocking one would make it impossible
+     * to run the migration the window was opened for.
+     *
+     * Protected rather than private so the request path can be driven from a
+     * test, where PHP_SAPI is always 'cli' and every assertion would otherwise
+     * exercise this early return instead of the behaviour under test.
+     */
+    protected function runsInCli(): bool
     {
         return PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg';
     }

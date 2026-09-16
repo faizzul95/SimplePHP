@@ -53,70 +53,19 @@ const HTTP_STATUS_CODES = [
  * @param bool  $encode        The HTTP status code to be sent (default is 200 OK).
  */
 if (!function_exists('jsonResponse')) {
-    function jsonResponse($data, $response_code = 200)
+    function jsonResponse($data, $response_code = 200): never
     {
-        // Check if $data is an array and has a 'code' key
         if (is_array($data) && isset($data['code'])) {
             $response_code = (int) $data['code'];
         }
 
-        // Check if the provided HTTP status code is valid, otherwise default to 400 Bad Request
         if (!array_key_exists($response_code, HTTP_STATUS_CODES)) {
             $response_code = 400;
         }
 
-        // Clean any existing output buffers to prevent corruption
-        while (ob_get_level() > 0) {
-            ob_end_clean();
-        }
-
-        // Set the HTTP response code and content type
-        http_response_code($response_code);
-
-        // Set the Content-Type header to indicate JSON response
-        header('Content-Type: application/json');
-
-        // Encode the data as JSON (without pretty print to reduce size)
-        $json = json_encode($data);
-
-        // Check if the web server is already handling compression (Apache mod_deflate, Nginx gzip)
-        // If so, skip manual compression to avoid double-encoding
-        $serverCompression = isset($_SERVER['HTTP_ACCEPT_ENCODING']) 
-            && (ini_get('zlib.output_compression') 
-                || in_array('ob_gzhandler', ob_list_handlers())
-                || !empty($_SERVER['HTTP_X_FORWARDED_FOR']) // proxy may compress
-            );
-
-        $acceptEncoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
-
-        if (!$serverCompression && str_contains($acceptEncoding, 'gzip') && function_exists('gzencode')) {
-            $compressed = gzencode($json, 6); // compression level 6 (balanced speed/size)
-            if ($compressed !== false) {
-                header('Content-Encoding: gzip');
-                header('Content-Length: ' . strlen($compressed));
-                echo $compressed;
-            } else {
-                // Fallback if compression fails
-                header('Content-Length: ' . strlen($json));
-                echo $json;
-            }
-        } elseif (!$serverCompression && str_contains($acceptEncoding, 'deflate') && function_exists('gzdeflate')) {
-            $compressed = gzdeflate($json, 6);
-            if ($compressed !== false) {
-                header('Content-Encoding: deflate');
-                header('Content-Length: ' . strlen($compressed));
-                echo $compressed;
-            } else {
-                header('Content-Length: ' . strlen($json));
-                echo $json;
-            }
-        } else {
-            header('Content-Length: ' . strlen($json));
-            echo $json;
-        }
-
-        // Terminate the script
-        exit;
+        // Thrown rather than echoed: the Router catches this at the innermost point
+        // and returns it, so middleware unwind normally and the Kernel emits once.
+        throw new \Core\Http\ResponseEmitted(is_array($data) ? $data : ['data' => $data], $response_code);
     }
 }
 
@@ -153,7 +102,6 @@ if (!function_exists('isSuccess')) {
         // Convert the input response code to an integer if it's a string.
         $code = is_string($code) ? (int) $code : $code;
 
-        // Check if the code is in the list of success status codes.
         return in_array($code, $successStatus);
     }
 }
@@ -173,7 +121,6 @@ if (!function_exists('isError')) {
         // Convert the input response code to an integer if it's a string.
         $code = is_string($code) ? (int) $code : $code;
 
-        // Check if the code is in the list of error status codes.
         return in_array($code, $errorStatus);
     }
 }
@@ -193,7 +140,6 @@ if (!function_exists('isUnauthorized')) {
         // Convert the input response code to an integer if it's a string.
         $code = is_string($code) ? (int) $code : $code;
 
-        // Check if the code is in the list of unauthorized status codes.
         return in_array($code, $unauthorizedStatusCodes);
     }
 }

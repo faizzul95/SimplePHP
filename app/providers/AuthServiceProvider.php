@@ -2,16 +2,16 @@
 
 namespace App\Providers;
 
-use App\Support\Auth\AuthManager;
+use Core\Auth\AuthManager;
 
 class AuthServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        register_framework_service('auth.login_policy', fn() => new \App\Support\Auth\LoginPolicy((array) ($this->config['auth'] ?? [])));
-        register_framework_service('auth.authorization', fn() => new \App\Support\Auth\AuthorizationService((array) ($this->config['auth'] ?? [])));
-        register_framework_service('auth.tokens', fn() => new \App\Support\Auth\TokenService((array) ($this->config['auth'] ?? [])));
-        register_framework_service('auth.access_credentials', fn() => new \App\Support\Auth\AccessCredentialService((array) ($this->config['auth'] ?? [])));
+        register_framework_service('auth.login_policy', fn() => new \Core\Auth\LoginPolicy((array) ($this->config['auth'] ?? [])));
+        register_framework_service('auth.authorization', fn() => new \Core\Auth\AuthorizationService((array) ($this->config['auth'] ?? [])));
+        register_framework_service('auth.tokens', fn() => new \Core\Auth\TokenService((array) ($this->config['auth'] ?? [])));
+        register_framework_service('auth.access_credentials', fn() => new \Core\Auth\AccessCredentialService((array) ($this->config['auth'] ?? [])));
         register_framework_service('auth', fn() => new AuthManager(
             (array) ($this->config['auth'] ?? []),
             framework_service('auth.login_policy'),

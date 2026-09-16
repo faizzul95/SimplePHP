@@ -11,27 +11,18 @@ namespace Core\Database\Interface;
  * It provides methods for inserting, updating, deleting, and batch processing
  * of data, as well as transaction handling.
  *
- * @category Database
- * @package Core\Database
  * @license http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @version 0.0.1
  */
 interface BuilderCrudInterface
 {
     /**
      * Inserts a new record into the database.
      *
-     * @param array $data An associative array of column names and their values.
      * @return mixed The result of the insert operation, depending on the database driver.
      */
     public function insert(array $data);
 
-    /**
-     * Updates an existing record in the database.
-     *
-     * @param array $data An associative array of column names and their values.
-     * @return mixed The result of the update operation, depending on the database driver.
-     */
+    /** @return mixed The result of the update operation, depending on the database driver. */
     public function update(array $data);
 
     /**
@@ -42,17 +33,8 @@ interface BuilderCrudInterface
     public function delete();
 
     /**
-     * Soft deletes or updates a record by setting the specified column(s) to a value.
+     * Soft deletes or updates a record by setting the specified column(s) to a value. If called with no arguments, defaults to setting the 'deleted_at' column to the current timestamp. You can also pass a column name and value, or an associative array of columns and values to update. Examples: softDelete(); // sets 'deleted_at' to now softDelete('status', 0); // sets 'status' to 0 softDelete(['deleted_at' => ..., 'status' => 0]); // sets both columns
      *
-     * If called with no arguments, defaults to setting the 'deleted_at' column to the current timestamp.
-     * You can also pass a column name and value, or an associative array of columns and values to update.
-     *
-     * Examples:
-     *   softDelete(); // sets 'deleted_at' to now
-     *   softDelete('status', 0); // sets 'status' to 0
-     *   softDelete(['deleted_at' => ..., 'status' => 0]); // sets both columns
-     *
-     * @param string|array $column The column name or an associative array of columns and values to update.
      * @param mixed $value The value to set for the column (ignored if $column is array).
      * @return mixed The result of the update operation, depending on the database driver.
      */
@@ -77,7 +59,6 @@ interface BuilderCrudInterface
     /**
      * Inserts records from an iterable source in bounded batches.
      *
-     * @param iterable $rows Iterable of associative arrays.
      * @param callable|null $progress Receives per-batch state; return false to stop.
      * @param int|null $batchSize Optional batch size override.
      * @return int Total processed rows.
@@ -95,7 +76,6 @@ interface BuilderCrudInterface
     /**
      * Updates records from an iterable source in bounded batches.
      *
-     * @param iterable $rows Iterable of associative arrays.
      * @param callable|null $progress Receives per-batch state; return false to stop.
      * @param int|null $batchSize Optional batch size override.
      * @return int Total processed rows.
@@ -118,9 +98,6 @@ interface BuilderCrudInterface
     /**
      * Upserts records from an iterable source in bounded batches.
      *
-     * @param iterable $rows Iterable of associative arrays.
-     * @param string|array $uniqueBy Unique key columns.
-     * @param array|null $updateColumns Columns to update on conflicts.
      * @param callable|null $progress Receives per-batch state; return false to stop.
      * @param int|null $batchSize Optional batch size override.
      * @return int Total processed rows.
@@ -130,8 +107,6 @@ interface BuilderCrudInterface
     /**
      * Deletes rows by column values from an iterable source in bounded batches.
      *
-     * @param iterable $values Iterable of scalar identifier values.
-     * @param string $column Column to match values against.
      * @param callable|null $progress Receives per-batch state; return false to stop.
      * @param int|null $batchSize Optional batch size override.
      * @return int Total processed rows.
@@ -155,7 +130,6 @@ interface BuilderCrudInterface
      * Update an existing record or insert a new one (alias for insertOrUpdate).
      *
      * @param array $conditions Conditions to match existing record.
-     * @param array $data Data to insert or update.
      * @return mixed
      */
     public function updateOrInsert(array $conditions, array $data);
@@ -163,7 +137,6 @@ interface BuilderCrudInterface
     /**
      * Get the first record matching conditions or create a new one
      *
-     * @param array $conditions Conditions to search for
      * @param array $data Additional data to set when creating (merged with conditions)
      * @return array The existing or newly created record
      */
@@ -172,7 +145,6 @@ interface BuilderCrudInterface
     /**
      * Get the first record matching conditions or return an unsaved attribute array.
      *
-     * @param array $conditions Conditions to search for.
      * @param array $data Additional attributes to merge into the unsaved payload.
      * @return array
      */
@@ -181,9 +153,6 @@ interface BuilderCrudInterface
     /**
      * Update a matching record or create a new one, then return the persisted row.
      *
-     * @param array $conditions Conditions to search for.
-     * @param array $data Data to update or insert.
-     * @param string $primaryKey Primary key column name.
      * @return mixed
      */
     public function updateOrCreate(array $conditions, array $data = [], string $primaryKey = 'id');
@@ -191,9 +160,7 @@ interface BuilderCrudInterface
     /**
      * Increment a column's value by a given amount
      *
-     * @param string $column Column to increment
      * @param int $amount Amount to increment by (default 1)
-     * @param array $extra Additional columns to update
      * @return mixed Result of the update operation
      */
     public function increment(string $column, int $amount = 1, array $extra = []);
@@ -201,9 +168,7 @@ interface BuilderCrudInterface
     /**
      * Decrement a column's value by a given amount
      *
-     * @param string $column Column to decrement
      * @param int $amount Amount to decrement by (default 1)
-     * @param array $extra Additional columns to update
      * @return mixed Result of the update operation
      */
     public function decrement(string $column, int $amount = 1, array $extra = []);
@@ -219,7 +184,6 @@ interface BuilderCrudInterface
     /**
      * Restore a soft-deleted row by clearing the soft-delete marker column.
      *
-     * @param string $column Soft-delete marker column.
      * @return mixed
      */
     public function restore(string $column = 'deleted_at');

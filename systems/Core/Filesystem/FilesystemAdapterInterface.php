@@ -53,7 +53,6 @@ interface FilesystemAdapterInterface
      * Remote drivers (S3, GDrive): generate a driver-native pre-signed URL.
      *
      * @param string             $path    Relative path within the disk.
-     * @param \DateTimeInterface $expiry  Absolute expiry time.
      * @return string  Absolute URL with embedded expiry + signature.
      */
     public function temporaryUrl(string $path, \DateTimeInterface $expiry): string;

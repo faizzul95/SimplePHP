@@ -1,11 +1,49 @@
 # Disable directory browsing
 Options -Indexes
 
+# Deny dotfiles and sensitive project files. Deliberately OUTSIDE the mod_rewrite
+# block below: without mod_rewrite every rule in it is inert and .env — which holds
+# the database credentials, APP_KEY and JWT secret — would be served as plain text.
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+<FilesMatch "(?i)^(\.env.*|composer\.(json|lock|phar)|package(-lock)?\.json|phpunit\.xml(\.dist)?|phpstan\.neon|Caddyfile|\.rr\.yaml|myth)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Deny source, dump and backup file extensions outright.
+<FilesMatch "(?i)\.(sql|sqlite|db|bak|old|orig|save|swp|swo|log|ini|conf|yml|yaml|lock|dist|sh|bash)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
     # Block direct access to sensitive folders
-    RewriteRule ^(app|systems|storage|logs|db)/ - [F,L,NC]
+    RewriteRule ^(app|systems|storage|logs|db|tests|docs|tools|vendor|node_modules)/ - [F,L,NC]
+
+    # Block the '#db' directory (SQL dumps). '#' arrives URL-encoded as %23.
+    RewriteRule ^(%23|#)db/ - [F,L,NC]
+
     # Prevent direct access to PHP files except index.php
     RewriteCond %{REQUEST_URI} !/index\.php$ [NC]
     RewriteCond %{THE_REQUEST} \s/+[^\s?]+\.php[\s?] [NC]

@@ -156,7 +156,6 @@ if (!function_exists('getProjectBaseUrl')) {
 
         $protocol = $isHttps ? 'https' : 'http';
 
-        // Check if we're on localhost
         $host = trim((string) ($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? ''));
         if ($host === '') {
             $projectRoot = defined('ROOT_DIR') ? rtrim(ROOT_DIR, DIRECTORY_SEPARATOR) : dirname(__DIR__);
@@ -315,6 +314,27 @@ if (!function_exists('framework_service')) {
     }
 }
 
+if (!function_exists('reset_framework_service_instances')) {
+    /**
+     * Drop every resolved service instance while keeping the resolvers registered.
+     *
+     * This is what a long-running worker needs between requests: the providers ran
+     * once at boot and must not run again, but the singletons they produced hold
+     * per-request state. Components\Auth in particular caches the resolved user and
+     * their permission set, so reusing the instance serves one caller's identity to
+     * the next.
+     *
+     * reset_framework_service() with no argument is the wrong tool here: it also
+     * clears the resolvers, which only makes sense in tests that re-register
+     * providers afterwards.
+     */
+    function reset_framework_service_instances(): void
+    {
+        $store = &framework_service_store();
+        $store['instances'] = [];
+    }
+}
+
 if (!function_exists('reset_framework_service')) {
     function reset_framework_service(?string $name = null): void
     {
@@ -460,25 +480,59 @@ spl_autoload_register(function ($class) {
 |--------------------------------------------------------------------------
 */
 
+if (!function_exists('helperCacheFile')) {
+    function helperCacheFile(): string
+    {
+        $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR;
+
+        return $rootDir . 'storage' . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'helpers.cache.php';
+    }
+}
+
+if (!function_exists('discoverHelperFiles')) {
+    /** @return string[] Absolute paths, sorted so load order is deterministic. */
+    function discoverHelperFiles(): array
+    {
+        $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR;
+        $files = glob($rootDir . 'app' . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR . '*.php') ?: [];
+        sort($files, SORT_NATURAL | SORT_FLAG_CASE);
+
+        return $files;
+    }
+}
+
 if (!function_exists('loadHelperFiles')) {
     function loadHelperFiles()
     {
-        $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__) . DIRECTORY_SEPARATOR;
-        $helpersDir = $rootDir . 'app' . DIRECTORY_SEPARATOR . 'helpers' . DIRECTORY_SEPARATOR;
+        // The glob plus a stat per file costs ~0.85 ms on every request for a directory
+        // that only changes at deploy. `php myth config:cache` writes the resolved list.
+        $cacheFile = helperCacheFile();
 
-        // Get all PHP files in the General folder
-        $helperFiles = glob($helpersDir . '*.php');
+        if (is_file($cacheFile)) {
+            $cached = include $cacheFile;
 
-        foreach ($helperFiles as $file) {
-            try {
-                if (is_readable($file)) {
+            if (is_array($cached) && $cached !== []) {
+                $complete = true;
+
+                foreach ($cached as $file) {
+                    // A helper deleted since the last config:cache would otherwise leave
+                    // its functions undefined until something called one.
+                    if (!is_file($file)) {
+                        $complete = false;
+                        break;
+                    }
+
                     include_once $file;
-                } else {
-                    throw new Exception("File not readable: $file");
                 }
-            } catch (Exception $e) {
-                die("Error: Unable to resolve file path for $file. " . $e->getMessage());
+
+                if ($complete) {
+                    return;
+                }
             }
+        }
+
+        foreach (discoverHelperFiles() as $file) {
+            include_once $file;
         }
     }
 }
@@ -582,7 +636,6 @@ if (!function_exists('loadScopeMacroDBFunctions')) {
                 if (preg_match_all('/(?:^|\s)function\s+([a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)\s*\(/im', $content, $matches)) {
                     if (!empty($matches[1])) {
                         $functions = array_unique($matches[1]);
-                        // Filter out magic methods and constructors that shouldn't be called directly
                         $functions = array_filter($functions, function ($func) {
                             return !in_array(strtolower($func), ['__construct', '__destruct', '__call', '__callstatic', '__get', '__set', '__isset', '__unset', '__sleep', '__wakeup', '__serialize', '__unserialize', '__tostring', '__invoke', '__set_state', '__clone', '__debuginfo']);
                         });
@@ -764,7 +817,7 @@ if (!function_exists('loadMiddlewaresFiles')) {
 
 /*
 |--------------------------------------------------------------------------
-| DEBUG COMPONENT 
+| DEBUG COMPONENT
 |--------------------------------------------------------------------------
 */
 
@@ -777,7 +830,7 @@ if (!function_exists('debug')) {
 
 /*
 |--------------------------------------------------------------------------
-| LOGGER COMPONENT 
+| LOGGER COMPONENT
 |--------------------------------------------------------------------------
 */
 
@@ -865,6 +918,54 @@ if (!function_exists('response')) {
     function response()
     {
         return framework_service('response');
+    }
+}
+
+if (!function_exists('reply')) {
+    /**
+     * One answer for both a browser and an API client.
+     *
+     * JSON for a caller that asked for it, a redirect carrying the message as
+     * flash for one that did not. See Core\Http\Reply.
+     *
+     * ok() and fail() below are the two shapes worth naming; reply() is for
+     * anything else, such as a status that is neither.
+     */
+    function reply(?string $message = null, mixed $data = null, int $status = 200): \Core\Http\Reply
+    {
+        return \Core\Http\Reply::make($message, $data, $status);
+    }
+}
+
+if (!function_exists('ok')) {
+    /**
+     * A successful answer.
+     *
+     *     return ok('User saved', $row);
+     *     return ok('User saved', $row)->route('directory');
+     *     return ok()->data($rows);
+     */
+    function ok(?string $message = null, mixed $data = null): \Core\Http\Reply
+    {
+        return \Core\Http\Reply::make($message, $data, 200);
+    }
+}
+
+if (!function_exists('fail')) {
+    /**
+     * A refused answer.
+     *
+     *     return fail('Failed to delete role');          // 422
+     *     return fail('User not found', 404);
+     *     return fail('Check the form')->errors($errors);
+     *
+     * 422 by default because that is what a rejected write is: the request was
+     * understood and could not be carried out. 400 says the request itself was
+     * malformed, which is usually not what the caller means.
+     */
+    function fail(string $message, int $status = 422): \Core\Http\Reply
+    {
+        return \Core\Http\Reply::make($message, null, $status);
     }
 }
 
@@ -990,14 +1091,19 @@ if (!function_exists('validator')) {
 */
 
 if (!function_exists('csrf')) {
+    /**
+     * The component is a framework service rather than a `static` in here so the
+     * worker flush can drop it between requests. Held in a function static it
+     * survived, and with it the previous request's cached token and URI — under
+     * RoadRunner that hands client B the token minted for client A.
+     */
     function csrf()
     {
-        static $instance = null;
-        if ($instance === null) {
+        return framework_service('csrf', function () {
             global $config;
-            $instance = new \Components\CSRF($config['security']['csrf']);
-        }
-        return $instance;
+
+            return new \Components\CSRF((array) ($config['security']['csrf'] ?? []));
+        });
     }
 }
 
@@ -1028,9 +1134,6 @@ if (!function_exists('csrf_value')) {
 if (!function_exists('collect')) {
     /**
      * Create a new Collection instance.
-     *
-     * @param  array|\Core\Collection $items
-     * @return \Core\Collection
      */
     function collect(array|\Core\Collection $items = []): \Core\Collection
     {
@@ -1050,20 +1153,16 @@ if (!function_exists('collect')) {
 */
 
 if (!function_exists('cache')) {
-    /**
-     * Get / set cache values, or return the CacheManager instance.
-     *
-     * @param  string|array|null $key
-     * @param  mixed             $default
-     * @return mixed|\Core\Cache\CacheManager
-     */
+    /** Get / set cache values, or return the CacheManager instance. */
     function cache(string|array|null $key = null, mixed $default = null): mixed
     {
-        static $manager = null;
-
-        if ($manager === null) {
-            $manager = new \Core\Cache\CacheManager(\config('cache') ?? []);
-        }
+        // A framework service, not a function static: a static survives the
+        // request under a worker SAPI and the flush cannot reach it, so the
+        // request-scoped array store stopped being request-scoped.
+        $manager = framework_service(
+            'cache',
+            static fn(): \Core\Cache\CacheManager => new \Core\Cache\CacheManager(\config('cache') ?? [])
+        );
 
         // No arguments → return the manager
         if ($key === null) {
@@ -1093,18 +1192,14 @@ if (!function_exists('dispatch')) {
     /**
      * Dispatch a job to the queue.
      *
-     * @param  \Core\Queue\Job $job
      * @return string|null  Job ID (null for sync driver)
      */
     function dispatch(\Core\Queue\Job $job): ?string
     {
-        static $dispatcher = null;
-
-        if ($dispatcher === null) {
-            $dispatcher = new \Core\Queue\Dispatcher(\config('queue') ?? []);
-        }
-
-        return $dispatcher->dispatch($job);
+        return framework_service(
+            'queue.dispatcher',
+            static fn(): \Core\Queue\Dispatcher => new \Core\Queue\Dispatcher(\config('queue') ?? [])
+        )->dispatch($job);
     }
 }
 

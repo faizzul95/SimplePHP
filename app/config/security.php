@@ -18,6 +18,45 @@ $defaultWriteContentTypes = [
 */
 
 $config['security'] = [
+    // The input XSS filter is a blocklist: it rejects ordinary text such as
+    // "C++ template <vector>" and misses known evasions. Output escaping is the real
+    // defence, so detection only logs unless this is switched on.
+    'xss_input_blocking' => (bool) env('SECURITY_XSS_INPUT_BLOCKING', false),
+
+    /*
+    |----------------------------------------------------------------------
+    | Request Signing
+    |----------------------------------------------------------------------
+    |
+    | The mobile counterpart to CSRF, applied with the `signed` middleware.
+    |
+    | CSRF defends against a browser attaching a cookie by itself. A bearer token
+    | is not attached by anything but the app's own code, so a CSRF token on a
+    | token-authenticated request protects nothing. What a token client is exposed
+    | to is replay — a request captured once and sent again — and that is what
+    | this stops: a timestamp, a one-time nonce, and an HMAC over the method,
+    | path and body.
+    |
+    | The signing key is the caller's own access token, so the secret is
+    | per-device and revoking the token revokes it. shared_secret is only for
+    | endpoints reached before authentication, and is weaker because every copy
+    | of the app carries it.
+    |
+    | Off by default: every client has to sign before this can be turned on.
+    */
+    'request_signing' => [
+        'enabled' => (bool) env('SECURITY_REQUEST_SIGNING', false),
+        'algorithm' => (string) env('SECURITY_REQUEST_SIGNING_ALGO', 'sha256'),
+        // How far a client's clock may drift. Wider means a captured request
+        // stays replayable for longer; narrower rejects honest clients.
+        'tolerance_seconds' => (int) env('SECURITY_REQUEST_SIGNING_TOLERANCE', 300),
+        'nonce_ttl' => (int) env('SECURITY_REQUEST_SIGNING_NONCE_TTL', 600),
+        'shared_secret' => (string) env('SECURITY_REQUEST_SIGNING_SECRET', ''),
+        'header' => (string) env('SECURITY_REQUEST_SIGNING_HEADER', 'X-Signature'),
+        'timestamp_header' => (string) env('SECURITY_REQUEST_SIGNING_TIMESTAMP_HEADER', 'X-Timestamp'),
+        'nonce_header' => (string) env('SECURITY_REQUEST_SIGNING_NONCE_HEADER', 'X-Nonce'),
+    ],
+
     'csrf' => [
         'csrf_protection'    => (bool) env('CSRF_PROTECTION', true),
         'csrf_token_name'    => (string) env('CSRF_TOKEN_NAME', 'csrf_token'),
@@ -196,7 +235,7 @@ $config['security'] = [
             'app/http/controllers',
         ],
         'model_paths' => [
-            'app/Models',
+            'app/models',
         ],
     ],
 

@@ -4,6 +4,7 @@ namespace Core\Database\Concerns;
 
 use Core\Database\PerformanceMonitor;
 use Core\Database\SlowQueryLogger;
+use Core\Database\TimeoutDialect;
 
 /**
  * Trait HasProfiling
@@ -16,12 +17,12 @@ use Core\Database\SlowQueryLogger;
  * applySessionPerformanceRules, shouldRetryThrowable, executeWithRetry.
  *
  * Consumed by: BaseDatabase
- *
- * @category Database
- * @package  Core\Database\Concerns
  */
 trait HasProfiling
 {
+    /** @var array<string, TimeoutDialect> Resolved timeout spelling per connection. */
+    private array $timeoutDialects = [];
+
     /**
      * Return the collected profiler payload for the current connection.
      *
@@ -35,7 +36,6 @@ trait HasProfiling
     /**
      * Switch the active profiler bucket used for subsequent timing data.
      *
-     * @param string $identifier
      * @return $this
      */
     protected function _setProfilerIdentifier($identifier = 'main')
@@ -195,9 +195,6 @@ trait HasProfiling
 
     /**
      * Capture query text for profiler output only when profiling is enabled.
-     *
-     * @param array|null $binds
-     * @return void
      */
     protected function _captureExecutedQuery(?array $binds = null): void
     {
@@ -216,10 +213,6 @@ trait HasProfiling
      * Used by adaptive iteration paths that want observability around runtime
      * tuning decisions but do not execute through the regular query-profiler
      * start/stop flow.
-     *
-     * @param string $key
-     * @param array $metadata
-     * @return void
      */
     protected function _appendProfilerMetadata(string $key, array $metadata): void
     {
@@ -250,10 +243,6 @@ trait HasProfiling
 
     /**
      * Persist a slow-query log entry when runtime exceeds the configured threshold.
-     *
-     * @param float $executionTime
-     * @param array $profilerEntry
-     * @return void
      */
     protected function logSlowQueryIfNeeded(float $executionTime, array $profilerEntry): void
     {
@@ -287,8 +276,6 @@ trait HasProfiling
 
     /**
      * Return normalized slow-query logging configuration.
-     *
-     * @return array
      */
     protected function slowQueryConfiguration(): array
     {
@@ -303,8 +290,6 @@ trait HasProfiling
 
     /**
      * Return normalized retry configuration for transient database errors.
-     *
-     * @return array
      */
     protected function retryConfiguration(): array
     {
@@ -319,8 +304,6 @@ trait HasProfiling
 
     /**
      * Return normalized session timeout configuration for the current driver.
-     *
-     * @return array
      */
     protected function statementTimeoutConfiguration(): array
     {
@@ -335,8 +318,6 @@ trait HasProfiling
 
     /**
      * Apply best-effort per-session timeout and lock-wait settings.
-     *
-     * @return void
      */
     protected function applySessionPerformanceRules(): void
     {
@@ -350,26 +331,74 @@ trait HasProfiling
             return;
         }
 
-        try {
-            $lockWaitTimeout = (int) ($configuration['lock_wait_timeout_seconds'] ?? 15);
-            if ($lockWaitTimeout > 0) {
-                $pdo->exec('SET SESSION innodb_lock_wait_timeout = ' . $lockWaitTimeout);
-            }
+        // Each setting gets its own try/catch. Sharing one meant a failure on the
+        // first silently skipped the second, and both were swallowed — so a
+        // deployment could believe it had a 15s statement timeout while having
+        // none at all.
+        $dialect = $this->timeoutDialect($pdo);
 
-            $statementTimeoutMs = (int) ($configuration['statement_timeout_ms'] ?? 0);
-            if ($statementTimeoutMs > 0) {
-                $pdo->exec('SET SESSION max_execution_time = ' . $statementTimeoutMs);
-            }
+        $lockWaitValue = $dialect->lockWaitValue((int) ($configuration['lock_wait_timeout_seconds'] ?? 15));
+        if ($lockWaitValue !== null && $dialect->lockWaitVariable !== null) {
+            $this->applySessionVariable($pdo, $dialect->lockWaitVariable, $lockWaitValue);
+        }
+
+        $statementValue = $dialect->statementValue((int) ($configuration['statement_timeout_ms'] ?? 0));
+        if ($statementValue !== null && $dialect->statementVariable !== null) {
+            $this->applySessionVariable($pdo, $dialect->statementVariable, $statementValue);
+        }
+    }
+
+    /**
+     * The timeout spelling for whichever engine is on the other end.
+     *
+     * Cached per connection: the answer cannot change while the process runs, and
+     * reading the server banner on every connect is a wasted round trip.
+     */
+    protected function timeoutDialect(\PDO $pdo): TimeoutDialect
+    {
+        if (isset($this->timeoutDialects[$this->connectionName])) {
+            return $this->timeoutDialects[$this->connectionName];
+        }
+
+        try {
+            $pdoDriver = (string) $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
+            $version = (string) $pdo->getAttribute(\PDO::ATTR_SERVER_VERSION);
+        } catch (\Throwable) {
+            $pdoDriver = (string) ($this->driver ?? '');
+            $version = '';
+        }
+
+        return $this->timeoutDialects[$this->connectionName] = TimeoutDialect::for($pdoDriver, $version);
+    }
+
+    /**
+     * Apply one session variable, reporting rather than hiding a failure.
+     *
+     * Still best-effort — a managed host may forbid the SET — but a silent failure
+     * on a timeout control is indistinguishable from having no control.
+     */
+    protected function applySessionVariable(\PDO $pdo, string $variable, string $value): bool
+    {
+        try {
+            $pdo->exec('SET SESSION ' . $variable . ' = ' . $value);
+
+            return true;
         } catch (\Throwable $e) {
-            // Session-level tuning is best effort.
+            \Core\Support\SafeLog::warning(sprintf(
+                'Could not apply session variable %s=%s on connection [%s]: %s. '
+                . 'The corresponding db.performance.timeouts setting is NOT in effect.',
+                $variable,
+                $value,
+                $this->connectionName,
+                $e->getMessage()
+            ));
+
+            return false;
         }
     }
 
     /**
      * Decide whether a throwable qualifies for retry as a transient database failure.
-     *
-     * @param \Throwable $throwable
-     * @return bool
      */
     protected function shouldRetryThrowable(\Throwable $throwable): bool
     {
@@ -395,7 +424,6 @@ trait HasProfiling
     /**
      * Execute an operation with retry semantics for transient lock and deadlock errors.
      *
-     * @param callable $operation
      * @return mixed
      */
     protected function executeWithRetry(callable $operation)

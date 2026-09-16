@@ -19,8 +19,26 @@ use Core\Database\Schema\Schema;
  */
 class Dispatcher
 {
+    /**
+     * Tables already verified in this process, keyed by "jobsTable|failedTable".
+     *
+     * dispatch() called ensureTable() every time, so each queued job paid two
+     * CREATE TABLE IF NOT EXISTS statements plus the hasTable/hasColumn/SHOW INDEX
+     * backfill probes — roughly seven round trips per dispatch, all of which can
+     * only be true or false once per process.
+     *
+     * @var array<string, true>
+     */
+    private static array $ensuredTables = [];
+
     private array $config;
     private string $driver;
+
+    /** Reset the per-process schema guard (worker mode and test isolation). */
+    public static function reset(): void
+    {
+        self::$ensuredTables = [];
+    }
 
     public function __construct(?array $config = null)
     {
@@ -28,25 +46,40 @@ class Dispatcher
         $this->driver = $this->config['default'] ?? 'sync';
     }
 
-    /**
-     * Dispatch a job to the queue.
-     *
-     * @param Job $job The job instance to dispatch
-     * @return string|null The job ID (database/redis driver) or null (sync driver)
-     */
+    /** @return string|null The job ID (database/redis driver) or null (sync driver) */
     public function dispatch(Job $job): ?string
     {
-        if ($this->driver === 'sync') {
-            return $this->dispatchSync($job);
+        // A job that declares uniqueId() must not be queued twice while one is
+        // still in flight. The claim is atomic, so N parallel producers racing on
+        // the same key produce exactly one winner.
+        $uniqueKey = UniqueLock::keyFor($job);
+
+        if ($uniqueKey !== null && !UniqueLock::acquire($uniqueKey, UniqueLock::ttlFor($job))) {
+            return null;
         }
 
-        if ($this->driver === 'redis') {
-            return $this->dispatchToRedis($job);
+        try {
+            if ($this->driver === 'sync') {
+                return $this->dispatchSync($job);
+            }
+
+            if ($this->driver === 'redis') {
+                return $this->dispatchToRedis($job);
+            }
+
+            $this->ensureTable();
+
+            return $this->dispatchToDatabase($job);
+        } catch (\Throwable $e) {
+            // The job never made it onto the queue, so nothing will ever release
+            // the lock. Holding it for the full TTL would block every later
+            // attempt at the same work.
+            if ($uniqueKey !== null) {
+                UniqueLock::release($uniqueKey);
+            }
+
+            throw $e;
         }
-
-        $this->ensureTable();
-
-        return $this->dispatchToDatabase($job);
     }
 
     /**
@@ -70,6 +103,11 @@ class Dispatcher
      */
     private function dispatchSync(Job $job): null
     {
+        // The sync driver runs the job here and now, so "in flight" ends when this
+        // method does. Releasing in a finally keeps a failed sync job from holding
+        // the uniqueness claim for the whole TTL.
+        $uniqueKey = UniqueLock::keyFor($job);
+
         try {
             $job->handle();
         } catch (\Throwable $e) {
@@ -78,6 +116,10 @@ class Dispatcher
             $this->logQueueError('Sync job failed [' . get_class($job) . ']: ' . $e->getMessage());
 
             throw $e;
+        } finally {
+            if ($uniqueKey !== null) {
+                UniqueLock::release($uniqueKey);
+            }
         }
 
         return null;
@@ -138,6 +180,13 @@ class Dispatcher
 
         $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
         $safeFailedTable = preg_replace('/[^a-zA-Z0-9_]/', '', $failedTable);
+
+        $guardKey = $safeTable . '|' . $safeFailedTable;
+        if (isset(self::$ensuredTables[$guardKey])) {
+            return;
+        }
+
+        self::$ensuredTables[$guardKey] = true;
 
         db()->rawQuery("
             CREATE TABLE IF NOT EXISTS `{$safeTable}` (

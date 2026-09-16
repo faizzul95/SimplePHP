@@ -5,8 +5,6 @@ namespace Core\Database;
 /**
  * Database Class
  *
- * @category  Database Access
- * @package   Database
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
@@ -23,7 +21,6 @@ use Core\Database\Interface\ResultInterface;
 
 use Core\Database\Traits\Macroable;
 use Core\Database\Traits\Scopeable;
-use Core\Database\Traits\ValidationTrait;
 
 use Core\Database\Concerns\HasDebugHelpers;
 use Core\Database\Concerns\HasStreaming;
@@ -43,13 +40,60 @@ use Components\Logger;
 /** @phpstan-consistent-constructor */
 abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterface, BuilderStatementInterface, QueryInterface, BuilderCrudInterface, ResultInterface
 {
-    use Macroable, Scopeable, ValidationTrait;
+    use Macroable, Scopeable;
     use HasDebugHelpers, HasStreaming;
     use HasWhereConditions, HasJoins, HasAggregates;
     use HasEagerLoading, HasPaginateCountCache, HasProfiling;
 
     protected const DEFAULT_PAGINATE_LIMIT = 10;
     protected const MAX_PAGINATE_LIMIT = 500;
+
+    /** Total transaction attempts when db.retry.attempts is unset. */
+    protected const DEFAULT_TRANSACTION_ATTEMPTS = 3;
+
+    /** First backoff step, in milliseconds, when db.retry.delay_ms is unset. */
+    protected const DEFAULT_RETRY_DELAY_MS = 50;
+
+    /** Ceiling on the exponential backoff so a retry storm cannot stall a worker. */
+    protected const MAX_RETRY_DELAY_MS = 2000;
+
+    /**
+     * Query grammars keyed by driver name.
+     *
+     * Static because a grammar is stateless and the builder asks for one on every
+     * identifier it wraps; per-instance would rebuild it for each query object.
+     *
+     * @var array<string, \Core\Database\Query\Grammars\QueryGrammar>
+     */
+    private static array $grammarCache = [];
+
+    /**
+     * Driver error codes worth replaying a transaction for.
+     *
+     * @var list<int>
+     */
+    protected const RETRYABLE_DRIVER_CODES = [
+        1213, // ER_LOCK_DEADLOCK
+        1205, // ER_LOCK_WAIT_TIMEOUT
+        1479, // ER_XA_RBROLLBACK style branch rollback
+        1614, // ER_XA_RBDEADLOCK
+        3058, // Galera / Group Replication certification conflict
+        3572, // ER_LOCK_NOWAIT — row locked and NOWAIT was requested
+        2006, // CR_SERVER_GONE_ERROR
+        2013, // CR_SERVER_LOST
+    ];
+    /**
+     * Driver codes meaning "the server gave up on this statement", not "the query
+     * was wrong". Retrying is pointless — the same query will take the same time —
+     * so these are surfaced with an explanation instead.
+     *
+     * @var list<int>
+     */
+    protected const STATEMENT_TIMEOUT_CODES = [
+        3024, // MySQL   ER_QUERY_TIMEOUT      — max_execution_time exceeded
+        1969, // MariaDB ER_STATEMENT_TIMEOUT  — max_statement_time exceeded
+    ];
+
     protected const MAX_PAGINATE_FILTER_LENGTH = 255;
     protected const DEFAULT_ITERABLE_WRITE_BATCH_SIZE = 2000;
 
@@ -195,7 +239,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Set the fillable allowlist at runtime.
      *
      * @param string[] $columns
-     * @return $this
      */
     public function setFillable(array $columns): static
     {
@@ -217,7 +260,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Set the guarded denylist at runtime.
      *
      * @param string[] $columns
-     * @return $this
      */
     public function setGuarded(array $columns): static
     {
@@ -351,9 +393,16 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $_lock = null;
 
     /**
+     * @var bool Whether the next insert should skip rows that violate a unique key
+     */
+    protected $_insertIgnore = false;
+
+    /**
      * @var bool Transaction state flag
      */
     protected $inTransaction = false;
+
+    protected int $savepointDepth = 0;
 
     /**
      * @var bool Enable/disable query profiling (set via env.php)
@@ -379,9 +428,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Create & store a new PDO instance
-     *
-     * @param string $name
-     * @param array  $params
      *
      * @return $this
      */
@@ -417,7 +463,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Switch the active connection name used by subsequent queries.
      *
-     * @param string $connectionID
      * @return void
      */
     public function setConnection($connectionID)
@@ -428,7 +473,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Return the active connection name.
      *
-     * @param string|null $connectionID Unused legacy parameter.
      * @return string|null
      */
     public function getConnection($connectionID = null)
@@ -439,7 +483,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Override the schema/database used when qualifying table names.
      *
-     * @param string|null $databaseName
      * @return void
      */
     public function setDatabase($databaseName = null)
@@ -479,13 +522,75 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
+     * The grammar for the active connection.
+     *
+     * Every engine-specific fragment the builder emits should come from here
+     * rather than be written inline, so adding PostgreSQL or SQL Server means
+     * writing a grammar rather than auditing the builder for backticks.
+     *
+     * Resolved lazily and memoised per driver: this is called from the middle of
+     * query construction, where a registry lookup per identifier would be felt.
+     */
+    protected function grammar(): \Core\Database\Query\Grammars\QueryGrammar
+    {
+        $driver = $this->resolveGrammarDriverName();
+
+        return self::$grammarCache[$driver] ??= DriverRegistry::queryGrammar($driver);
+    }
+
+    /**
+     * MariaDB reports itself as the `mysql` PDO driver, and the two grammars
+     * differ on temporal expressions and RETURNING — so the banner decides.
+     */
+    private function resolveGrammarDriverName(): string
+    {
+        // Checked rather than caught: the builder compiles SQL before it ever
+        // connects, and reaching into $this->pdo for a connection that does not
+        // exist emits a warning on the way to the exception.
+        if (!isset($this->pdo[$this->connectionName])) {
+            return 'mysql';
+        }
+
+        try {
+            $driver = strtolower((string) $this->getDriver());
+        } catch (\Throwable) {
+            // Connection present but unusable; MySQL is the shipped default.
+            return 'mysql';
+        }
+
+        if ($driver === 'mysql') {
+            try {
+                if (stripos((string) $this->getVersion(), 'mariadb') !== false) {
+                    return 'mariadb';
+                }
+            } catch (\Throwable) {
+                // Version probe failed; the MySQL grammar is the safe answer.
+            }
+        }
+
+        return $driver;
+    }
+
+    /** Quote one identifier for the active engine. */
+    protected function wrapIdentifier(string $identifier): string
+    {
+        return $this->grammar()->wrap($identifier);
+    }
+
+    /** Quote the current table, schema-qualified when one is set. */
+    protected function wrapCurrentTable(): string
+    {
+        return $this->grammar()->wrapTable((string) $this->table, (string) ($this->schema ?? ''));
+    }
+
+    /**
      * Return the database server version for the active connection.
      *
      * @return string
      */
     public function getVersion()
     {
-        // Get database version 
+        // Get database version
         if (isset($this->pdo[$this->connectionName]) && $this->pdo[$this->connectionName] instanceof \PDO) {
             return $this->pdo[$this->connectionName]->getAttribute(\PDO::ATTR_SERVER_VERSION);
         } else {
@@ -506,11 +611,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Register read/write aliases for a logical connection name.
      *
-     * @param string $connectionName
      * @param array<int, string> $readAliases
-     * @param string $writeAlias
-     * @param bool $sticky
-     * @return $this
      */
     public function configureReadWriteRouting(string $connectionName, array $readAliases, string $writeAlias, bool $sticky = true): static
     {
@@ -542,8 +643,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Close an existing connection and optionally drop its config entry.
      *
-     * @param string $connection
-     * @param bool $remove
      * @return void
      */
     public function disconnect($connection = 'default', $remove = false)
@@ -567,7 +666,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Enable or disable query profiling and performance monitoring hooks.
      *
-     * @param bool $enable
      * @return $this
      */
     public function setProfilingEnabled($enable = true)
@@ -589,7 +687,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Check if profiling is enabled
-     * 
+     *
      * @return bool
      */
     public function isProfilingEnabled()
@@ -635,7 +733,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Restore query state from a previously saved state array.
      *
      * @param array $state Saved state from _saveQueryState()
-     * @return void
      */
     protected function _restoreQueryState(array $state): void
     {
@@ -704,22 +801,333 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param callable $callback
      * @return mixed
      */
-    public function transaction(callable $callback)
+    /**
+     * Run a callback inside a transaction, retrying on deadlock or lock-wait timeout.
+     *
+     * Nested calls use savepoints — beginTransaction() cannot nest, so a service that
+     * wrapped a repository already in a transaction used to throw outright. Only the
+     * outermost call retries: an inner rollback leaves the outer work intact, so
+     * replaying just the inner block would commit a half-applied change.
+     *
+     * @param int $attempts Total tries for the outermost transaction.
+     */
+    /**
+     * Run a callback inside a transaction.
+     *
+     * Defaults to a SINGLE attempt, deliberately. A retry re-executes the whole
+     * callback; InnoDB has rolled the database writes back, but anything the
+     * callback did outside the database — sending mail, calling an API, writing a
+     * file — happens again. Silently replaying that is worse than surfacing the
+     * deadlock, so opting in is the caller's decision.
+     *
+     * Use retryOnDeadlock() when the callback is genuinely idempotent.
+     *
+     * @param  int|null $attempts Total attempts including the first. Null = 1.
+     */
+    public function transaction(callable $callback, ?int $attempts = null)
     {
-        $this->beginTransaction();
+        if ($this->inTransaction()) {
+            // A nested call cannot retry: the outer transaction owns the retry
+            // decision, and replaying only the inner block would re-apply work on
+            // top of state the outer rollback has not undone.
+            return $this->transactionWithSavepoint($callback);
+        }
 
-        try {
-            $result = $callback($this);
-            $this->commit();
-            return $result;
-        } catch (\Throwable $e) {
-            $this->rollback();
-            throw $e;
+        $attempts = max(1, $attempts ?? 1);
+
+        for ($attempt = 1; ; $attempt++) {
+            $this->beginTransaction();
+
+            try {
+                $result = $callback($this);
+                $this->commit();
+
+                return $result;
+            } catch (\Throwable $e) {
+                $this->rollbackQuietly();
+
+                if ($attempt >= $attempts || !$this->isRetryableTransactionError($e)) {
+                    throw $e;
+                }
+
+                $this->recordTransactionRetry($e, $attempt);
+                $this->sleepBeforeRetry($attempt);
+            }
         }
     }
 
     /**
+     * Sort key values so concurrent writers acquire row locks in the same order.
+     *
+     * This is deadlock *prevention* rather than recovery, and it removes the most
+     * common cause outright. Two transactions that touch the same rows in opposite
+     * orders will deadlock every time:
+     *
+     *   T1: lock 1 → lock 2      T2: lock 2 → lock 1
+     *
+     * Both hold what the other wants. Give every writer the same ordering and the
+     * cycle cannot form — the second writer simply waits. Sorting a batch costs
+     * O(n log n) on an array that is about to become a round trip to the database,
+     * which is not a measurable cost.
+     *
+     * Mixed-type keys are compared as strings so the order is at least total and
+     * stable across processes; the guarantee that matters is that every writer
+     * agrees, not what the order actually is.
+     *
+     * @param  list<mixed> $keys
+     * @return list<mixed>
+     */
+    protected function orderKeysForLocking(array $keys): array
+    {
+        if (count($keys) < 2) {
+            return $keys;
+        }
+
+        $allNumeric = true;
+
+        foreach ($keys as $key) {
+            if (!is_int($key) && !(is_string($key) && ctype_digit($key))) {
+                $allNumeric = false;
+                break;
+            }
+        }
+
+        if ($allNumeric) {
+            usort($keys, static fn($a, $b): int => (int) $a <=> (int) $b);
+
+            return $keys;
+        }
+
+        usort($keys, static function ($a, $b): int {
+            return strcmp((string) $a, (string) $b);
+        });
+
+        return $keys;
+    }
+
+    /**
+     * Sort a batch of rows by their key column so concurrent writers lock in the
+     * same order. See orderKeysForLocking() for why this eliminates rather than
+     * merely retries the most common deadlock.
+     *
+     * Rows without the key column keep their relative position at the end: they
+     * cannot participate in a key-ordered lock sequence anyway, and reordering
+     * them would change behaviour for no benefit.
+     *
+     * @param  list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    protected function orderRowsForLocking(array $rows, string $keyColumn = 'id'): array
+    {
+        if (count($rows) < 2) {
+            return $rows;
+        }
+
+        $keyed = [];
+        $unkeyed = [];
+
+        foreach ($rows as $row) {
+            if (is_array($row) && array_key_exists($keyColumn, $row) && $row[$keyColumn] !== null) {
+                $keyed[] = $row;
+                continue;
+            }
+
+            $unkeyed[] = $row;
+        }
+
+        if (count($keyed) < 2) {
+            return array_merge($keyed, $unkeyed);
+        }
+
+        $order = $this->orderKeysForLocking(array_column($keyed, $keyColumn));
+        $position = array_flip(array_map(static fn($value): string => (string) $value, $order));
+
+        usort($keyed, static function (array $a, array $b) use ($keyColumn, $position): int {
+            return ($position[(string) $a[$keyColumn]] ?? 0) <=> ($position[(string) $b[$keyColumn]] ?? 0);
+        });
+
+        return array_merge($keyed, $unkeyed);
+    }
+
+    /**
+     * Run an idempotent callback in a transaction, replaying it on lock contention.
+     *
+     * A deadlock is not a fault condition in InnoDB — it is how the engine breaks a
+     * wait cycle. It picks a victim, rolls that transaction back completely, and
+     * expects the client to try again. Treating it as a hard failure is what turns
+     * normal concurrency into lost work.
+     *
+     * Only use this where replaying the callback is safe: no mail, no outbound HTTP,
+     * no file writes, no queue dispatch. Everything it touches must be inside the
+     * transaction that just got rolled back.
+     *
+     * Attempts and the backoff base come from `db.retry`
+     * (attempts: 3, delay_ms: 50), and honour `db.retry.enabled`.
+     */
+    public function retryOnDeadlock(callable $callback, ?int $attempts = null)
+    {
+        return $this->transaction($callback, $attempts ?? $this->configuredTransactionAttempts());
+    }
+
+    /**
+     * Roll back without letting the rollback itself mask the original failure.
+     *
+     * When the connection has already dropped, rollback() throws — and that
+     * exception would replace the deadlock we actually want to inspect and retry.
+     */
+    protected function rollbackQuietly(): void
+    {
+        try {
+            $this->rollback();
+        } catch (\Throwable $rollbackError) {
+            $this->logTransactionWarning('Rollback failed: ' . $rollbackError->getMessage());
+        }
+    }
+
+    /** Total attempts from db.retry, honouring db.retry.enabled. */
+    protected function configuredTransactionAttempts(): int
+    {
+        if (!function_exists('config')) {
+            return self::DEFAULT_TRANSACTION_ATTEMPTS;
+        }
+
+        $retry = (array) config('db.retry', []);
+
+        if (array_key_exists('enabled', $retry) && $retry['enabled'] !== true) {
+            return 1;
+        }
+
+        return max(1, (int) ($retry['attempts'] ?? self::DEFAULT_TRANSACTION_ATTEMPTS));
+    }
+
+    /**
+     * Exponential backoff with full jitter.
+     *
+     * Full jitter — a uniform draw from [0, cap] rather than a fixed delay plus a
+     * small wobble — is what actually decorrelates competing workers. With N
+     * workers deadlocking on the same rows, a fixed backoff makes all N wake up
+     * together and deadlock again.
+     */
+    protected function sleepBeforeRetry(int $attempt): void
+    {
+        $baseMs = self::DEFAULT_RETRY_DELAY_MS;
+
+        if (function_exists('config')) {
+            $baseMs = max(1, (int) config('db.retry.delay_ms', self::DEFAULT_RETRY_DELAY_MS));
+        }
+
+        $capMs = min($baseMs * (2 ** ($attempt - 1)), self::MAX_RETRY_DELAY_MS);
+
+        $this->usleepFor(random_int(0, (int) $capMs * 1000));
+    }
+
+    /** Seam so tests can assert on backoff without actually sleeping. */
+    protected function usleepFor(int $microseconds): void
+    {
+        if ($microseconds > 0) {
+            usleep($microseconds);
+        }
+    }
+
+    /**
+     * Whether a failed transaction is worth replaying.
+     *
+     * Covers, in order of how often they actually occur:
+     *   1213  ER_LOCK_DEADLOCK          — InnoDB broke a cycle and picked us
+     *   1205  ER_LOCK_WAIT_TIMEOUT      — innodb_lock_wait_timeout elapsed
+     *   1479 / 1614                     — transaction branch rolled back (XA, group replication)
+     *   3058 / 3572                     — Galera / Group Replication certification conflict
+     *   2006  CR_SERVER_GONE_ERROR      — connection dropped mid-transaction
+     *   2013  CR_SERVER_LOST            — same, while waiting on a result
+     *
+     * SQLSTATE 40001 is checked as well: it is the standard serialization-failure
+     * class and MariaDB and Galera report conflicts there with driver codes that
+     * differ from MySQL's.
+     *
+     * The whole previous chain is walked, because the query builder wraps PDO
+     * failures in its own exceptions in several code paths and the original
+     * PDOException would otherwise never be seen.
+     */
+    protected function isRetryableTransactionError(\Throwable $e): bool
+    {
+        for ($error = $e; $error !== null; $error = $error->getPrevious()) {
+            if (!$error instanceof \PDOException) {
+                continue;
+            }
+
+            $sqlState = (string) ($error->errorInfo[0] ?? '');
+            $driverCode = (int) ($error->errorInfo[1] ?? 0);
+
+            // 40001 is the SQL standard serialization-failure class and 40P01 is
+            // PostgreSQL's deadlock. Both are portable; the numeric tables below
+            // are engine-specific fallbacks.
+            if ($sqlState === '40001' || $sqlState === '40P01') {
+                return true;
+            }
+
+            if (in_array($driverCode, self::RETRYABLE_DRIVER_CODES, true)) {
+                return true;
+            }
+
+            if ($this->activeTimeoutDialect()?->isRetryableCode($driverCode) === true) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function recordTransactionRetry(\Throwable $e, int $attempt): void
+    {
+        $this->logTransactionWarning(sprintf(
+            'Transaction attempt %d failed with a retryable lock error and will be replayed: %s',
+            $attempt,
+            $e->getMessage()
+        ));
+    }
+
+    protected function logTransactionWarning(string $message): void
+    {
+        // SafeLog degrades to error_log() rather than throwing, so a logging
+        // failure cannot break the retry loop it is reporting on.
+        \Core\Support\SafeLog::warning($message);
+    }
+
+    public function inTransaction(): bool
+    {
+        return $this->resolvePdo('write')->inTransaction();
+    }
+
+    protected function transactionWithSavepoint(callable $callback)
+    {
+        $name = 'sp_' . $this->savepointDepth++;
+
+        $this->executeSavepointStatement('SAVEPOINT ' . $name);
+
+        try {
+            $result = $callback($this);
+            $this->executeSavepointStatement('RELEASE SAVEPOINT ' . $name);
+
+            return $result;
+        } catch (\Throwable $e) {
+            $this->executeSavepointStatement('ROLLBACK TO SAVEPOINT ' . $name);
+
+            throw $e;
+        } finally {
+            $this->savepointDepth--;
+        }
+    }
+
+    /** Savepoints are not prepared statements, so they bypass the query builder. */
+    protected function executeSavepointStatement(string $sql): void
+    {
+        $this->resolvePdo('write')->exec($sql);
+    }
+
+    /**
      * Insert rows from any iterable source in bounded batches.
+     *
+     * @param iterable<array<string, mixed>> $rows
      */
     public function insertInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int
     {
@@ -734,6 +1142,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Update rows from any iterable source in bounded batches.
+     *
+     * @param iterable<array<string, mixed>> $rows
      */
     public function updateInBatches(iterable $rows, ?callable $progress = null, ?int $batchSize = null): int
     {
@@ -749,8 +1159,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Upsert rows from any iterable source in bounded batches.
      *
-     * @param string|array $uniqueBy
-     * @param array|null $updateColumns
+     * @param iterable<array<string, mixed>> $rows
      */
     public function upsertInBatches(iterable $rows, string|array $uniqueBy = 'id', ?array $updateColumns = null, ?callable $progress = null, ?int $batchSize = null): int
     {
@@ -765,6 +1174,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Delete rows by column values from any iterable source in bounded batches.
+     *
+     * @param iterable<scalar> $values
      */
     public function deleteInBatches(iterable $values, string $column = 'id', ?callable $progress = null, ?int $batchSize = null): int
     {
@@ -780,7 +1191,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 return true;
             }
 
-            $chunk = array_values(array_unique($buffer, SORT_REGULAR));
+            $chunk = $this->orderKeysForLocking(array_values(array_unique($buffer, SORT_REGULAR)));
             $buffer = [];
 
             if ($chunk === []) {
@@ -1014,6 +1425,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->indexHints = [];
         $this->dryRun = false;
         $this->_lock = null;
+        $this->_insertIgnore = false;
         $this->_paginateColumn = [];
         $this->_paginateAllowedSortColumns = [];
         $this->_paginateFilterValue = null;
@@ -1028,7 +1440,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Start a new builder scope for the given table.
      *
-     * @param string $table
      * @return $this
      */
     public function table($table)
@@ -1047,7 +1458,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Mark the query as DISTINCT and optionally replace the select list.
      *
-     * @param array|string|null $columns
      * @return $this
      */
     public function distinct($columns = null)
@@ -1066,27 +1476,164 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param array|string $columns
      * @return $this
      */
+    /**
+     * Single-argument functions permitted in a select list.
+     *
+     * Anything taking multiple arguments, or a literal, belongs in selectRaw()
+     * where the caller is explicitly accepting responsibility for the SQL.
+     *
+     * @var list<string>
+     */
+    protected const SELECT_FUNCTIONS = [
+        'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
+        'ABS', 'CEIL', 'CEILING', 'FLOOR', 'ROUND', 'SQRT',
+        'LENGTH', 'CHAR_LENGTH', 'LOWER', 'UPPER', 'TRIM', 'LTRIM', 'RTRIM',
+        'DATE', 'TIME', 'YEAR', 'MONTH', 'DAY', 'HOUR', 'MINUTE', 'SECOND',
+        'UNIX_TIMESTAMP',
+    ];
+
     public function select($columns = ['*'])
     {
         if (!is_array($columns)) {
-            $columns = explode(',', $columns);
+            $columns = $this->splitSelectList((string) $columns);
         }
 
-        $columns = array_map(function ($column) {
-            $column = trim($column);
-            // Skip prefixing for table.column, aliases, or SQL functions
-            if (
-                strpos($column, '.') !== false ||
-                stripos($column, ' as ') !== false ||
-                preg_match('/\w+\s*\(.*\)/i', $column) // handles nested functions like SUM(price * quantity)
-            ) {
-                return $column;
-            }
-            return "`{$this->table}`.`{$column}`";
-        }, $columns);
+        $parsed = array_map(
+            fn($column): string => $this->parseSelectColumn((string) $column),
+            $columns
+        );
 
-        $this->column = implode(', ', $columns);
+        // select([]) and select('') mean "everything", not "nothing" — an empty
+        // column list would compile to `SELECT  FROM`.
+        $this->column = $parsed === [] ? '*' : implode(', ', $parsed);
+
         return $this;
+    }
+
+    /**
+     * Split a select list on commas that separate entries.
+     *
+     * Paren-aware, so `ROUND(x, 2)` arrives at the parser whole and is refused
+     * with a message about multi-argument functions rather than being torn into
+     * two unintelligible halves.
+     *
+     * @return list<string>
+     */
+    protected function splitSelectList(string $list): array
+    {
+        $entries = [];
+        $current = '';
+        $depth = 0;
+        $length = strlen($list);
+
+        for ($i = 0; $i < $length; $i++) {
+            $char = $list[$i];
+
+            if ($char === '(') {
+                $depth++;
+            } elseif ($char === ')') {
+                $depth = max(0, $depth - 1);
+            } elseif ($char === ',' && $depth === 0) {
+                $entries[] = $current;
+                $current = '';
+                continue;
+            }
+
+            $current .= $char;
+        }
+
+        $entries[] = $current;
+
+        return array_values(array_filter(
+            array_map('trim', $entries),
+            static fn(string $entry): bool => $entry !== ''
+        ));
+    }
+
+    /**
+     * Turn one select-list entry into safely quoted SQL.
+     *
+     * This used to return the entry untouched whenever it contained a dot, an
+     * " as ", or a pair of parentheses — the three shapes that are hardest to
+     * validate and the three that matter most. A `fields=` parameter reaching
+     * select() could therefore carry
+     *
+     *     (SELECT password FROM users LIMIT 1) AS x
+     *
+     * straight into the query: arbitrary reads through a select list, and a
+     * SLEEP() away from a blind timing oracle.
+     *
+     * Each shape is now parsed and rebuilt from validated parts. Anything that
+     * does not fit is refused rather than guessed at, and the message names
+     * selectRaw(), which is where deliberately raw SQL belongs.
+     */
+    protected function parseSelectColumn(string $column): string
+    {
+        $column = trim($column);
+
+        if ($column === '' || $column === '*') {
+            return '*';
+        }
+
+        // `<expression> AS <alias>` — the alias is an identifier like any other.
+        if (preg_match('/^(.*?)\s+AS\s+`?([A-Za-z_][A-Za-z0-9_]*)`?$/i', $column, $parts) === 1) {
+            return $this->parseSelectColumn($parts[1]) . ' AS ' . $this->wrapIdentifier($parts[2]);
+        }
+
+        // `FUNC(...)`, restricted to one argument over a column or a wildcard.
+        if (preg_match('/^([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)$/s', $column, $parts) === 1) {
+            $function = strtoupper($parts[1]);
+
+            if (!in_array($function, self::SELECT_FUNCTIONS, true)) {
+                throw new \InvalidArgumentException(sprintf(
+                    'select(): %s() is not an allowed function. Use selectRaw() for expressions.',
+                    $parts[1]
+                ));
+            }
+
+            $argument = trim($parts[2]);
+
+            // One argument only. Naming the function in the message matters:
+            // "total, 2 is not a column name" tells the caller nothing about
+            // which call they need to move to selectRaw().
+            if (count($this->splitSelectList($argument)) > 1) {
+                throw new \InvalidArgumentException(sprintf(
+                    'select(): %s() takes more than one argument here. Use selectRaw() for expressions.',
+                    $function
+                ));
+            }
+
+            $distinct = '';
+
+            if (preg_match('/^DISTINCT\s+(.*)$/i', $argument, $inner) === 1) {
+                $distinct = 'DISTINCT ';
+                $argument = trim($inner[1]);
+            }
+
+            return $function . '(' . $distinct . $this->parseSelectColumn($argument) . ')';
+        }
+
+        // `table.*`
+        if (preg_match('/^([A-Za-z_][A-Za-z0-9_]*)\.\*$/', $column, $parts) === 1) {
+            return $this->wrapIdentifier($parts[1]) . '.*';
+        }
+
+        // A bare or qualified identifier. The pattern is the boundary; quoting
+        // is the grammar's, so a second engine changes one class not this one.
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/', $column) !== 1) {
+            throw new \InvalidArgumentException(sprintf(
+                'select(): "%s" is not a column name. Use selectRaw() for expressions.',
+                $column
+            ));
+        }
+
+        // Unqualified names are scoped to the current table so a join cannot
+        // make them ambiguous.
+        if (!str_contains($column, '.') && !empty($this->table)) {
+            $column = $this->table . '.' . $column;
+        }
+
+        return $this->wrapIdentifier($column);
     }
 
     /**
@@ -1096,7 +1643,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * SQL keywords such as SELECT, COUNT, and SUM are intentionally permitted
      * because aggregate expressions and correlated subqueries are valid here.
      *
-     * @param string $expression
      * @param array  $bindings Optional positional binding values merged into the bind list.
      * @return $this
      */
@@ -1135,9 +1681,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific date predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function whereDate($column, $operator, $value);
@@ -1145,9 +1688,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific OR date predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function orWhereDate($column, $operator, $value);
@@ -1155,9 +1695,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific day predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function whereDay($column, $operator, $value);
@@ -1165,9 +1702,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific OR day predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function orWhereDay($column, $operator, $value);
@@ -1175,9 +1709,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific month predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function whereMonth($column, $operator, $value);
@@ -1185,9 +1716,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific OR month predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function orWhereMonth($column, $operator, $value);
@@ -1195,9 +1723,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific year predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function whereYear($column, $operator, $value);
@@ -1205,9 +1730,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific time predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function whereTime($column, $operator, $value);
@@ -1215,9 +1737,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific OR time predicate.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     abstract public function orWhereTime($column, $operator, $value);
@@ -1225,9 +1744,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Add a driver-specific JSON contains predicate.
      *
-     * @param mixed $columnName
-     * @param mixed $jsonPath
-     * @param mixed $value
      * @return $this
      */
     abstract public function whereJsonContains($columnName, $jsonPath, $value);
@@ -1235,8 +1751,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Alias for insertOrUpdate() - matches Laravel's updateOrInsert() naming.
      *
-     * @param array $conditions The conditions to check for existence
-     * @param array $data Data to update or insert
      * @return mixed
      */
     public function updateOrInsert(array $conditions, array $data)
@@ -1244,39 +1758,19 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return $this->insertOrUpdate($conditions, $data);
     }
 
-    /**
-     * Apply a driver-specific LIMIT clause.
-     *
-     * @param mixed $limit
-     * @return $this
-     */
+    /** @return $this */
     abstract public function limit($limit);
 
-    /**
-     * Apply a driver-specific OFFSET clause.
-     *
-     * @param mixed $offset
-     * @return $this
-     */
+    /** @return $this */
     abstract public function offset($offset);
 
-    /**
-     * Alias for offset() - skip records
-     *
-     * @param int $offset Number of records to skip
-     * @return $this
-     */
+    /** @return $this */
     public function skip($offset)
     {
         return $this->offset($offset);
     }
 
-    /**
-     * Alias for limit() - take records
-     *
-     * @param int $limit Number of records to take
-     * @return $this
-     */
+    /** @return $this */
     public function take($limit)
     {
         return $this->limit($limit);
@@ -1286,7 +1780,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Simple pagination helper - set offset and limit for a page
      *
      * @param int $page Page number (1-indexed)
-     * @param int $perPage Records per page
      * @return $this
      */
     public function forPage($page, $perPage = 15)
@@ -1302,7 +1795,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     protected function _buildSelectQuery()
     {
-        // Check if table name is empty
         if (empty($this->table)) {
             throw new \InvalidArgumentException('Please specify the table.');
         }
@@ -1310,12 +1802,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Build the basic SELECT clause with fields
         $this->_query = "SELECT " . ($this->distinct ? "DISTINCT " : "") . ($this->column === '*' ? '*' : $this->column) . " FROM ";
 
-        // Append table name with schema (if provided)
-        if (empty($this->schema)) {
-            $this->_query .= "`{$this->table}`";
-        } else {
-            $this->_query .= "`{$this->schema}`.`{$this->table}`";
-        }
+        $this->_query .= $this->wrapCurrentTable();
 
         // Add index hints if specified (MySQL optimization)
         if (!empty($this->indexHints)) {
@@ -1325,34 +1812,28 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
         }
 
-        // Add JOIN clauses if available
         if ($this->joins) {
             $this->_query .= $this->joins;
         }
 
-        // Add WHERE clause if conditions exist
         if ($this->where) {
             $this->_query .= " WHERE " . $this->where;
         }
 
-        // Add GROUP BY clause if specified
         if ($this->groupBy) {
             $this->_query .= " GROUP BY " . $this->groupBy;
         }
 
-        // Add HAVING clause if specified
         if ($this->having) {
             $having = implode(' AND ', $this->having);
             $this->_query .= " HAVING " . $having;
         }
 
-        // Add ORDER BY clause if specified
         if ($this->orderBy) {
             $orderBy = implode(', ', $this->orderBy);
             $this->_query .= " ORDER BY " . $orderBy;
         }
 
-        // Add UNION clauses if specified
         if (!empty($this->unions)) {
             foreach ($this->unions as $union) {
                 $this->_query .= $union['all'] ? ' UNION ALL ' : ' UNION ';
@@ -1360,7 +1841,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
         }
 
-        // Add LIMIT clause if specified
         if ($this->limit) {
             if (!isset($this->listDatabaseDriverSupport[$this->driver])) {
                 throw new \Exception("LIMIT clause not supported for driver: " . $this->driver);
@@ -1369,7 +1849,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->_query .= $this->limit;
         }
 
-        // Add OFFSET clause if offset is set
         if ($this->offset) {
             $this->_query .= $this->offset;
         }
@@ -1387,8 +1866,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Return the binding list for the current SELECT shape in execution order.
-     *
-     * @return array
      */
     protected function getSelectQueryBindings(): array
     {
@@ -1414,9 +1891,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Execute an ad-hoc SELECT statement without mutating builder state.
      *
-     * @param string $statement
-     * @param array|null $binds
-     * @param string $fetchType
      * @return mixed
      */
     public function selectQuery($statement, $binds = null, $fetchType = 'get')
@@ -1425,7 +1899,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw new \InvalidArgumentException('Query statement cannot be null in `selectQuery()` function.');
         }
 
-        // Check if the statement is a SELECT query
         if (strtoupper(strtok(trim($statement), " \t\n\r")) !== 'SELECT') {
             throw new \InvalidArgumentException('Only SELECT statements are allowed in `selectQuery()` function.');
         }
@@ -1433,15 +1906,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         try {
             $this->connectForOperation('read');
 
-            // Prepare the query statement
             $stmt = $this->_prepareStatement($statement);
 
-            // Bind parameters if any
             if (!empty($binds)) {
                 $this->_bindParams($stmt, $binds);
             }
 
-            // Execute the prepared statement
             $stmt->execute();
 
             switch ($fetchType) {
@@ -1450,12 +1920,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                     $result = $stmt->fetch(\PDO::FETCH_ASSOC);
                     break;
                 default:
-                    // Fetch all results as associative arrays
                     $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
                     break;
             }
-            
-            // Close cursor and free statement memory
+
             $stmt->closeCursor();
             unset($stmt);
         } catch (\PDOException $e) {
@@ -1472,13 +1940,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Register a raw SQL statement for later execution through execute().
      *
-     * @param string $statement
-     * @param array $bindParams
      * @return $this
      */
     public function query($statement, $bindParams = [])
     {
-        // Check if string is empty
         if (empty($statement)) {
             throw new \InvalidArgumentException('Query statement cannot be null in `query()` function.');
         }
@@ -1540,25 +2005,21 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         try {
             $this->connectForOperation($operationType);
 
-            // Prepare the query statement
             $stmt = $this->_prepareStatement($this->_query);
 
-            // Bind parameters if any
             if (!empty($this->_binds)) {
                 $this->_bindParams($stmt, $this->_binds);
             }
 
             $this->_captureExecutedQuery($this->_binds);
 
-            // Execute the prepared statement
             $success = $stmt->execute();
 
             // Handle different query types
             if ($queryType === 'SELECT' || $queryType === 'SHOW' || $queryType === 'DESCRIBE' || $queryType === 'EXPLAIN') {
                 // For SELECT and other data-returning queries, return the fetched results
                 $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-                
-                // Close cursor and free statement memory
+
                 $stmt->closeCursor();
                 unset($stmt);
             } else {
@@ -1621,7 +2082,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Execute the current SELECT builder and return all matching rows.
      *
-     * @param string|null $table
      * @return mixed
      */
     public function get($table = null)
@@ -1633,7 +2093,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         if (!$this->_isRawQuery) {
-            // Build the final SELECT query string
             $this->_buildSelectQuery();
         }
 
@@ -1662,7 +2121,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         if (empty($result) && $queryCacheEnabled) {
             $cacheKey = QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName);
             $result = QueryCache::get($cacheKey);
-            
+
             // If cache hit, reset query builder state since data is already complete with eager loading
             if (!empty($result)) {
                 $this->reset();
@@ -1683,7 +2142,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Execute the current SELECT builder and return the first matching row.
      *
-     * @param string|null $table
      * @return mixed
      */
     public function fetch($table = null)
@@ -1698,7 +2156,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             // Set limit to 1 to ensure only 1 data return
             $this->limit(1);
 
-            // Build the final SELECT query string
             $this->_buildSelectQuery();
         }
 
@@ -1713,7 +2170,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         if (empty($result) && $queryCacheEnabled) {
             $cacheKey = QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName);
             $result = QueryCache::get($cacheKey);
-            
+
             // If cache hit, reset query builder state since data is already complete with eager loading
             if (!empty($result)) {
                 $this->reset();
@@ -1728,14 +2185,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Reset secureOutput
         $this->safeOutput(false);
 
-        // Return the first result or null if not found
         return $this->_returnResult($result);
     }
 
     /**
      * Determine whether QueryCache should participate in the current read.
-     *
-     * @return bool
      */
     protected function shouldUseQueryCache(): bool
     {
@@ -1745,8 +2199,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Prepare, bind, and execute a SELECT statement for get() or fetch().
      *
-     * @param string $fetchType
-     * @param string $methodName
      * @return mixed
      */
     protected function executeSelectOperation(string $fetchType, string $methodName)
@@ -1790,11 +2242,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Finalize a SELECT result by applying eager loading and any cache writes.
      *
-     * @param mixed $result
-     * @param string $fetchType
-     * @param string $cachePrefix
-     * @param bool $queryCacheEnabled
-     * @param string|null $cacheKey
      * @return mixed
      */
     protected function finalizeSelectOperation($result, string $fetchType, string $cachePrefix, bool $queryCacheEnabled, ?string $cacheKey = null)
@@ -1841,7 +2288,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Count rows for the current builder state.
      *
-     * @param string|null $table
      * @return int
      */
     abstract public function count($table = null);
@@ -1849,7 +2295,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Determine whether at least one row matches the current builder state.
      *
-     * @param string|null $table
      * @return bool
      */
     abstract public function exists($table = null);
@@ -1857,7 +2302,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Determine if no records exist
      *
-     * @param string|null $table Optional table name
      * @return bool
      */
     public function doesntExist($table = null)
@@ -1869,7 +2313,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Get a single column's value from the first result
      * More efficient than fetch() when you only need one value
      *
-     * @param string $column Column name
      * @return mixed
      */
     public function value($column)
@@ -1899,8 +2342,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Find a single record by its primary key.
      *
-     * @param mixed $id
-     * @param array|string $columns
      * @return mixed
      */
     public function find($id, $columns = ['*'])
@@ -1919,8 +2360,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Find multiple records by their primary keys.
      *
-     * @param array $ids
-     * @param array|string $columns
      * @return mixed
      */
     public function findMany(array $ids, $columns = ['*'])
@@ -1940,8 +2379,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Find a single record by its primary key or throw an exception.
      *
-     * @param mixed $id
-     * @param array|string $columns
      * @return mixed
      * @throws \Exception
      */
@@ -1959,18 +2396,17 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Get the first record or throw an exception
      *
-     * @param string|null $table Optional table name
      * @return array
      * @throws \Exception
      */
     public function firstOrFail($table = null)
     {
         $result = $this->fetch($table);
-        
+
         if (empty($result)) {
             throw new \Exception('No records found matching the query');
         }
-        
+
         return $result;
     }
 
@@ -1978,7 +2414,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Get a single record or throw an exception if zero or multiple records found
      * Ensures exactly one record matches
      *
-     * @param string|null $table Optional table name
      * @return array
      * @throws \Exception
      */
@@ -1986,15 +2421,15 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     {
         $results = $this->limit(2)->get($table);
         $count = count($results);
-        
+
         if ($count === 0) {
             throw new \Exception('No records found matching the query');
         }
-        
+
         if ($count > 1) {
             throw new \Exception('Multiple records found, expected only one');
         }
-        
+
         return $results[0];
     }
 
@@ -2030,11 +2465,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Determine whether the selected column list still exposes the keyset column.
-     *
-     * @param string $selectedColumns
-     * @param string $column
-     * @param string $table
-     * @return bool
      */
     protected function selectedColumnsSupportKeyset(string $selectedColumns, string $column, string $table = ''): bool
     {
@@ -2059,14 +2489,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         return false;
     }
 
-    /**
-     * Determine whether an explicit ORDER BY remains compatible with ascending keyset scans.
-     *
-     * @param mixed $orderBy
-     * @param string $column
-     * @param string $table
-     * @return bool
-     */
+    /** Determine whether an explicit ORDER BY remains compatible with ascending keyset scans. */
     protected function hasCompatibleKeysetOrder($orderBy, string $column, string $table = ''): bool
     {
         if (empty($orderBy)) {
@@ -2117,9 +2540,54 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
+     * Skip rows another transaction already holds instead of waiting for them.
+     *
+     * This is what turns a table into a work queue: N workers can each claim a
+     * different batch without serialising on the first locked row. Without it a
+     * second worker blocks until the first commits, so adding workers adds no
+     * throughput. The queue worker already used it through hand-written SQL;
+     * this is the builder form.
+     *
+     * @return $this
+     */
+    public function skipLocked()
+    {
+        if (!str_contains((string) $this->_lock, 'FOR UPDATE')) {
+            throw new \LogicException('skipLocked() applies to lockForUpdate(); call it first.');
+        }
+
+        // Silently ignored where unsupported: the query still returns the right
+        // rows, it just waits for them. Emitting the clause anyway is a syntax
+        // error, and refusing outright would break older MySQL for no reason.
+        if ($this->grammar()->supportsSkipLocked()) {
+            $this->_lock = 'FOR UPDATE SKIP LOCKED';
+        }
+
+        return $this;
+    }
+
+    /**
+     * Fail immediately rather than wait when a row is already locked.
+     *
+     * The opposite trade to skipLocked(): use it where a caller would rather see
+     * an error now than hold a request open for the lock timeout.
+     *
+     * @return $this
+     */
+    public function noWait()
+    {
+        if (!str_contains((string) $this->_lock, 'FOR UPDATE')) {
+            throw new \LogicException('noWait() applies to lockForUpdate(); call it first.');
+        }
+
+        $this->_lock = 'FOR UPDATE NOWAIT';
+
+        return $this;
+    }
+
+    /**
      * Insert a row and return the lastInsertId directly.
      *
-     * @param array $data
      * @param string|null $sequence Sequence name (for drivers like Postgres)
      * @return string|int|false The last insert id, or false on failure
      */
@@ -2143,12 +2611,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * INSERT INTO ... SELECT ... from a sub-query builder.
      *
      * Example:
-     *   $db->table('archive_users')->insertUsing(
-     *       ['id', 'name', 'email'],
-     *       function ($q) { $q->table('users')->select(['id','name','email'])->where('active', 0); }
-     *   );
+     * $db->table('archive_users')->insertUsing(
+     * ['id', 'name', 'email'],
+     * );
      *
-     * @param array $columns Destination columns
      * @param \Closure|callable $query Closure receiving a sub-builder to define the SELECT
      * @return mixed Result of the execute() call
      */
@@ -2176,17 +2642,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw new \RuntimeException('insertUsing(): sub-query produced no SQL.');
         }
 
-        // Escape destination columns
-        $escapedColumns = array_map(function ($c) {
-            $c = trim($c);
-            if (strpos($c, '`') !== false) return $c;
-            return '`' . str_replace('`', '``', $c) . '`';
-        }, $columns);
-        $columnList = implode(', ', $escapedColumns);
+        $columnList = implode(', ', array_map(
+            fn ($c): string => $this->wrapIdentifier((string) $c),
+            $columns
+        ));
 
-        $table = empty($this->schema)
-            ? "`{$this->table}`"
-            : "`{$this->schema}`.`{$this->table}`";
+        $table = $this->wrapCurrentTable();
 
         $sql = "INSERT INTO {$table} ({$columnList}) {$selectSql}";
 
@@ -2199,9 +2660,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Execute a DataTables-style paginated query with exact total counts.
      *
-     * @param int $start
-     * @param int $limit
-     * @param int $draw
      * @return mixed
      */
     public function paginate($start = 0, $limit = 10, $draw = 1)
@@ -2218,7 +2676,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         try {
 
-            // Count total rows before filter
             $this->_setProfilerIdentifier('count_all'); // set new profiler
             if (!$this->_isRawQuery) {
                 // Lightweight clone: reuse PDO/config, copy only the builder state needed for count()
@@ -2248,11 +2705,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $countQuery = "SELECT COUNT(*) as count FROM ({$this->_query}) AS count_wrapper";
                 $stmt = $this->_prepareStatement($countQuery);
                 $bindings = $this->getSelectQueryBindings();
-                
+
                 if (!empty($bindings)) {
                     $this->_bindParams($stmt, $bindings);
                 }
-                
+
                 $stmt->execute();
                 $result = $stmt->fetch(\PDO::FETCH_ASSOC);
                 if (method_exists($stmt, 'closeCursor')) {
@@ -2263,38 +2720,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
             $this->_setProfilerIdentifier(); // reset back to paginate profiler
 
-            // Apply custom filter (advanced search)
             // Skip filtering for raw queries when columns cannot be determined
-            if (!empty($this->_paginateFilterValue) && !$this->_isRawQuery) {
-                $columns = $this->_paginateColumn;
-                if (empty($columns)) {
-                    // Query to get all columns from the table based on database type
-                    $columns = $this->getTableColumns();
-                }
-
-                $searchValue = $this->_paginateFilterValue;
-
-                // Build search conditions with OR logic (LIKE)
-                $searchConditions = [];
-                foreach ($columns as $column) {
-                    $searchConditions[] = trim($column);
-                }
-
-                if (!empty($searchConditions)) {
-                    $this->where(function ($query) use ($searchConditions, $searchValue) {
-                        foreach ($searchConditions as $index => $column) {
-                            if ($index === 0) {
-                                $query->where($column, 'LIKE', '%' . $searchValue . '%');
-                            } else {
-                                $query->orWhere($column, 'LIKE', '%' . $searchValue . '%');
-                            }
-                        }
-                    });
-                }
+            if (!$this->_isRawQuery) {
+                $this->applyPaginateSearchFilter();
             }
 
             if (!$this->_isRawQuery) {
-                // Build the final SELECT query string
                 $this->_buildSelectQuery();
 
                 // Count total rows after filter
@@ -2313,7 +2744,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             // Add LIMIT and OFFSET clauses to the main query
             $this->_query = $this->_getLimitOffsetPaginate($this->_query, $limit, $start);
 
-            // Start profiler for main datatable query
             $this->_startProfiler(__FUNCTION__);
 
             // Execute the main query
@@ -2321,24 +2751,20 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             $bindings = $this->getSelectQueryBindings();
 
-            // Bind parameters if any
             if (!empty($bindings)) {
                 $this->_bindParams($stmt, $bindings);
             }
 
             $this->_captureExecutedQuery($bindings);
 
-            // Execute the prepared statement
             $stmt->execute();
 
-            // Fetch the result in associative array
             $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
             if (method_exists($stmt, 'closeCursor')) {
                 $stmt->closeCursor();
             }
             unset($stmt);
-            
-            // Stop profiler for main datatable query
+
             $this->_stopProfiler();
 
             $paginate = [
@@ -2348,7 +2774,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'data' => $this->_safeOutputSanitize($result) ?? null,
             ];
         } catch (\PDOException $e) {
-            // Log database errors
             $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
@@ -2360,10 +2785,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Assign temporary return type before reset
         $_temp_returnType = $this->returnType;
 
-        // Reset internal properties for next query
         $this->reset();
 
-        // Process eager loading if implemented 
+        // Process eager loading if implemented
         if (!empty($paginate['data']) && !empty($_temp_relations)) {
             $paginate['data'] = $this->_processEagerLoading($paginate['data'], $_temp_relations, $_temp_connection, 'get');
         }
@@ -2382,7 +2806,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Define which columns are searched by paginate_ajax().
      *
-     * @param array $column
      * @return $this
      */
     public function setPaginateFilterColumn($column = [])
@@ -2392,9 +2815,52 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     }
 
     /**
+     * Neutralise LIKE wildcards so a search for "50%" matches the literal text
+     * instead of everything. Backslash first, or it would escape the escapes.
+     *
+     * Relies on the default LIKE escape character; a server running with
+     * sql_mode=NO_BACKSLASH_ESCAPES would need an explicit ESCAPE clause.
+     */
+    protected function escapeLikeWildcards(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+    }
+
+    /**
+     * OR a LIKE across the columns declared by setPaginateFilterColumn().
+     *
+     * @throws \RuntimeException when a search term arrives with no declared columns
+     */
+    protected function applyPaginateSearchFilter(): void
+    {
+        if (empty($this->_paginateFilterValue)) {
+            return;
+        }
+
+        $columns = array_values(array_filter(array_map('trim', $this->_paginateColumn)));
+
+        if (empty($columns)) {
+            throw new \RuntimeException(
+                'paginate() received a search value but no searchable columns. Call '
+                . 'setPaginateFilterColumn([...]) with the indexed columns you want searched. '
+                . 'The previous fallback searched every column returned by DESCRIBE with a '
+                . 'leading-wildcard LIKE, which cannot use an index.'
+            );
+        }
+
+        $value = '%' . $this->escapeLikeWildcards($this->_paginateFilterValue) . '%';
+
+        $this->where(function ($query) use ($columns, $value) {
+            foreach ($columns as $index => $column) {
+                $method = $index === 0 ? 'where' : 'orWhere';
+                $query->{$method}($column, 'LIKE', $value);
+            }
+        });
+    }
+
+    /**
      * Restrict client-provided sort indexes to a safe list of columns.
      *
-     * @param array $columns
      * @return $this
      */
     public function setAllowedSortColumns($columns = [])
@@ -2407,7 +2873,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Restrict dynamic ORDER BY columns to a positive allowlist.
      *
      * @param array<string> $columns
-     * @return $this
      */
     public function setSortableColumns(array $columns = []): static
     {
@@ -2433,7 +2898,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Restrict dynamic WHERE columns to a positive allowlist.
      *
      * @param array<string> $columns
-     * @return $this
      */
     public function setFilterableColumns(array $columns = []): static
     {
@@ -2454,7 +2918,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Translate a DataTables request payload into paginate() arguments.
      *
-     * @param array $dataPost
      * @return mixed
      */
     public function paginate_ajax($dataPost)
@@ -2465,10 +2928,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $start = max(0, (int) ($dataPost['start'] ?? 0));
 
         $configuredMaxLimit = function_exists('config')
-            ? (int) config('database.pagination.max_limit', self::MAX_PAGINATE_LIMIT)
+            ? (int) config('db.pagination.max_limit', self::MAX_PAGINATE_LIMIT)
             : self::MAX_PAGINATE_LIMIT;
         $configuredDefaultLimit = function_exists('config')
-            ? (int) config('database.pagination.default_limit', self::DEFAULT_PAGINATE_LIMIT)
+            ? (int) config('db.pagination.default_limit', self::DEFAULT_PAGINATE_LIMIT)
             : self::DEFAULT_PAGINATE_LIMIT;
 
         $maxLimit = max(1, $configuredMaxLimit);
@@ -2491,16 +2954,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->_paginateFilterValue = $searchValue;
         $orderBy = is_array($dataPost['order'][0] ?? null) ? $dataPost['order'][0] : false;
 
-        if (empty($this->_paginateColumn)) {
-            // Query to get all columns from the table based on database type
-            $this->_paginateColumn = $this->getTableColumns();
-        }
-
         $sortColumns = !empty($this->_paginateAllowedSortColumns)
             ? $this->_paginateAllowedSortColumns
             : $this->_paginateColumn;
 
-        // Only apply ordering if columns are available (skip for raw queries without column info)
+        // No declared columns means no ordering. Deriving them from DESCRIBE would let a
+        // client sort by any column in the table, including unindexed ones.
         if ($orderBy && !empty($sortColumns)) {
             $columnIndex = max(0, (int) ($orderBy['column'] ?? 0));
             $direction = strtoupper((string) ($orderBy['dir'] ?? 'ASC'));
@@ -2522,8 +2981,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * loading. Large result sets are processed in chunks to keep memory usage
      * bounded.
      *
-     * @param string $column Column path to extract.
-     * @param string|null $keyColumn Optional key path for the returned array.
      * @return array
      */
     public function pluck($column, $keyColumn = null)
@@ -2538,7 +2995,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
                     if ($keyColumn !== null) {
                         $key = $this->_resolvePluckValue($row, $keyColumn);
-                        
+
                         if ($key !== null) {
                             $result[$key] = $value;
                         }
@@ -2572,7 +3029,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * eager-loaded `with()` results.
      *
      * @param mixed $source Row array/object or nested payload.
-     * @param string $path Column name or dot-notated path.
      * @return mixed
      */
     protected function _resolvePluckValue($source, string $path)
@@ -2633,7 +3089,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Insert a single record into the current table.
      *
-     * @param array $data
      * @return mixed
      */
     public function insert($data)
@@ -2645,7 +3100,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw new \InvalidArgumentException('Raw insert SQL statements are not allowed in insert(). Please use insert() function without any query or condition.');
         }
 
-        // Check if string is empty
         if (empty($data) || !is_array($data)) {
             throw new \InvalidArgumentException('Invalid column data. Must be an associative array.');
         }
@@ -2654,27 +3108,21 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw new \InvalidArgumentException('Please specify the table.');
         }
 
-        // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
 
-        // sanitize column to ensure column is exists.
         $sanitizeData = $this->sanitizeColumn($data);
 
-        // Build the final INSERT query string
         $this->_buildInsertQuery($sanitizeData);
 
         $this->connectForOperation('write');
 
-        // Prepare the query statement
         $stmt = $this->_prepareStatement($this->_query);
 
-        // Bind parameters 
         $this->_bindParams($stmt, array_values($sanitizeData));
 
         try {
             $this->_captureExecutedQuery($this->_binds);
 
-            // Execute the statement
             $success = $stmt->execute();
 
             // Get the number of affected rows
@@ -2696,15 +3144,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $this->flushPendingPaginateCountCacheRemovals();
             }
         } catch (\PDOException $e) {
-            // Log database errors
             $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
-        // Stop profiler 
         $this->_stopProfiler();
 
-        // Reset internal properties for next query
         $this->reset();
 
         return $this->_returnResult($response) ?? false;
@@ -2713,7 +3158,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Compile an INSERT statement for the provided associative row payload.
      *
-     * @param array $data
      * @return $this
      */
     protected function _buildInsertQuery($data)
@@ -2723,36 +3167,76 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw new \InvalidArgumentException('Invalid column data. Must be an associative array with column names as keys.');
         }
 
-        // Construct column names string
         $columns = implode(', ', array_map(
-            static fn ($column): string => '`' . str_replace('`', '``', (string) $column) . '`',
+            fn ($column): string => $this->wrapIdentifier((string) $column),
             array_keys($data)
         ));
 
-        // Construct placeholders for values
         $placeholders = implode(', ', array_fill(0, count($data), '?'));
 
-        // Construct the SQL insert statement
-        $this->_query = "INSERT INTO ";
+        $grammar = $this->grammar();
 
-        // Append table name with schema (if provided)
-        if (empty($this->schema)) {
-            $this->_query .= "`$this->table` ($columns)";
-        } else {
-            $this->_query .= "`$this->schema`.`$this->table` ($columns)";
+        // INSERT IGNORE is a statement modifier on MySQL and a trailing
+        // ON CONFLICT DO NOTHING on PostgreSQL, so the grammar decides both the
+        // word and where it goes.
+        $modifier = $this->_insertIgnore && method_exists($grammar, 'insertIgnoreModifier')
+            ? ' ' . $grammar->insertIgnoreModifier()
+            : '';
+
+        $this->_query = 'INSERT' . $modifier . ' INTO '
+            . $this->wrapCurrentTable() . " ({$columns}) VALUES ({$placeholders})";
+
+        if ($this->_insertIgnore && $modifier === '') {
+            $clause = $grammar->compileInsertIgnoreClause();
+            if ($clause === null) {
+                throw new \RuntimeException(
+                    'insertOrIgnore() is not supported on this database engine; '
+                    . 'catch the duplicate-key error or use updateOrInsert() instead.'
+                );
+            }
+
+            $this->_query .= ' ' . $clause;
         }
-
-        $this->_query .= " VALUES ($placeholders)";
 
         return $this;
     }
 
     /**
+     * Insert a row, doing nothing if it collides with a unique constraint.
+     *
+     * The alternative was catching SQLSTATE 23000 at the call site, which also
+     * swallows the foreign-key and not-null violations that share that class —
+     * so a genuine data bug was silently discarded as "already exists".
+     *
+     * Returns the same shape as insert(); `code` is 201 when a row was written
+     * and 200 when one already existed.
+     *
+     * @param  array<string, mixed> $data
+     * @return mixed
+     */
+    public function insertOrIgnore($data)
+    {
+        $this->_insertIgnore = true;
+
+        try {
+            $result = $this->insert($data);
+        } finally {
+            $this->_insertIgnore = false;
+        }
+
+        // rowCount() is 0 when the row was skipped, and insert() maps that to a
+        // 422 "failed". Skipping is the documented outcome here, not a failure.
+        if (is_array($result) && ($result['code'] ?? null) === 422) {
+            $result['code'] = 200;
+            $result['message'] = 'Row already exists; insert ignored';
+        }
+
+        return $result;
+    }
+
+    /**
      * Update an existing row or insert a new one inside a transaction.
      *
-     * @param array $conditions
-     * @param array $data
-     * @param string $primaryKey
      * @return mixed
      */
     public function insertOrUpdate($conditions, $data, $primaryKey = 'id')
@@ -2834,7 +3318,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $response['message'] = $e->getMessage();
         }
 
-        // Reset internal properties for next query
         $this->reset();
         return $this->_returnResult($response);
     }
@@ -2842,7 +3325,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Create a new record or find existing one
      *
-     * @param array $conditions Conditions to search for
      * @param array $data Data to insert if not found
      * @return array
      */
@@ -2858,7 +3340,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
             // Try to find existing record using array support in where()
             $existing = $this->where($conditions)->fetch();
-            
+
             if (!empty($existing)) {
                 return ['code' => 200, 'message' => 'Record found', 'action' => 'found', 'data' => $existing];
             }
@@ -2876,8 +3358,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Get the first record matching conditions or return an unsaved attribute array.
      *
-     * @param array $conditions
-     * @param array $data
      * @return array
      */
     public function firstOrNew(array $conditions, array $data = [])
@@ -2897,9 +3377,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Update a matching record or create a new one, then return the persisted row.
      *
-     * @param array $conditions
-     * @param array $data
-     * @param string $primaryKey
      * @return mixed
      */
     public function updateOrCreate(array $conditions, array $data = [], string $primaryKey = 'id')
@@ -2921,14 +3398,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     # UPDATE DATA OPERATION
 
-    /**
-     * Increment a column's value
-     *
-     * @param string $column Column name
-     * @param int $amount Amount to increment (default 1)
-     * @param array $extra Extra columns to update
-     * @return array
-     */
+    /** @return array */
     public function increment($column, $amount = 1, $extra = [])
     {
         if (empty($this->table)) {
@@ -2939,12 +3409,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $amount = abs((int)$amount);
         if ($amount < 1) $amount = 1;
 
-        // Start profiler for performance measurement
         $this->_startProfiler(__FUNCTION__);
-        
-        // Sanitize extra columns
+
         $sanitizedExtra = !empty($extra) ? $this->sanitizeColumn($extra) : [];
-        
+
         // Build SET clause - use parameterized binding for amount
         $safeCol = '`' . str_replace('`', '``', $column) . '`';
         $set = ["$safeCol = $safeCol + ?"];
@@ -2953,7 +3421,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $set[] = '`' . str_replace('`', '``', $col) . '` = ?';
             $bindValues[] = $val;
         }
-        
+
         // Build UPDATE query
         $this->_query = "UPDATE ";
         if (empty($this->schema)) {
@@ -2961,9 +3429,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         } else {
             $this->_query .= "`{$this->schema}`.`$this->table` ";
         }
-        
+
         $this->_query .= "SET " . implode(', ', $set);
-        
+
         if ($this->where) {
             $this->_query .= " WHERE " . $this->where;
         }
@@ -2971,10 +3439,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->connectForOperation('write');
         $stmt = $this->_prepareStatement($this->_query);
         $this->_bindParams($stmt, array_merge($bindValues, $this->_binds));
-        
+
         try {
             $this->_captureExecutedQuery($this->_binds);
-            
+
             $success = $stmt->execute();
             $affectedRows = $stmt->rowCount();
 
@@ -2989,21 +3457,13 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw $e;
         }
 
-        // Stop profiler
         $this->_stopProfiler();
         $this->reset();
 
         return $this->_returnResult($response);
     }
 
-    /**
-     * Decrement a column's value
-     *
-     * @param string $column Column name
-     * @param int $amount Amount to decrement (default 1)
-     * @param array $extra Extra columns to update
-     * @return array
-     */
+    /** @return array */
     public function decrement($column, $amount = 1, $extra = [])
     {
         if (empty($this->table)) {
@@ -3014,10 +3474,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $amount = abs((int)$amount);
         if ($amount < 1) $amount = 1;
 
-        // Start profiler for performance measurement
         $this->_startProfiler(__FUNCTION__);
 
-        // Sanitize extra columns
         $sanitizedExtra = !empty($extra) ? $this->sanitizeColumn($extra) : [];
 
         // Build SET clause - use parameterized binding for amount
@@ -3028,7 +3486,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $set[] = '`' . str_replace('`', '``', $col) . '` = ?';
             $bindValues[] = $val;
         }
-        
+
         // Build UPDATE query
         $this->_query = "UPDATE ";
         if (empty($this->schema)) {
@@ -3036,9 +3494,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         } else {
             $this->_query .= "`{$this->schema}`.`$this->table` ";
         }
-        
+
         $this->_query .= "SET " . implode(', ', $set);
-        
+
         if ($this->where) {
             $this->_query .= " WHERE " . $this->where;
         }
@@ -3046,10 +3504,10 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $this->connectForOperation('write');
         $stmt = $this->_prepareStatement($this->_query);
         $this->_bindParams($stmt, array_merge($bindValues, $this->_binds));
-        
+
         try {
             $this->_captureExecutedQuery($this->_binds);
-            
+
             $success = $stmt->execute();
             $affectedRows = $stmt->rowCount();
 
@@ -3064,7 +3522,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw $e;
         }
 
-        // Stop profiler
         $this->_stopProfiler();
         $this->reset();
 
@@ -3074,7 +3531,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Update matching rows in the current table.
      *
-     * @param array $data Associative column/value payload.
      * @return mixed
      * @throws \InvalidArgumentException
      */
@@ -3087,7 +3543,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw new \InvalidArgumentException('Raw update SQL statements are not allowed in update(). Please use update() function.');
         }
 
-        // Check if string is empty
         if (empty($data) || !is_array($data)) {
             throw new \InvalidArgumentException('Invalid column data. Must be an associative array.');
         }
@@ -3096,27 +3551,21 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             throw new \InvalidArgumentException('Please specify the table.');
         }
 
-        // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
 
-        // sanitize column to ensure column is exists.
         $sanitizeData = $this->sanitizeColumn($data);
 
-        // Build the final UPDATE query string
         $this->_buildUpdateQuery($sanitizeData);
 
         $this->connectForOperation('write');
 
-        // Prepare the query statement
         $stmt = $this->_prepareStatement($this->_query);
 
-        // Bind parameters 
         $this->_bindParams($stmt, array_merge(array_values($sanitizeData), $this->_binds));
 
         try {
             $this->_captureExecutedQuery($this->_binds);
 
-            // Execute the statement
             $success = $stmt->execute();
 
             // Get the number of affected rows
@@ -3135,15 +3584,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $this->flushPendingPaginateCountCacheRemovals();
             }
         } catch (\PDOException $e) {
-            // Log database errors
             $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
-        // Stop profiler 
         $this->_stopProfiler();
 
-        // Reset internal properties for next query
         $this->reset();
 
         return $this->_returnResult($response) ?? false;
@@ -3181,7 +3627,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Append SET clause and placeholder for values
         $this->_query .= "SET $set";
 
-        // Add WHERE clause if conditions exist
         if ($this->where) {
             $this->_query .= " WHERE " . $this->where;
         }
@@ -3194,8 +3639,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Soft-delete by updating one or more columns instead of removing the row.
      *
-     * @param array|string $column
-     * @param mixed $value
      * @return mixed
      */
     public function softDelete($column = 'deleted_at', $value = null)
@@ -3238,7 +3681,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Delete matching rows or route through softDelete() when supported.
      *
-     * @param bool $returnData
      * @return mixed
      */
     public function delete($returnData = false)
@@ -3262,21 +3704,17 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             }
         }
 
-        // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
 
         if (!$this->_isRawQuery) {
             if (empty($this->table)) {
                 throw new \InvalidArgumentException('Please specify the table.');
             }
-            // Build the final DELETE query string
             $this->_buildDeleteQuery();
         }
 
-        // Prepare the query statement
         $stmt = $this->_prepareStatement($this->_query);
 
-        // Bind parameters if any
         if (!empty($this->_binds)) {
             $this->_bindParams($stmt, $this->_binds);
         }
@@ -3284,7 +3722,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         try {
             $this->_captureExecutedQuery($this->_binds);
 
-            // Execute the SQL DELETE statement
             $success = $stmt->execute();
 
             // Get the number of affected rows
@@ -3306,15 +3743,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $this->flushPendingPaginateCountCacheRemovals();
             }
         } catch (\PDOException $e) {
-            // Log database errors
             $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
-        // Stop profiler 
         $this->_stopProfiler();
 
-        // Reset internal properties for next query
         $this->reset();
 
         return $this->_returnResult($response) ?? false;
@@ -3323,7 +3757,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Force a hard delete even when the table supports soft deletes.
      *
-     * @param bool $returnData
      * @return mixed
      */
     public function forceDelete(bool $returnData = false)
@@ -3385,7 +3818,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Restore a soft-deleted row by clearing the soft-delete marker column.
      *
-     * @param string $column
      * @return mixed
      */
     public function restore(string $column = 'deleted_at')
@@ -3415,7 +3847,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $this->_query .= "`$this->schema`.`$this->table`";
         }
 
-        // Add WHERE clause if conditions exist
         if ($this->where) {
             $this->_query .= " WHERE " . $this->where;
         }
@@ -3426,7 +3857,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Truncate the current table or an explicitly provided table name.
      *
-     * @param string|null $table
      * @return mixed
      */
     public function truncate($table = null)
@@ -3448,16 +3878,13 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         $this->_query = "TRUNCATE {$quotedTable}";
 
-        // Start profiler for performance measurement 
         $this->_startProfiler(__FUNCTION__);
 
         try {
-            // Prepare the query statement
             $stmt = $this->_prepareStatement($this->_query);
 
             $this->_captureExecutedQuery([]);
 
-            // Execute the SQL truncate statement
             $success = $stmt->execute();
 
             // Return information about the truncate operation
@@ -3467,15 +3894,12 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 'action' => 'truncate'
             ];
         } catch (\PDOException $e) {
-            // Log database errors
             $this->logDatabaseError($e, __FUNCTION__);
             throw $e; // Re-throw the exception
         }
 
-        // Stop profiler 
         $this->_stopProfiler();
 
-        // Reset internal properties for next query
         $this->reset();
 
         return $this->_returnResult($response) ?? false;
@@ -3486,7 +3910,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Insert multiple rows in a single driver-optimized operation.
      *
-     * @param array $data
      * @return mixed
      */
     abstract public function batchInsert($data);
@@ -3494,7 +3917,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Update multiple rows in a single driver-optimized operation.
      *
-     * @param array $data
      * @return mixed
      */
     abstract public function batchUpdate($data);
@@ -3502,9 +3924,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Perform a bulk upsert using a unique key definition.
      *
-     * @param mixed $values
-     * @param string|array $uniqueBy
-     * @param array|null $updateColumns
      * @return mixed
      */
     abstract public function upsert($values, $uniqueBy = 'id', $updateColumns = null);
@@ -3563,7 +3982,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Converts the result data to the specified return type.
      *
-     * @param mixed $data The data to be converted.
      * @return mixed The converted data.
      */
     protected function _returnResult($data)
@@ -3617,7 +4035,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Exclude specific columns from safeOutput sanitization.
      *
-     * @param array|string $data
      * @return $this
      */
     public function safeOutputWithException($data = [])
@@ -3683,7 +4100,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Sanitizes the output data to prevent XSS attacks by applying htmlspecialchars
      * and trimming values. It handles single values, arrays, and multidimensional arrays.
      *
-     * @param mixed $data The data to be sanitized.
      * @return mixed The sanitized data.
      */
     protected function _safeOutputSanitize($data)
@@ -3762,8 +4178,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Bind positional or named parameters onto a prepared statement.
      *
-     * @param \PDOStatement $stmt
-     * @param array $binds
      * @return void
      */
     protected function _bindParams(\PDOStatement $stmt, array $binds)
@@ -3774,7 +4188,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         // Fast-path: most queries use positional parameters
         $hasPositional = strpos($query, '?') !== false;
 
-        // Reset
         $this->_binds = [];
         if ($trackProfilerBinds) {
             $this->_profiler['profiling'][$this->_profilerActive]['binds'] = [];
@@ -3826,15 +4239,11 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Expand a parameterized SQL string into a debug-safe full SQL preview.
      *
-     * @param string $query
-     * @param array|null $binds
-     * @param bool $storeInProfiler
      * @return string
      */
     protected function _generateFullQuery($query, $binds = null, bool $storeInProfiler = true)
     {
         if (!empty($binds)) {
-            // Check if positional or named parameters are used
             $hasPositional = strpos($query, '?') !== false;
             $hasNamed = preg_match('/:\w+/', $query);
 
@@ -3890,7 +4299,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * Expands asterisks (*) in the SELECT clause to include all table columns.
      * Optimized: only runs regex when the query actually contains a standalone asterisk.
      *
-     * @param string $query The SQL query string.
      * @return string The modified query string with expanded columns.
      */
     protected function _expandAsterisksInQuery($query)
@@ -3903,7 +4311,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
         $selectPortion = substr($query, 0, $fromPos);
-        
+
         // Only process if SELECT portion contains a standalone * (not table.*)
         if (strpos($selectPortion, '*') === false) {
             return $query;
@@ -3918,7 +4326,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 $tables = array_merge($tables, $joinMatches[1]);
             }
 
-            // Construct new SELECT part with table.*
             $selectPart = implode(', ', array_map(fn($table) => "`$table`.*", $tables));
             $query = preg_replace('/SELECT\s+\*\s+FROM/i', "SELECT $selectPart FROM", $query, 1);
         } else {
@@ -3935,7 +4342,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
     /**
      * Get all column names for the current table.
-     * Results are cached statically to avoid repeated DESCRIBE queries per request.
+     * Cached per request to avoid repeated DESCRIBE queries.
      *
      * @return array List of column names, or empty array on error.
      */
@@ -3946,29 +4353,31 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             return [];
         }
 
-        // Build cache key from connection + schema + table
         $cacheKey = ($this->connectionName ?? 'default') . '.' . ($this->schema ?? '') . '.' . $this->table;
 
-        // Return cached result if available
         if (isset(self::$_tableColumnsCache[$cacheKey])) {
             return self::$_tableColumnsCache[$cacheKey];
         }
-        
-        $columns = [];
+
         try {
-            $query = !empty($this->schema) 
-                ? "DESCRIBE `{$this->schema}`.`{$this->table}`" 
-                : "DESCRIBE `{$this->table}`";
-            $stmt = $this->_prepareStatement($query);
-            $stmt->execute();
+            // DESCRIBE is MySQL-only, and interpolated the table name into the
+            // SQL because it cannot be bound. The grammar's listing is a prepared
+            // statement against information_schema, which every engine has.
+            $listing = $this->grammar()->compileColumnListing(
+                (string) $this->table,
+                (string) ($this->schema ?? '')
+            );
+
+            $stmt = $this->_prepareStatement($listing['sql']);
+            $stmt->execute($listing['bindings']);
             $columns = $stmt->fetchAll(\PDO::FETCH_COLUMN);
 
-            // Cache the result
             self::$_tableColumnsCache[$cacheKey] = $columns;
         } catch (\PDOException $e) {
             $this->logDatabaseError($e, __FUNCTION__);
             return [];
         }
+
         return $columns;
     }
 
@@ -3994,7 +4403,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Check if a column exists in the current table.
      *
-     * @param string $column The column name to check.
      * @return bool True if the column exists, false otherwise.
      */
     public function hasColumn($column)
@@ -4040,6 +4448,58 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      * @param bool $rethrow
      * @return void
      */
+    /**
+     * Whether the server cancelled the statement for exceeding its time limit.
+     *
+     * Distinct from a deadlock: retrying will not help, because the query will
+     * take just as long the second time.
+     */
+    public function isStatementTimeout(\Throwable $e): bool
+    {
+        for ($error = $e; $error !== null; $error = $error->getPrevious()) {
+            if (!$error instanceof \PDOException) {
+                continue;
+            }
+
+            // SQLSTATE first: 57014 (query_canceled) is how PostgreSQL and several
+            // other engines report this, and it needs no driver-specific table.
+            if ((string) ($error->errorInfo[0] ?? '') === '57014') {
+                return true;
+            }
+
+            $driverCode = (int) ($error->errorInfo[1] ?? 0);
+
+            if (in_array($driverCode, self::STATEMENT_TIMEOUT_CODES, true)) {
+                return true;
+            }
+
+            // Then whatever the connected engine uses, so adding a driver is a
+            // TimeoutDialect entry rather than an edit here.
+            if ($this->activeTimeoutDialect()?->isTimeoutCode($driverCode) === true) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** The timeout dialect for the live connection, or null if not connected. */
+    protected function activeTimeoutDialect(): ?TimeoutDialect
+    {
+        $pdo = $this->pdo[$this->connectionName] ?? null;
+
+        return $pdo instanceof \PDO ? $this->timeoutDialect($pdo) : null;
+    }
+
+    protected function configuredStatementTimeoutMs(): int
+    {
+        if (!function_exists('config')) {
+            return 0;
+        }
+
+        return max(0, (int) config('db.performance.timeouts.statement_timeout_ms', 0));
+    }
+
     protected function logDatabaseError(
         \Throwable $e,
         string $function = '',
@@ -4055,6 +4515,19 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
             $functionPart = $function ? "'{$function}()'" : 'unknown function';
             $formattedMessage = "{$customMessage} in {$functionPart}: " . $e->getMessage();
 
+            // A statement timeout reads as an unexplained failure a few seconds
+            // into a query. Naming the setting that killed it turns "the app
+            // errors sometimes" into a one-line fix.
+            if ($this->isStatementTimeout($e)) {
+                $formattedMessage .= sprintf(
+                    ' — the server cancelled this statement after %dms because it exceeded'
+                    . ' db.performance.timeouts.statement_timeout_ms. Either optimise the query'
+                    . ' (check `php myth db:slow`), stream it with chunkById()/cursor(), or raise'
+                    . ' DB_STATEMENT_TIMEOUT_MS for this workload.',
+                    $this->configuredStatementTimeoutMs()
+                );
+            }
+
             // Extract PDO specific information if available
             $pdoErrorInfo = null;
             if ($e instanceof \PDOException && isset($e->errorInfo)) {
@@ -4065,7 +4538,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 ];
             }
 
-            // Get formatted stack trace with limited depth
             $trace = $e->getTrace();
             $formattedTrace = [];
             foreach (array_slice($trace, 0, 5) as $index => $frame) {
@@ -4201,7 +4673,6 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     /**
      * Prepare a statement using the statement cache for better performance
      *
-     * @param string $query SQL query
      * @return \PDOStatement
      */
     protected function _prepareStatement($query)

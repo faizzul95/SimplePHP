@@ -7,8 +7,6 @@ namespace Core\Database\Schema;
  *
  * Provides a fluent API for setting column modifiers like nullable, default, etc.
  *
- * @category  Database
- * @package   Core\Database\Schema
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0

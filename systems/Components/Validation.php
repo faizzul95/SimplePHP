@@ -173,14 +173,13 @@ class Validation
         'current_password' => 'The password is incorrect.',
         'filled' => 'The :field field must have a value when present.',
         'distinct' => 'The :field field has a duplicate value.',
+        'unique' => 'The :field has already been taken.',
+        'unique_with' => 'The :field has already been taken for this combination.',
+        'exists' => 'The selected :field is invalid.',
     ];
 
     /**
      * Constructor
-     * 
-     * @param array $data
-     * @param array $rules
-     * @param array $messages
      */
     public function __construct(array $data = [], array $rules = [], array $messages = [])
     {
@@ -196,11 +195,6 @@ class Validation
 
     /**
      * Static factory method
-     * 
-     * @param array $data
-     * @param array $rules
-     * @param array $messages
-     * @return self
      */
     public static function make(array $data, array $rules, array $messages = []): self
     {
@@ -213,9 +207,6 @@ class Validation
 
     /**
      * Sanitize input data
-     * 
-     * @param array $data
-     * @return array
      */
     private function sanitizeInput(array $data): array
     {
@@ -240,9 +231,6 @@ class Validation
 
     /**
      * Set validation data
-     * 
-     * @param array $data
-     * @return self
      */
     public function setData(array $data): self
     {
@@ -256,9 +244,6 @@ class Validation
 
     /**
      * Set validation rules
-     * 
-     * @param array $rules
-     * @return self
      */
     public function setRules(array $rules): self
     {
@@ -268,9 +253,6 @@ class Validation
 
     /**
      * Set custom messages
-     * 
-     * @param array $messages
-     * @return self
      */
     public function setMessages(array $messages): self
     {
@@ -280,11 +262,6 @@ class Validation
 
     /**
      * Add a custom validation rule
-     * 
-     * @param string $name
-     * @param callable $callback
-     * @param string $message
-     * @return self
      */
     public function addRule(string $name, callable $callback, string $message = ''): self
     {
@@ -301,9 +278,6 @@ class Validation
 
     /**
      * Add a before validation hook
-     * 
-     * @param callable $callback
-     * @return self
      */
     public function beforeValidation(callable $callback): self
     {
@@ -313,9 +287,6 @@ class Validation
 
     /**
      * Add an after validation hook
-     * 
-     * @param callable $callback
-     * @return self
      */
     public function afterValidation(callable $callback): self
     {
@@ -323,12 +294,7 @@ class Validation
         return $this;
     }
 
-    /**
-     * Set maximum file size
-     * 
-     * @param int $size Size in KB
-     * @return self
-     */
+    /** Set maximum file size */
     public function setMaxFileSize(int $size): self
     {
         $this->maxFileSize = $size;
@@ -337,9 +303,6 @@ class Validation
 
     /**
      * Set allowed file extensions
-     * 
-     * @param array $extensions
-     * @return self
      */
     public function setAllowedExtensions(array $extensions): self
     {
@@ -349,8 +312,6 @@ class Validation
 
     /**
      * Get validation status
-     * 
-     * @return array
      */
     public function status(): array
     {
@@ -364,8 +325,6 @@ class Validation
 
     /**
      * Get validation passed status
-     * 
-     * @return bool
      */
     public function passed(): bool
     {
@@ -374,8 +333,6 @@ class Validation
 
     /**
      * Get validation errors
-     * 
-     * @return array
      */
     public function getErrors(): array
     {
@@ -384,8 +341,6 @@ class Validation
 
     /**
      * Get the very first validation error message
-     * 
-     * @return string
      */
     public function getFirstError(): string
     {
@@ -402,8 +357,6 @@ class Validation
 
     /**
      * Get the very last validation error message
-     * 
-     * @return string
      */
     public function getLastError(): string
     {
@@ -420,17 +373,13 @@ class Validation
 
     /**
      * Validate the data
-     * 
-     * @return self
      */
     public function validate(): self
     {
         try {
-            // Reset errors
             $this->errors = [];
             $this->failedFields = [];
 
-            // Execute before hooks
             $this->executeBeforeHooks();
 
             // Validate each field
@@ -442,7 +391,6 @@ class Validation
                 }
             }
 
-            // Execute after hooks
             $this->executeAfterHooks();
 
             return $this;
@@ -454,9 +402,6 @@ class Validation
 
     /**
      * Validate batch of datasets
-     * 
-     * @param array $datasets
-     * @return array
      */
     public function validateBatch(array $datasets): array
     {
@@ -481,8 +426,6 @@ class Validation
 
     /**
      * Execute before validation hooks
-     * 
-     * @return void
      */
     private function executeBeforeHooks(): void
     {
@@ -497,8 +440,6 @@ class Validation
 
     /**
      * Execute after validation hooks
-     * 
-     * @return void
      */
     private function executeAfterHooks(): void
     {
@@ -513,16 +454,16 @@ class Validation
 
     /**
      * Validate a single field
-     * 
-     * @param string $field
-     * @param string $rules
-     * @return void
+     *
      * @throws Exception
      */
-    private function validateField(string $field, string $rules): void
+    private function validateField(string $field, string|array $rules): void
     {
         try {
-            $rulesArray = array_values(array_filter(array_map('trim', explode('|', $rules)), static fn($rule) => $rule !== ''));
+            // Array form is the escape hatch for patterns containing '|', which the
+            // pipe-separated string form would split mid-pattern.
+            $rulesArray = is_array($rules) ? array_values($rules) : explode('|', $rules);
+            $rulesArray = array_values(array_filter(array_map('trim', $rulesArray), static fn($rule) => $rule !== ''));
             $fieldExists = $this->fieldExists($field);
             if (!$fieldExists) {
                 if (in_array('sometimes', $rulesArray, true)) {
@@ -610,7 +551,6 @@ class Validation
     /**
      * Get field value with support for nested arrays and deep checking
      * 
-     * @param string $field
      * @return mixed
      */
     private function getFieldValue(string $field)
@@ -633,8 +573,6 @@ class Validation
     /**
      * Get nested value from array using dot notation
      * 
-     * @param array $array
-     * @param array $keys
      * @return mixed
      */
     private function getNestedValue(array $array, array $keys)
@@ -657,9 +595,6 @@ class Validation
 
     /**
      * Get values for wildcard fields with deep array support
-     * 
-     * @param string $field
-     * @return array
      */
     private function getWildcardValues(string $field): array
     {
@@ -678,12 +613,7 @@ class Validation
     /**
      * Extract values for wildcard fields recursively with enhanced deep checking
      * 
-     * @param array $data
-     * @param array $parts
-     * @param int $index
-     * @param array $path
      * @param array &$results
-     * @return void
      */
     private function extractWildcardValues(array $data, array $parts, int $index, array $path, array &$results): void
     {
@@ -725,12 +655,7 @@ class Validation
     /**
      * Extract values for deep wildcard fields
      * 
-     * @param array $data
-     * @param array $parts
-     * @param int $startIndex
-     * @param array $path
      * @param array &$results
-     * @return void
      */
     private function extractDeepWildcardValues(array $data, array $parts, int $startIndex, array $path, array &$results): void
     {
@@ -764,9 +689,6 @@ class Validation
 
     /**
      * Check if field exists in data with deep array support
-     * 
-     * @param string $field
-     * @return bool
      */
     private function fieldExists(string $field): bool
     {
@@ -795,14 +717,7 @@ class Validation
         }
     }
 
-    /**
-     * Apply a validation rule with enhanced security
-     * 
-     * @param string $field
-     * @param mixed $value
-     * @param string $rule
-     * @return bool
-     */
+    /** Apply a validation rule with enhanced security */
     private function applyRule(string $field, $value, string $rule): bool
     {
         try {
@@ -819,7 +734,14 @@ class Validation
 
             $ruleParts = explode(':', $rule, 2);
             $ruleName = $ruleParts[0];
-            $ruleParams = isset($ruleParts[1]) ? explode(',', $ruleParts[1]) : [];
+
+            // regex patterns routinely contain commas — {2,3}, {4,} — so splitting on
+            // them truncated the pattern and the rule could then never pass.
+            $ruleParams = match (true) {
+                !isset($ruleParts[1])                             => [],
+                in_array($ruleName, ['regex', 'not_regex'], true) => [$ruleParts[1]],
+                default                                           => explode(',', $ruleParts[1]),
+            };
 
             // Check custom rules first
             if (isset($this->customRules[$ruleName])) {
@@ -853,12 +775,6 @@ class Validation
 
     /**
      * Add validation error
-     * 
-     * @param string $field
-     * @param string $rule
-     * @param array $params
-     * @param string $customMessage
-     * @return void
      */
     private function addError(string $field, string $rule, array $params = [], string $customMessage = ''): void
     {
@@ -881,11 +797,6 @@ class Validation
 
     /**
      * Get error message for a rule
-     * 
-     * @param string $field
-     * @param string $rule
-     * @param array $params
-     * @return string
      */
     private function getErrorMessage(string $field, string $rule, array $params = []): string
     {
@@ -905,7 +816,6 @@ class Validation
             // Remove underscores from field name for display
             $displayField = str_replace('_', ' ', $field);
 
-            // Replace placeholders
             $message = str_replace(':field', $displayField, $message);
 
             if (!empty($params)) {
@@ -1347,7 +1257,6 @@ class Validation
             $filename = $value['name'] ?? null;
 
             if ($filename !== null) {
-                // Validate filename security
                 if (!$this->validateSecurefilename($field, $filename, [])) {
                     return false;
                 }
@@ -1417,14 +1326,16 @@ class Validation
                 return false;
             }
 
-            // Validate array structure depth
-            $maxDepth = !empty($params) ? (int) $params[0] : 10;
-            if ($this->getArrayDepth($value) > $maxDepth) {
+            // Depth first, and bounded: the ceiling stops the walk as soon as the
+            // limit is exceeded rather than measuring the whole structure.
+            $maxDepth = !empty($params) ? max(1, (int) $params[0]) : 10;
+            if ($this->getArrayDepth($value, $maxDepth) > $maxDepth) {
                 return false;
             }
 
-            // Validate array size
-            if (count($value, COUNT_RECURSIVE) > 1000) { // Prevent memory exhaustion
+            // Then total size. deep_array:10,5000 raises the element ceiling.
+            $maxElements = isset($params[1]) ? max(1, (int) $params[1]) : 1000;
+            if (count($value, COUNT_RECURSIVE) > $maxElements) {
                 return false;
             }
 
@@ -1437,24 +1348,50 @@ class Validation
     /**
      * Get array depth
      */
-    private function getArrayDepth(array $array): int
+    /**
+     * Measure nesting depth without recursing into it.
+     *
+     * This used to recurse once per level, which meant the function protecting
+     * against over-nested input had to walk the whole structure before it could
+     * say the structure was too deep. A hundred-thousand-level array — a few
+     * hundred bytes of JSON — exhausted the PHP stack first, and a stack
+     * overflow is a fatal, not an Exception, so the surrounding catch could not
+     * see it either.
+     *
+     * An explicit stack has no such limit, and $ceiling stops the walk the
+     * moment the answer can no longer change.
+     *
+     * @param int $ceiling Stop counting here; the caller only needs to know it was exceeded.
+     */
+    private function getArrayDepth(array $array, int $ceiling = 64): int
     {
-        try {
-            $maxDepth = 1;
+        $ceiling = max(1, $ceiling);
+        $maxDepth = 1;
 
-            foreach ($array as $value) {
-                if (is_array($value)) {
-                    $depth = $this->getArrayDepth($value) + 1;
-                    if ($depth > $maxDepth) {
-                        $maxDepth = $depth;
-                    }
-                }
+        // [value, depth-of-that-value]
+        $pending = [[$array, 1]];
+
+        while ($pending !== []) {
+            [$current, $depth] = array_pop($pending);
+
+            if ($depth > $maxDepth) {
+                $maxDepth = $depth;
             }
 
-            return $maxDepth;
-        } catch (Exception $e) {
-            return 0;
+            // Past the ceiling the exact figure is irrelevant — every caller is
+            // comparing it against a limit this has already passed.
+            if ($maxDepth > $ceiling) {
+                return $maxDepth;
+            }
+
+            foreach ($current as $value) {
+                if (is_array($value)) {
+                    $pending[] = [$value, $depth + 1];
+                }
+            }
         }
+
+        return $maxDepth;
     }
 
     /**
@@ -1467,13 +1404,24 @@ class Validation
                 return false;
             }
 
-            $allowedKeys = $params;
-            if (empty($allowedKeys)) {
+            if ($params === []) {
                 return true;
             }
 
+            /*
+            | A hash lookup rather than in_array() per key: the old form was
+            | O(keys x allowed), so a thousand-key payload against fifty allowed
+            | keys did fifty thousand comparisons to answer a question a single
+            | pass can answer.
+            |
+            | Keys are compared as strings because PHP normalises numeric array
+            | keys to integers — in_array()'s loose default would also have
+            | matched "0" against any non-numeric allowed key.
+            */
+            $allowed = array_flip(array_map('strval', $params));
+
             foreach (array_keys($value) as $key) {
-                if (!in_array($key, $allowedKeys)) {
+                if (!isset($allowed[(string) $key])) {
                     return false;
                 }
             }
@@ -2171,7 +2119,6 @@ class Validation
             }
 
             $mimeTypes = [
-                // PDF
                 'pdf' => 'application/pdf',
                 
                 // Microsoft Word
@@ -2702,6 +2649,14 @@ class Validation
                 return false;
             }
 
+            // json_validate() answers the question without building the
+            // structure. json_decode() allocated the whole tree only to throw it
+            // away, so validating a large payload cost its full decoded size in
+            // memory for no result. Added in 8.3; the framework targets 8.2.
+            if (function_exists('json_validate')) {
+                return json_validate($value);
+            }
+
             json_decode($value);
             return json_last_error() === JSON_ERROR_NONE;
         } catch (Exception $e) {
@@ -2867,6 +2822,173 @@ class Validation
 
             return \Core\Security\Hasher::verify((string) $value, (string) $user['password']);
         } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Validate that no other row already holds this value.
+     *
+     * Usage:
+     *   unique:users                       column defaults to the field name
+     *   unique:users,email
+     *   unique:users,email,5               ignore the row whose id is 5
+     *   unique:users,email,5,uuid          ignore the row whose uuid is 5
+     *
+     * Soft-deleted rows are INCLUDED on purpose. A plain UNIQUE index — which is
+     * what actually holds the invariant, see
+     * app/database/migrations/20260824_017_add_users_unique_constraints.php — does
+     * not know about deleted_at either. Excluding them here would let validation
+     * pass and the INSERT then fail with a duplicate-key error.
+     *
+     * This rule is a UX affordance, NOT the constraint. It is a check-then-act
+     * race: two concurrent requests can both pass it and both insert. Always back
+     * it with a database UNIQUE index.
+     */
+    private function validateUnique(string $field, $value, array $params = []): bool
+    {
+        if ($value === null || $value === '') {
+            return true;
+        }
+
+        $table = trim((string) ($params[0] ?? ''));
+        if ($table === '') {
+            return false;
+        }
+
+        $column = trim((string) ($params[1] ?? '')) ?: $field;
+        $ignoreValue = $params[2] ?? null;
+        $ignoreColumn = trim((string) ($params[3] ?? '')) ?: 'id';
+
+        try {
+            $query = db()->table($table)->where($column, $value);
+
+            if ($ignoreValue !== null && $ignoreValue !== '') {
+                $query->where($ignoreColumn, '!=', $ignoreValue);
+            }
+
+            return !$query->exists();
+        } catch (\Throwable $e) {
+            Logger::instance()->log_error(
+                sprintf('unique rule failed for %s.%s: %s', $table, $column, $e->getMessage())
+            );
+
+            // Fail closed: a broken lookup must not silently allow a duplicate.
+            return false;
+        }
+    }
+
+    /**
+     * Validate uniqueness across a combination of columns.
+     *
+     * Usage:
+     *   unique_with:table,column,otherField[,otherField...]
+     *   unique_with:table,column,otherField,ignore:5
+     *   unique_with:table,column,otherField,ignore:5,ignore_column:uuid
+     *
+     * `column` is this field's database column. Each `otherField` is an input
+     * field name whose submitted value must also match for a row to count as a
+     * duplicate. Same caveat as unique(): back it with a composite UNIQUE index.
+     */
+    private function validateUniquewith(string $field, $value, array $params = []): bool
+    {
+        if ($value === null || $value === '') {
+            return true;
+        }
+
+        $table = trim((string) ($params[0] ?? ''));
+        if ($table === '') {
+            return false;
+        }
+
+        $column = trim((string) ($params[1] ?? '')) ?: $field;
+        $ignoreValue = null;
+        $ignoreColumn = 'id';
+        $withFields = [];
+
+        foreach (array_slice($params, 2) as $param) {
+            $param = trim((string) $param);
+            if ($param === '') {
+                continue;
+            }
+
+            if (str_starts_with($param, 'ignore:')) {
+                $ignoreValue = substr($param, 7);
+                continue;
+            }
+
+            if (str_starts_with($param, 'ignore_column:')) {
+                $ignoreColumn = substr($param, 14) ?: 'id';
+                continue;
+            }
+
+            $withFields[] = $param;
+        }
+
+        try {
+            $query = db()->table($table)->where($column, $value);
+
+            foreach ($withFields as $withField) {
+                $query->where($withField, $this->getFieldValue($withField));
+            }
+
+            if ($ignoreValue !== null && $ignoreValue !== '') {
+                $query->where($ignoreColumn, '!=', $ignoreValue);
+            }
+
+            return !$query->exists();
+        } catch (\Throwable $e) {
+            Logger::instance()->log_error(
+                sprintf('unique_with rule failed for %s.%s: %s', $table, $column, $e->getMessage())
+            );
+
+            return false;
+        }
+    }
+
+    /**
+     * Validate that a matching row exists.
+     *
+     * Usage:
+     *   exists:master_roles                column defaults to the field name
+     *   exists:master_roles,id
+     *
+     * Soft-deleted rows are included, for the same reason as unique(): this rule
+     * reports what the database contains, not what the application considers
+     * live. Add an explicit scope check in the controller when a soft-deleted row
+     * must not be selectable.
+     */
+    private function validateExists(string $field, $value, array $params = []): bool
+    {
+        if ($value === null || $value === '') {
+            return true;
+        }
+
+        $table = trim((string) ($params[0] ?? ''));
+        if ($table === '') {
+            return false;
+        }
+
+        $column = trim((string) ($params[1] ?? '')) ?: $field;
+
+        try {
+            $query = db()->table($table);
+
+            if (is_array($value)) {
+                $values = array_values(array_unique($value));
+                if ($values === []) {
+                    return true;
+                }
+
+                return (int) $query->whereIn($column, $values)->count() === count($values);
+            }
+
+            return $query->where($column, $value)->exists();
+        } catch (\Throwable $e) {
+            Logger::instance()->log_error(
+                sprintf('exists rule failed for %s.%s: %s', $table, $column, $e->getMessage())
+            );
+
             return false;
         }
     }

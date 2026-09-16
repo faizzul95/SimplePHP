@@ -19,7 +19,12 @@ namespace Core\Console\Commands;
  */
 final class RouteCacheCommand
 {
-    public function handle(): void
+    /**
+     * @param  array<string, mixed> $options `--allow-closures` to downgrade the
+     *                                       skipped-route failure to a warning.
+     * @return int Exit code
+     */
+    public function handle(array $options = []): int
     {
         echo "Building route cache...\n";
 
@@ -80,9 +85,33 @@ final class RouteCacheCommand
         echo "  Static routes:  {$staticCount}\n";
         echo "  Dynamic routes: {$dynamicCount}\n";
 
-        if ($skipped > 0) {
-            echo "  WARNING: {$skipped} closure-based route(s) were skipped.\n";
-            echo "  Convert them to [ControllerClass::class, 'method'] to include them in the cache.\n";
+        if ($skipped === 0) {
+            return 0;
         }
+
+        // A skipped route is not a warning, it is a route that 404s in production
+        // while still working in development — the hardest kind of failure to
+        // trace. Naming them and failing the command is the point.
+        $allowClosures = !empty($options['allow-closures']);
+
+        echo "\n";
+        echo ($allowClosures ? "  WARNING: " : "  ERROR: ")
+            . "{$skipped} closure-based route(s) are NOT in the cache and will 404:\n";
+
+        foreach ((array) ($data['skipped_routes'] ?? []) as $route) {
+            echo "    - {$route}\n";
+        }
+
+        echo "  Convert them to [ControllerClass::class, 'method'] to include them.\n";
+
+        if ($allowClosures) {
+            echo "  Continuing because --allow-closures was passed.\n";
+
+            return 0;
+        }
+
+        echo "  Re-run with --allow-closures to accept this.\n";
+
+        return 1;
     }
 }

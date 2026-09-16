@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Support\Auth\AccessCredentialService;
+use Core\Auth\AccessCredentialService;
 use PHPUnit\Framework\TestCase;
 
 final class AccessCredentialServiceTest extends TestCase

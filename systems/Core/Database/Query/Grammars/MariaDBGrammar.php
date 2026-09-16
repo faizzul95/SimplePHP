@@ -1,8 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Core\Database\Query\Grammars;
 
-class MariaDBGrammar extends QueryGrammar
+/**
+ * MariaDB is MySQL-compatible in almost everything the builder emits; the
+ * differences that matter live in TimeoutDialect, not here.
+ */
+class MariaDBGrammar extends MySQLGrammar
 {
     public function compileTemporalExpression(string $type, string $column): string
     {
@@ -13,5 +19,11 @@ class MariaDBGrammar extends QueryGrammar
             'year' => "YEAR($column)",
             'time' => "DATE_FORMAT($column, '%H:%i:%s')",
         };
+    }
+
+    /** RETURNING landed in MariaDB 10.5 for INSERT; MySQL still has nothing. */
+    public function supportsReturning(): bool
+    {
+        return true;
     }
 }

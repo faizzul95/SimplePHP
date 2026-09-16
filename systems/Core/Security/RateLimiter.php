@@ -37,7 +37,6 @@ final class RateLimiter
      * race condition. The counter is atomically incremented before the comparison,
      * so two concurrent requests near the limit cannot both slip through.
      *
-     * @param string $key          Key from resolveKey()
      * @param int    $maxAttempts  Maximum allowed attempts in the window
      * @param int    $decaySeconds Window duration in seconds
      */

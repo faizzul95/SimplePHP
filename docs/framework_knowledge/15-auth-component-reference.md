@@ -6,16 +6,16 @@
 - **`systems_login_policy`** — credential lockout, audit trail, password rotation, and user-status enforcement. See [Section 6](#6-systems_login_policy-credential-lockout--audit).
 - **Session security fingerprint** — UA + optional IP binding with configurable strict/normalized/family modes. See [Section 7 troubleshooting](#7-troubleshooting-unauthorized-401).
 - **`issueApiCredential()`** — gated API-credential issuance replacing raw `createToken()` calls in controllers. See [Issue API Credential](#issue-api-credential) below.
-- **Shared request-auth resolvers** — `App\Support\Auth\AccessCredentialService` now owns JWT, OAuth2, API key, Basic, and Digest request-auth resolution while `Components\Auth` remains the stable public surface.
-- **Guard alias normalization** — `App\Support\Auth\AuthMethodResolver` is the single source of truth for `web/session`, `api/token`, and the other request-auth aliases used by `AuthManager` guards and `Components\Auth`.
+- **Shared request-auth resolvers** — `Core\Auth\AccessCredentialService` now owns JWT, OAuth2, API key, Basic, and Digest request-auth resolution while `Components\Auth` remains the stable public surface.
+- **Guard alias normalization** — `Core\Auth\AuthMethodResolver` is the single source of truth for `web/session`, `api/token`, and the other request-auth aliases used by `AuthManager` guards and `Components\Auth`.
 
 ## Session + Token Unified Auth (`Components\Auth`)
 
 Runtime structure:
-- `App\Support\Auth\AuthManager` is the primary `auth()` service entry point and extends `Components\Auth`.
-- `App\Support\Auth\AuthGuard` provides named guard views such as `auth()->guard('web')` and `auth()->guard('api')`.
-- `App\Support\Auth\AccessCredentialService` resolves request credentials for `jwt`, `oauth2`, `api_key`, `basic`, and `digest`.
-- `App\Support\Auth\TokenService` remains responsible for personal access token lifecycle operations.
+- `Core\Auth\AuthManager` is the primary `auth()` service entry point and extends `Components\Auth`.
+- `Core\Auth\AuthGuard` provides named guard views such as `auth()->guard('web')` and `auth()->guard('api')`.
+- `Core\Auth\AccessCredentialService` resolves request credentials for `jwt`, `oauth2`, `api_key`, `basic`, and `digest`.
+- `Core\Auth\TokenService` remains responsible for personal access token lifecycle operations.
 
 Supported methods:
 - Session

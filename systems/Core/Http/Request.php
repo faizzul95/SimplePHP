@@ -34,6 +34,21 @@ class Request
         $this->path = $this->resolvePath($server);
     }
 
+    /**
+     * Supply the raw body directly.
+     *
+     * capture() reads php://input, which a test cannot write and a worker SAPI
+     * may have consumed already. Anything that signs or hashes the body — request
+     * signature verification, webhook validation — needs the exact bytes, so
+     * there has to be a way to hand them over.
+     */
+    public function withRawBody(string $body): static
+    {
+        $this->rawBody = $body;
+
+        return $this;
+    }
+
     public static function capture(): self
     {
         $request = new self(self::stripNullBytes($_GET), self::stripNullBytes($_POST), $_SERVER, $_FILES);
@@ -276,13 +291,16 @@ class Request
 
         if (!empty($trustedProxies) && $this->isTrustedProxy($remoteAddr, $trustedProxies)) {
             $keys = [
+                // Set by the edge itself and not forwardable by the client.
                 'HTTP_CF_CONNECTING_IP',
-                'HTTP_CLIENT_IP',
                 'HTTP_X_FORWARDED_FOR',
-                'HTTP_X_FORWARDED',
                 'HTTP_X_CLUSTER_CLIENT_IP',
+                'HTTP_X_FORWARDED',
                 'HTTP_FORWARDED_FOR',
                 'HTTP_FORWARDED',
+                // Non-standard, trivially set by the client. Last, so a proxy that
+                // populates a real header always wins.
+                'HTTP_CLIENT_IP',
             ];
 
             foreach ($keys as $key) {
@@ -290,17 +308,60 @@ class Request
                     continue;
                 }
 
-                $ips = explode(',', (string) $this->server[$key]);
-                foreach ($ips as $ip) {
-                    $candidate = trim($ip);
-                    if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
-                        return $candidate;
-                    }
+                $candidate = $this->clientAddressFromChain((string) $this->server[$key], $trustedProxies);
+                if ($candidate !== null) {
+                    return $candidate;
                 }
             }
         }
 
         return filter_var($remoteAddr, FILTER_VALIDATE_IP) ? $remoteAddr : '127.0.0.1';
+    }
+
+    /**
+     * The real client address from a forwarded chain.
+     *
+     * X-Forwarded-For reads `client, proxy1, proxy2` — each hop appends the
+     * address it received from. Only the entries your own proxies appended are
+     * trustworthy; everything to the left of them was supplied by the caller.
+     *
+     * This used to take the leftmost valid address, which is the one an attacker
+     * writes. Sending `X-Forwarded-For: 1.2.3.4` made the framework rate-limit,
+     * block and audit-log 1.2.3.4 instead of the sender, so rotating that value
+     * per request bypassed every IP-based control the framework has.
+     *
+     * Walking from the right and stopping at the first address that is not one of
+     * our own proxies gives the address our infrastructure actually observed.
+     *
+     * @param list<string> $trustedProxies
+     */
+    private function clientAddressFromChain(string $chain, array $trustedProxies): ?string
+    {
+        $hops = array_reverse(array_map('trim', explode(',', $chain)));
+        $fallback = null;
+
+        foreach ($hops as $hop) {
+            // RFC 7239 `for="[2001:db8::1]:443"` and plain `1.2.3.4:8080`.
+            $hop = trim(preg_replace('/^for=/i', '', $hop) ?? $hop, " \t\"'");
+            if (preg_match('/^\[([^\]]+)\]/', $hop, $matches) === 1) {
+                $hop = $matches[1];
+            } elseif (substr_count($hop, ':') === 1) {
+                $hop = strtok($hop, ':') ?: $hop;
+            }
+
+            if (filter_var($hop, FILTER_VALIDATE_IP) === false) {
+                continue;
+            }
+
+            $fallback ??= $hop;
+
+            if (!$this->isTrustedProxy($hop, $trustedProxies)) {
+                return $hop;
+            }
+        }
+
+        // Every hop was one of ours — the request originated inside the perimeter.
+        return $fallback;
     }
 
     private function isSecureRequest(): bool

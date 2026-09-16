@@ -37,7 +37,6 @@
 
 <script>
     async function getPassData(baseUrl, data) {
-        // console.log('form : ', data);
     }
 
     $("#rolesForm").submit(function(event) {

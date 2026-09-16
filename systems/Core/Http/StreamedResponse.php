@@ -2,8 +2,10 @@
 
 namespace Core\Http;
 
-class StreamedResponse
+class StreamedResponse implements Responsable
 {
+    use HeaderSanitizer;
+
     public function __construct(
         private $callback,
         private int $status = 200,
@@ -21,38 +23,14 @@ class StreamedResponse
         return $this->sanitizeHeaders($this->headers);
     }
 
-    public function send(): never
+    public function emitBody(): void
     {
-        if (!headers_sent()) {
-            http_response_code($this->status);
-
-            foreach ($this->headers() as $name => $value) {
-                header($name . ': ' . (string) $value, true);
-            }
-        }
-
         ($this->callback)();
-        exit;
     }
 
-    private function sanitizeHeaders(array $headers): array
+    /** Throws rather than exits so middleware unwind and the Kernel emits once. */
+    public function send(): never
     {
-        $sanitized = [];
-
-        foreach ($headers as $name => $value) {
-            if (!is_string($name) || !is_scalar($value)) {
-                continue;
-            }
-
-            $headerName = str_replace(["\r", "\n", "\0"], '', $name);
-            $headerValue = str_replace(["\r", "\n", "\0"], '', (string) $value);
-            if ($headerName === '') {
-                continue;
-            }
-
-            $sanitized[$headerName] = $headerValue;
-        }
-
-        return $sanitized;
+        throw new ResponseEmitted($this);
     }
 }

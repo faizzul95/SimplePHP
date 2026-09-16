@@ -19,12 +19,7 @@ final class ModelObserverRegistry
     /** @var array<class-string, ModelObserver[]> */
     private static array $observers = [];
 
-    /**
-     * Register an observer for a model class.
-     *
-     * @param class-string  $modelClass FQN of the Model subclass
-     * @param ModelObserver $observer   Observer instance
-     */
+    /** @param class-string  $modelClass FQN of the Model subclass */
     public static function observe(string $modelClass, ModelObserver $observer): void
     {
         self::$observers[$modelClass][] = $observer;

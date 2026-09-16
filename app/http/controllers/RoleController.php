@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Core\Http\Controller;
+use Core\Http\Reply;
 use Core\Http\Request;
 use App\Http\Requests\SaveRoleRequest;
 
@@ -19,7 +20,7 @@ class RoleController extends Controller
         $this->view('rbac.roles');
     }
 
-    public function listRolesDatatable(Request $request): void
+    public function listRolesDatatable(Request $request): array
     {
         $status = $request->input('role_status');
 
@@ -39,20 +40,23 @@ class RoleController extends Controller
 
         $result['data'] = array_map([$this, 'mapRoleDatatableRow'], $result['data']);
 
-        jsonResponse($result);
+        // Already the exact shape DataTables expects (draw / recordsTotal /
+        // data), and Emitter turns a returned array into a JSON response — so
+        // wrapping it would only nest the payload a level deeper.
+        return $result;
     }
 
-    public function show(int|string $id): void
+    public function show(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'Role ID is required']);
+        if ($id === '') {
+            return fail('Role ID is required', 400);
         }
 
         $role = $this->findOrFail('master_roles', $id, '*', false, 'Role not found');
-        jsonResponse(['code' => 200, 'data' => $role]);
+        return ok(null, $role);
     }
 
-    public function save(SaveRoleRequest $request): void
+    public function save(SaveRoleRequest $request): Reply
     {
         $data = $request->validated();
         $roleId = $data['id'] ?? null;
@@ -66,7 +70,7 @@ class RoleController extends Controller
         );
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to save role']);
+            return fail('Failed to save role');
         }
 
         $savedRoleId = $roleId ?: ($result['id'] ?? null);
@@ -82,17 +86,13 @@ class RoleController extends Controller
             ->safeOutput()
             ->fetch() : null;
 
-        jsonResponse([
-            'code' => 200,
-            'message' => 'Role saved',
-            'data' => $savedRow ? $this->mapRoleDatatableRow($savedRow) : null,
-        ]);
+        return ok('Role saved', $savedRow ? $this->mapRoleDatatableRow($savedRow) : null);
     }
 
-    public function destroy(int|string $id): void
+    public function destroy(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'Role ID is required']);
+        if ($id === '') {
+            return fail('Role ID is required', 400);
         }
         
         $result = db()->table('master_roles')->where('id', $id)->softDelete(
@@ -103,16 +103,16 @@ class RoleController extends Controller
         );
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to delete role']);
+            return fail('Failed to delete role');
         }
 
-        jsonResponse(['code' => 200, 'message' => 'Role deleted']);
+        return ok('Role deleted');
     }
 
-    public function listSelectOptionRole(Request $request): void
+    public function listSelectOptionRole(Request $request): Reply
     {
         $role = db()->table('master_roles')->whereNull('deleted_at')->safeOutput()->get();
-        jsonResponse(['code' => 200, 'data' => $role]);
+        return ok(null, $role);
     }
 
     private function mapRoleDatatableRow(array $row): array

@@ -6,10 +6,18 @@ use PHPUnit\Framework\TestCase;
 
 final class ApiSecurityConfigTest extends TestCase
 {
-    private function frameworkConfig(): array
+    private function frameworkConfig(?string $apiDriver = null): array
     {
+        unset($_ENV['API_AUTH_DRIVER'], $_SERVER['API_AUTH_DRIVER']);
+
+        if ($apiDriver !== null) {
+            $_ENV['API_AUTH_DRIVER'] = $apiDriver;
+        }
+
         $config = [];
         require __DIR__ . '/../../../app/config/framework.php';
+
+        unset($_ENV['API_AUTH_DRIVER']);
 
         return (array) ($config['framework'] ?? []);
     }
@@ -29,6 +37,17 @@ final class ApiSecurityConfigTest extends TestCase
 
         self::assertArrayHasKey('api.app', $groups);
         self::assertContains('api', (array) $groups['api.app']);
+    }
+
+    /**
+     * api.app is composed from api.driver, so the cookie profile is now what the
+     * `session` driver produces rather than a fixed list. The default is asserted
+     * in Tests\Unit\Config\ApiAuthDriverConfigTest.
+     */
+    public function testTheSessionDriverKeepsTheFullBrowserProfile(): void
+    {
+        $groups = (array) ($this->frameworkConfig('session')['middleware_groups'] ?? []);
+
         self::assertContains('origin.policy:strict', (array) $groups['api.app']);
         self::assertContains('session.stateful:force', (array) $groups['api.app']);
         self::assertContains('auth.web', (array) $groups['api.app']);

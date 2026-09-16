@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 class RequireApiToken implements MiddlewareInterface
@@ -32,8 +32,14 @@ class RequireApiToken implements MiddlewareInterface
                 header('WWW-Authenticate: ' . auth()->digestChallengeHeader());
             }
 
-            Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
+            // The external API surface is token-only; a login redirect would break
+            // the WWW-Authenticate challenge sent just above.
+            Abort::unauthenticated($request, forceJson: true);
         }
+
+        // Who the failing request belonged to is the second thing you want after
+        // the request id, and it is only knowable once auth has resolved.
+        \Core\Support\LogContext::putSafely('user_id', static fn() => auth()->id($methods));
 
         return $next($request);
     }

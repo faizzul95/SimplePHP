@@ -29,8 +29,6 @@ namespace Core\Database;
  * cannot be serialised). If APCu is unavailable the pool degrades gracefully to
  * the intra-request tier only.
  *
- * @category Database
- * @package  Core\Database
  * @author   Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license  http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version  1.1.0
@@ -85,7 +83,6 @@ class ConnectionPool
      * @param string $name   Logical connection name (e.g. 'default', 'read').
      * @param array  $config DSN parameters: driver, host, port, database,
      *                       username, password, charset, socket, persistent.
-     * @return void
      */
     public static function register(string $name, array $config): void
     {
@@ -96,15 +93,13 @@ class ConnectionPool
      * Return an open PDO handle for the given connection name.
      *
      * Resolution order:
-     *  1. Intra-request static cache (fastest — same process, same request).
-     *  2. PHP persistent connection recycled from a previous request in this
-     *     worker (PDO::ATTR_PERSISTENT).  The socket is already open; PDO just
-     *     validates it via APCu-backed metadata before handing it back.
-     *  3. Fresh TCP connection (cold path — happens once per worker per name).
+     * 1. Intra-request static cache (fastest — same process, same request).
+     * 2. PHP persistent connection recycled from a previous request in this
+     * worker (PDO::ATTR_PERSISTENT).  The socket is already open; PDO just
+     * validates it via APCu-backed metadata before handing it back.
+     * 3. Fresh TCP connection (cold path — happens once per worker per name).
      *
-     * @param string     $name   Logical connection name.
      * @param array|null $config Optional config override (registered if given).
-     * @return \PDO
      * @throws \Exception On connection failure or pool exhaustion.
      */
     public static function getConnection(string $name, ?array $config = null): \PDO
@@ -153,8 +148,6 @@ class ConnectionPool
      * layer keeps the socket open after the request ends and reuses it for the
      * next request on the same worker — this IS the cross-request pool.
      *
-     * @param string $name
-     * @return \PDO
      * @throws \Exception
      */
     protected static function createConnection(string $name): \PDO
@@ -165,52 +158,25 @@ class ConnectionPool
 
         $config = self::$configs[$name];
 
-        // ---- Validate + build DSN ----------------------------------------
-        $driver = strtolower($config['driver'] ?? 'mysql');
-        $allowedDrivers = ['mysql', 'mariadb', 'pgsql', 'sqlite'];
-        if (!in_array($driver, $allowedDrivers, true)) {
-            throw new \Exception("Unsupported database driver: '{$driver}'");
+        /*
+        | The DSN shape is per engine and lives in Dsn: SQL Server separates its
+        | port with a comma rather than a key, Oracle takes an Easy Connect
+        | descriptor and does not use `dbname` for the host at all, and each has
+        | its own idea of a legal database name. Building one shape inline meant
+        | adding an engine required editing the middle of this method.
+        */
+        $driver = strtolower(trim((string) ($config['driver'] ?? 'mysql')));
+        $pdoDriver = Dsn::pdoDriver($driver);
+
+        try {
+            $dsn = Dsn::build($config, $name);
+        } catch (\InvalidArgumentException $e) {
+            throw new \Exception($e->getMessage(), 0, $e);
         }
 
-        // MariaDB shares the MySQL PDO driver
-        $pdoDriver = ($driver === 'mariadb') ? 'mysql' : $driver;
-
-        $host = $config['host'] ?? 'localhost';
-        if (!preg_match('/^[a-zA-Z0-9._\-:]+$/', (string) $host)) {
-            throw new \Exception("Invalid host format for connection '{$name}'");
-        }
-
-        $database = $config['database'] ?? '';
-        if ($pdoDriver !== 'sqlite' && !preg_match('/^[a-zA-Z0-9_\-]+$/', (string) $database)) {
-            throw new \Exception("Invalid database name format for connection '{$name}'");
-        }
-
-        if ($pdoDriver === 'sqlite') {
-            $dsn = "sqlite:{$database}";
-        } else {
-            $dsn = "{$pdoDriver}:host={$host};dbname={$database}";
-            if (isset($config['charset']) && preg_match('/^[a-zA-Z0-9_]+$/', (string) $config['charset'])) {
-                $dsn .= ";charset={$config['charset']}";
-            }
-            if (isset($config['port'])) {
-                $port = filter_var($config['port'], FILTER_VALIDATE_INT);
-                if ($port === false || $port < 1 || $port > 65535) {
-                    throw new \Exception("Invalid port number for connection '{$name}'");
-                }
-                $dsn .= ";port={$port}";
-            }
-            if (isset($config['socket']) && preg_match('/^[\/a-zA-Z0-9._\-]+$/', (string) $config['socket'])) {
-                $dsn .= ";unix_socket={$config['socket']}";
-            }
-        }
-
-        // ---- PDO options --------------------------------------------------
-        // persistent = true  → PHP reuses the socket on the SAME worker across
-        //                       requests (cross-request pool, no external proxy
-        //                       needed for single-server setups).
-        // persistent = false → Fresh connection each request (safer for CLI
-        //                       workers / queue consumers to avoid leaks).
-        $persistent = (bool) ($config['persistent'] ?? true);
+        // Defaults to false: pdo_mysql does not reset session state on reuse, so a
+        // request that dies mid-transaction leaves it open for the next one.
+        $persistent = (bool) ($config['persistent'] ?? false);
 
         $options = [
             \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
@@ -269,8 +235,6 @@ class ConnectionPool
     /**
      * Check whether APCu is available and enabled for the current SAPI.
      * Result is memoised per-process after the first call.
-     *
-     * @return bool
      */
     protected static function apcuAvailable(): bool
     {
@@ -301,14 +265,12 @@ class ConnectionPool
      * or the PDO object itself (which cannot be serialised).
      *
      * Fields:
-     *  - last_used      : unix timestamp of most recent successful use
-     *  - total_hits     : cumulative intra-pool cache hits across ALL workers
-     *  - total_misses   : cumulative new-connection events across ALL workers
-     *  - worker_pid     : PID of the worker that last updated this entry
+     * - last_used      : unix timestamp of most recent successful use
+     * - total_hits     : cumulative intra-pool cache hits across ALL workers
+     * - total_misses   : cumulative new-connection events across ALL workers
+     * - worker_pid     : PID of the worker that last updated this entry
      *
-     * @param string $name Connection name
      * @param string $event 'hit' or 'miss'
-     * @return void
      */
     protected static function updateApcuMeta(string $name, string $event): void
     {
@@ -343,7 +305,6 @@ class ConnectionPool
     /**
      * Retrieve APCu metadata for a connection (all workers combined).
      *
-     * @param string $name
      * @return array|null  Metadata array, or null if APCu is unavailable / no entry.
      */
     public static function getApcuMeta(string $name): ?array
@@ -387,9 +348,6 @@ class ConnectionPool
      * Check if a connection is still valid.
      * Uses a lightweight time-based check first, only pinging the DB
      * if the connection has been idle for a significant period.
-     *
-     * @param string $name Connection name
-     * @return bool
      */
     protected static function isConnectionValid(string $name): bool
     {
@@ -422,9 +380,6 @@ class ConnectionPool
 
     /**
      * Remove a connection from the intra-request pool.
-     *
-     * @param string $name
-     * @return void
      */
     public static function removeConnection(string $name): void
     {
@@ -451,7 +406,6 @@ class ConnectionPool
      *
      * @param string $name     Preferred connection name (e.g. 'slave').
      * @param string $fallback Fallback connection name (e.g. 'default').
-     * @return \PDO
      * @throws \Exception When both connections fail, or when $name === $fallback.
      */
     public static function getConnectionWithFallback(string $name, string $fallback = 'default'): \PDO
@@ -494,8 +448,6 @@ class ConnectionPool
      * Note: for persistent connections PHP will reclaim the socket on the next
      * request automatically. Calling this invalidates the intra-request cache
      * only — the OS socket may still be held by the FPM worker.
-     *
-     * @return void
      */
     public static function closeAll(): void
     {
@@ -530,8 +482,6 @@ class ConnectionPool
 
     /**
      * Return combined per-process and cross-worker statistics.
-     *
-     * @return array
      */
     public static function getStats(): array
     {
@@ -561,8 +511,6 @@ class ConnectionPool
     /**
      * Reset per-process runtime statistics.
      * Cross-worker APCu entries are not affected.
-     *
-     * @return void
      */
     public static function resetStats(): void
     {
@@ -576,7 +524,6 @@ class ConnectionPool
 
     /**
      * @param int $max Maximum intra-request pool size (per process).
-     * @return void
      */
     public static function setMaxConnections(int $max): void
     {
@@ -585,7 +532,6 @@ class ConnectionPool
 
     /**
      * @param int $seconds Idle timeout before a handle is considered stale.
-     * @return void
      */
     public static function setTimeout(int $seconds): void
     {
@@ -603,7 +549,6 @@ class ConnectionPool
      * on next request — safer for queue workers that run arbitrary DDL).
      *
      * @param bool $closeConnections Whether to also null the PDO handles (default: false)
-     * @return void
      */
     public static function reset(bool $closeConnections = false): void
     {

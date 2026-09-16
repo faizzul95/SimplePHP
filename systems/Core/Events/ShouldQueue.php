@@ -28,15 +28,8 @@ namespace Core\Events;
  */
 interface ShouldQueue
 {
-    /**
-     * The queue channel this listener should run on.
-     * Defaults to 'default' when the property is absent.
-     */
-    // public string $queue = 'default';
-
-    /**
-     * Seconds to delay execution.
-     * Defaults to 0 (immediate) when the property is absent.
-     */
-    // public int $delay = 0;
+    // An interface cannot declare properties, so the two a listener may set
+    // are recorded here. Both are optional.
+    //   public string $queue = 'default';   channel to run on
+    //   public int $delay = 0;              seconds to wait first
 }

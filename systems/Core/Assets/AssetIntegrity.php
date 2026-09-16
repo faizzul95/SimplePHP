@@ -100,7 +100,7 @@ final class AssetIntegrity
 
     private static function buildAttributes(string $digest, bool $crossOrigin): string
     {
-        $attributes = 'integrity="' . htmlspecialchars($digest, ENT_QUOTES, 'UTF-8') . '"';
+        $attributes = 'integrity="' . htmlspecialchars($digest, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
         if ($crossOrigin) {
             $attributes .= ' crossorigin="anonymous"';
         }

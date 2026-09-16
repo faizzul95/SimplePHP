@@ -2,10 +2,10 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Components\Security;
 use Core\Http\Middleware\MiddlewareInterface;
 use Core\Http\Request;
-use Core\Http\Response;
 
 class ValidateTrustedHosts implements MiddlewareInterface
 {
@@ -51,16 +51,7 @@ class ValidateTrustedHosts implements MiddlewareInterface
 
     protected function reject(Request $request, int $status, string $message)
     {
-        if ($request->expectsJson()) {
-            Response::json([
-                'code' => $status,
-                'message' => $message,
-            ], $status);
-        }
-
-        http_response_code($status);
-        echo $message;
-        exit;
+        Abort::problem($request, $status, $message);
     }
 
     private function normalizeHosts(array $hosts): array

@@ -2,9 +2,15 @@
 
 namespace Core\Routing;
 
+use Core\Http\Emitter;
 use Core\Http\FormRequest;
+use Core\Http\HtmlResponse;
+use Core\Http\JsonResponse;
+use Core\Http\RedirectResponse;
 use Core\Http\Request;
+use Core\Http\Responsable;
 use Core\Http\Response;
+use Core\Http\ResponseEmitted;
 use Core\Http\ValidationException;
 use Core\Http\Middleware\Pipeline;
 use Throwable;
@@ -40,13 +46,17 @@ class Router
         $this->buildRouteIndex();
         $this->indexNamedRoutes();
 
-        $skipped = 0;
+        // Which routes were dropped, not just how many. A count alone tells an
+        // operator that something will 404 in production but not what, and the
+        // symptom — works in development, missing after `deploy` — is one of the
+        // harder ones to trace back to its cause.
+        $skippedRoutes = [];
 
         // Serialize static routes
         $staticExport = [];
         foreach ($this->staticRoutes as $key => $route) {
             if ($route->action instanceof \Closure) {
-                $skipped++;
+                $skippedRoutes[] = $route->method . ' ' . $route->uri;
                 continue;
             }
             $staticExport[$key] = $this->routeToArray($route);
@@ -57,7 +67,7 @@ class Router
         foreach ($this->dynamicRoutes as $method => $routes) {
             foreach ($routes as $index => $route) {
                 if ($route->action instanceof \Closure) {
-                    $skipped++;
+                    $skippedRoutes[] = $route->method . ' ' . $route->uri;
                     continue;
                 }
                 $dynamicExport[$method][] = array_merge(
@@ -72,7 +82,8 @@ class Router
             'dynamic'      => $dynamicExport,
             'named'        => self::$namedRoutes,
             'patterns'     => self::$globalPatterns,
-            'skipped'      => $skipped,
+            'skipped'      => count($skippedRoutes),
+            'skipped_routes' => $skippedRoutes,
             'generated_at' => time(),
         ];
     }
@@ -191,6 +202,7 @@ class Router
     private array $groupStack = [];
     private array $middlewareAliases = [];
     private array $middlewareGroups = [];
+    private array $globalMiddleware = [];
     private static array $namedRoutes = [];
 
     /**
@@ -267,6 +279,17 @@ class Router
     public function middlewareGroup(array $groups): void
     {
         $this->middlewareGroups = array_merge($this->middlewareGroups, $groups);
+    }
+
+    /**
+     * Middleware applied to every route, ahead of its own stack.
+     *
+     * Without this, a route registered outside the web/api groups silently gets no
+     * CSRF, security headers, host validation or rate limiting, and nothing reports it.
+     */
+    public function globalMiddleware(array $middleware): void
+    {
+        $this->globalMiddleware = array_values(array_unique(array_map('strval', $middleware)));
     }
 
     public function get(string $uri, $action): RouteDefinition
@@ -368,8 +391,8 @@ class Router
      */
     public function redirect(string $from, string $to, int $status = 302): RouteDefinition
     {
-        return $this->get($from, function () use ($to, $status) {
-            Response::redirect($this->normalizeRedirectTarget($to), $status);
+        return $this->get($from, function () use ($to, $status): Responsable {
+            return new RedirectResponse($this->normalizeRedirectTarget($to), $status);
         });
     }
 
@@ -392,8 +415,8 @@ class Router
      */
     public function view(string $uri, string $view, array $data = []): RouteDefinition
     {
-        return $this->get($uri, function () use ($view, $data) {
-            response()->view($view, $data)->send();
+        return $this->get($uri, function () use ($view, $data): Responsable {
+            return response()->view($view, $data);
         });
     }
 
@@ -433,56 +456,55 @@ class Router
                 if (strtoupper($request->method()) === 'OPTIONS') {
                     $allow = array_values(array_unique(array_merge($allowedMethods, ['OPTIONS'])));
                     sort($allow);
-                    http_response_code(204);
-                    header('Allow: ' . implode(', ', $allow));
-                    return null;
+
+                    return new HtmlResponse('', 204, ['Allow' => implode(', ', $allow)]);
                 }
 
+                $allowHeader = ['Allow' => implode(', ', $allowedMethods)];
+
                 if ($request->expectsJson()) {
-                    Response::json([
+                    return new JsonResponse([
                         'code' => 405,
                         'message' => 'Method not allowed',
                         'allowed_methods' => $allowedMethods,
-                    ], 405);
+                    ], 405, $allowHeader);
                 }
 
-                http_response_code(405);
-                header('Allow: ' . implode(', ', $allowedMethods));
-                render($generalErrorView, [
+                return $this->renderErrorView($generalErrorView, [
                     'image' => $errorImage,
                     'title' => '405 Method Not Allowed',
                     'message' => 'The ' . $request->method() . ' method is not supported for this route.',
-                ]);
-                return null;
+                ], 405, $allowHeader);
             }
 
             if ($request->expectsJson()) {
-                Response::json(['code' => 404, 'message' => 'Route not found'], 404);
+                return new JsonResponse(['code' => 404, 'message' => 'Route not found'], 404);
             }
 
-            if (!$request->expectsJson()) {
-                $currentPath = trim($this->normalizeUri($request->path()), '/');
-                $targetPath = trim($notFoundRedirect, '/');
+            $currentPath = trim($this->normalizeUri($request->path()), '/');
+            $targetPath = trim($notFoundRedirect, '/');
 
-                if ($targetPath !== '' && $currentPath !== $targetPath) {
-                    Response::redirect(url($targetPath));
-                }
+            if ($targetPath !== '' && $currentPath !== $targetPath) {
+                return new RedirectResponse(url($targetPath));
             }
 
             // Check for a registered fallback route
             $fallback = $this->findRoute('GET', '/__fallback__');
             if ($fallback !== null) {
                 [$fallbackRoute, $fallbackParams] = $fallback;
-                return $this->invokeAction($fallbackRoute->action, $request, $fallbackParams);
+
+                try {
+                    return $this->invokeAction($fallbackRoute->action, $request, $fallbackParams);
+                } catch (ResponseEmitted $emitted) {
+                    return $emitted->response();
+                }
             }
 
-            http_response_code(404);
-            render($error404View, [
+            return $this->renderErrorView($error404View, [
                 'image' => $errorImage,
                 'title' => '404 Page Not Found',
                 'message' => 'Oops! 😖 The requested URL was not found on this server.',
-            ]);
-            return null;
+            ], 404);
         }
 
         [$route, $params] = $match;
@@ -493,53 +515,107 @@ class Router
             'route.middleware' => $route->middleware,
         ]);
 
-        $middleware = $this->resolveMiddleware($route->middleware);
+        $middleware = $this->resolveMiddleware(
+            array_merge($this->globalMiddleware, $route->middleware)
+        );
 
         $pipeline = new Pipeline();
 
         try {
             return $pipeline->process($request, $middleware, function (Request $request) use ($route, $params) {
-                return $this->invokeAction($route->action, $request, $params);
+                try {
+                    return $this->invokeAction($route->action, $request, $params);
+                } catch (ResponseEmitted $emitted) {
+                    // Caught here, inside the pipeline, so every middleware's
+                    // post-$next() code still runs on the way back out. The full
+                    // response object is returned, not just its array payload —
+                    // otherwise a redirect or an HTML body loses its status and
+                    // headers on the way through.
+                    return $emitted->response();
+                }
             });
+        } catch (ResponseEmitted $emitted) {
+            // A middleware short-circuited (rate limit, blocklist). It threw from
+            // outside the destination closure, so it lands here instead.
+            return $emitted->response();
         } catch (ValidationException $e) {
+            // A rejected write goes through Reply, which is the same negotiation
+            // controllers use: JSON with an `errors` object for an API caller,
+            // back to the form with the errors and the old input for a browser.
+            // Written out here as well, the two drifted — the shapes have to match
+            // or a client cannot rely on either.
+            if ($e->statusCode() === 422 && !in_array($request->method(), ['GET', 'HEAD'], true)) {
+                return \Core\Http\Reply::make($e->getMessage())
+                    ->code($e->statusCode())
+                    ->errors($e->errors());
+            }
+
             if ($request->expectsJson()) {
-                Response::json([
+                return new JsonResponse([
                     'code' => $e->statusCode(),
                     'message' => $e->getMessage(),
                     'errors' => $e->errors(),
                 ], $e->statusCode());
             }
 
-            if ($e->statusCode() === 422 && !in_array($request->method(), ['GET', 'HEAD'], true)) {
-                redirect()
-                    ->back('/')
-                    ->withErrors($e->errors())
-                    ->withInput($request->except(['_token', 'password', 'password_confirmation', 'current_password', 'new_password', 'new_password_confirmation']))
-                    ->send();
-            }
-
-            http_response_code($e->statusCode());
-            render($generalErrorView, [
+            // 403 from authorize(), or a 422 on a read: neither has a form to go
+            // back to, so the error page is the answer.
+            return $this->renderErrorView($generalErrorView, [
                 'image' => $errorImage,
                 'title' => (string) $e->statusCode(),
                 'message' => $e->getMessage(),
-            ]);
-            return null;
+            ], $e->statusCode());
         } catch (Throwable $e) {
             logger()->logException($e);
 
             if ($request->expectsJson()) {
-                Response::json(['code' => 500, 'message' => 'Internal Server Error'], 500);
+                return new JsonResponse(['code' => 500, 'message' => 'Internal Server Error'], 500);
             }
 
-            http_response_code(500);
-            render($generalErrorView, [
+            return $this->renderErrorView($generalErrorView, [
                 'image' => $errorImage,
                 'title' => '500',
                 'message' => 'Internal Server Error',
-            ]);
-            return null;
+            ], 500);
         }
+    }
+
+    /**
+     * Render an error view into a response instead of echoing it.
+     *
+     * render() writes straight to the output stream, which bypasses the single
+     * emission point and makes the status code depend on call order. Buffering it
+     * keeps every exit path in dispatch() returning a Responsable.
+     *
+     * @param array<string, mixed>  $data
+     * @param array<string, string> $headers
+     */
+    private function renderErrorView(string $view, array $data, int $status, array $headers = []): Responsable
+    {
+        $level = ob_get_level();
+
+        try {
+            ob_start();
+            render($view, $data);
+            $content = (string) ob_get_clean();
+        } catch (Throwable $e) {
+            // Clean up any buffer the failed render left open, then fall back to a
+            // plain body — an error page that itself errors must not produce a
+            // blank 200.
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+
+            // SafeLog, not logger(): an error page that fails while the container
+            // is half-built must still produce a body rather than a new exception.
+            \Core\Support\SafeLog::exception($e, 'Error view failed to render');
+            $content = (string) ($data['title'] ?? $status) . ' - ' . (string) ($data['message'] ?? 'Error');
+        }
+
+        return new HtmlResponse($content, $status, array_merge(
+            ['Content-Type' => 'text/html; charset=UTF-8'],
+            $headers
+        ));
     }
 
     private function addRoute(string $method, string $uri, $action): RouteDefinition
@@ -783,10 +859,14 @@ class Router
             ) {
                 $model = $typeName::findById($params[$name]);
                 if ($model === null) {
-                    http_response_code(404);
-                    header('Content-Type: application/json');
-                    echo json_encode(['code' => 404, 'message' => 'Resource not found.'], JSON_UNESCAPED_UNICODE);
-                    exit;
+                    // Was: echo JSON + exit, regardless of what the client asked for,
+                    // so a browser hitting a bad id got raw JSON instead of the 404
+                    // view. Throwing lets dispatch() negotiate content the same way
+                    // every other error path does.
+                    throw new ResponseEmitted(
+                        ['code' => 404, 'message' => 'Resource not found.'],
+                        404
+                    );
                 }
                 $arguments[] = $model;
                 continue;

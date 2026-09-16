@@ -13,18 +13,12 @@ use Core\Database\PerformanceMonitor;
  * _processEagerByChunk, allChunkValuesAreIntegers, attachEagerLoadedData.
  *
  * Consumed by: BaseDatabase
- *
- * @category Database
- * @package  Core\Database\Concerns
  */
 trait HasEagerLoading
 {
     /**
      * Process eager-loaded relations on a result set.
      *
-     * @param array  $data
-     * @param array  $relations
-     * @param string $connectionName
      * @param string $typeFetch 'fetch' | 'get'
      * @return array|mixed
      */
@@ -65,15 +59,6 @@ trait HasEagerLoading
     /**
      * Eager-load related rows in chunks so large parent result sets stay memory-stable.
      *
-     * @param array       $data
-     * @param array       $primaryKeys
-     * @param string      $table
-     * @param string      $fk_id
-     * @param string      $pk_id
-     * @param string      $connectionName
-     * @param string      $method
-     * @param string      $alias
-     * @param \Closure|null $callback
      * @return void
      */
     protected function _processEagerLoadingInBatches(&$data, $primaryKeys, $table, $fk_id, $pk_id, $connectionName, $method, $alias, ?\Closure $callback = null)
@@ -147,11 +132,6 @@ trait HasEagerLoading
     /**
      * Shrink subsequent eager-load batches for wide related rows while keeping
      * the initial optimizer choice as the upper bound.
-     *
-     * @param int $currentSize
-     * @param int $requestedSize
-     * @param array $relatedRecords
-     * @return int
      */
     protected function adaptEagerLoadingChunkSizeAfterFetch(int $currentSize, int $requestedSize, array $relatedRecords): int
     {
@@ -174,14 +154,6 @@ trait HasEagerLoading
     /**
      * Record a profiler-visible adaptive eager-loading decision when a relation
      * batch is reduced for wider related rows.
-     *
-     * @param string $table
-     * @param string $alias
-     * @param int $requestedSize
-     * @param int $previousSize
-     * @param int $nextSize
-     * @param array $relatedRecords
-     * @return void
      */
     protected function recordAdaptiveEagerLoadingChunkDecision(string $table, string $alias, int $requestedSize, int $previousSize, int $nextSize, array $relatedRecords): void
     {
@@ -210,15 +182,7 @@ trait HasEagerLoading
         ]);
     }
 
-    /**
-     * Build a lookup from parent key to row indexes for eager-load attachment.
-     *
-     * @param array  $data
-     * @param string $pk_id
-     * @param string $alias
-     * @param string $method
-     * @return array
-     */
+    /** Build a lookup from parent key to row indexes for eager-load attachment. */
     protected function buildEagerRowIndex(array &$data, string $pk_id, string $alias, string $method): array
     {
         $rowIndexByPk = [];
@@ -241,12 +205,6 @@ trait HasEagerLoading
     /**
      * Fetch one eager-load chunk from the related table.
      *
-     * @param array        $chunk
-     * @param \Closure|null $callback
-     * @param mixed        $connectionObj
-     * @param string       $table
-     * @param string       $fk_id
-     * @param bool|null    $preferIntegerRawIn
      * @return array
      */
     protected function _processEagerByChunk($chunk, ?\Closure $callback, $connectionObj, $table, $fk_id, ?bool $preferIntegerRawIn = null)
@@ -276,9 +234,6 @@ trait HasEagerLoading
 
     /**
      * Check whether all chunk values are integers (or integer strings).
-     *
-     * @param array $chunk
-     * @return bool
      */
     protected function allChunkValuesAreIntegers(array $chunk): bool
     {
@@ -302,12 +257,6 @@ trait HasEagerLoading
     /**
      * Attach already-fetched related rows onto the parent result set.
      *
-     * @param string $method
-     * @param array  $data
-     * @param array  $relatedRecords
-     * @param string $alias
-     * @param string $fk_id
-     * @param string $pk_id
      * @return void
      */
     protected function attachEagerLoadedData($method, &$data, &$relatedRecords, $alias, $fk_id, $pk_id)

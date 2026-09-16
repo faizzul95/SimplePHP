@@ -28,7 +28,7 @@ final class QueryAllowlistAudit
         }
 
         $controllerFiles = $this->collectPhpFiles((array) ($config['controller_paths'] ?? ['app/http/controllers']));
-        $modelFiles = $this->collectPhpFiles((array) ($config['model_paths'] ?? ['app/Models']));
+        $modelFiles = $this->collectPhpFiles((array) ($config['model_paths'] ?? ['app/models']));
 
         $checks = [];
         $checks[] = $this->buildDynamicPatternCheck(

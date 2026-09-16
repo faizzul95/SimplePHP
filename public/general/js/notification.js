@@ -17,14 +17,22 @@
  * @param {Object} [config.colors] - Custom color configuration
  * @param {string} [config.colors.light] - Light theme background color
  * @param {string} [config.colors.dark] - Dark theme background color
- * @returns {Object} Control methods: {open, close, toggle, isOpen, updateCount}
+ * @returns {Object} Control methods:
+ *   open(), close(), toggle(), isOpen(), isDestroyed(), destroy()
+ *   setContent(htmlOrFn) - writes HTML; the caller escapes it
+ *   setText(value)       - writes text, escaped
+ *   setTitle(value)      - writes the header, escaped
+ *   updateCount(n|null), getElement(), getBootstrapVersion()
+ *
+ * One caveat: the generated stylesheet uses shared class names, so two panels
+ * open at once share whichever width/colours were configured last. Everything
+ * else - listeners, content, ids - is per instance.
  */
 const showNotiPanel = (dataDisplay = null, config = {}) => {
     
 	// If dataDisplay is null, don't create anything
 	if (dataDisplay === null) return;
 
-	// Default configuration
 	const defaultConfig = {
 		position: "right",
 		top: "80",
@@ -45,11 +53,58 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
 		},
 	};
 
-	// Merge default config with provided config
+	/*
+	| Shallow merge, so a caller passing { colors: { light: "#fff" } } used to
+	| drop the dark colour entirely, and a partial { icon: { name: "custom" } }
+	| lost its svg. The nested objects are merged key by key below.
+	*/
 	const finalConfig = { ...defaultConfig, ...config };
-	const baseZIndex = finalConfig.zIndex;
 
-    // Format count value
+	/** Text bound for innerHTML. Titles are routinely built from user data. */
+	const escapeHtml = (value) =>
+		String(value ?? "").replace(/[&<>"']/g, (character) => ({
+			"&": "&amp;",
+			"<": "&lt;",
+			">": "&gt;",
+			'"': "&quot;",
+			"'": "&#39;",
+		})[character]);
+
+	/*
+	| Config values are interpolated into a <style> block, where one stray `}`
+	| closes the rule and everything after it is caller-authored CSS — enough to
+	| overlay the page, or pull attribute values out through background-image.
+	| Anything carrying CSS punctuation is refused and the default stands.
+	*/
+	const cssValue = (value, fallback) => {
+		const candidate = String(value ?? "");
+		return /^[A-Za-z0-9 ()#%.,\/_-]+$/.test(candidate) ? candidate : fallback;
+	};
+
+	finalConfig.position = finalConfig.position === "left" ? "left" : "right";
+	finalConfig.theme = ["light", "dark", "system"].includes(finalConfig.theme)
+		? finalConfig.theme
+		: defaultConfig.theme;
+	finalConfig.width = cssValue(finalConfig.width, defaultConfig.width);
+	finalConfig.height = cssValue(finalConfig.height, defaultConfig.height);
+	finalConfig.top = String(parseInt(finalConfig.top, 10) || 0);
+	finalConfig.icon = { ...defaultConfig.icon, ...(config.icon || {}) };
+	finalConfig.colors = {
+		light: cssValue(config.colors?.light, defaultConfig.colors.light),
+		dark: cssValue(config.colors?.dark, defaultConfig.colors.dark),
+	};
+
+	const baseZIndex = Number.isFinite(Number(finalConfig.zIndex))
+		? Number(finalConfig.zIndex)
+		: defaultConfig.zIndex;
+
+	/*
+	| Its own ids. They were hard-coded, so a second call bound its listeners to
+	| the first panel's toggle and wrote its content into the first panel's
+	| body: the new panel came up empty and the old one was overwritten.
+	*/
+	const instanceId = `noti-${Math.random().toString(36).slice(2, 10)}`;
+
     const formatCount = (count) => {
         if (count === null) return null;
         if (!Number.isInteger(count) || count < 0) return null;
@@ -82,7 +137,6 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
 	const getCurrentTheme = () =>
 		finalConfig.theme === "system" ? getSystemTheme() : finalConfig.theme;
 
-	// Get icon SVG
 	const getIconSvg = () => {
 		if (finalConfig.icon.name === "custom" && finalConfig.icon.svg) {
 			return finalConfig.icon.svg;
@@ -102,7 +156,6 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
 			.join("\n");
 	};
 
-	// Create style element with cross-browser compatibility
 	const style = document.createElement("style");
 	style.textContent = `
         .custom-noti-panel {
@@ -312,7 +365,6 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
     `;
 	document.head.appendChild(style);
 
-	// Get close button HTML
 	const getCloseButton = () => {
 		return `<button class="custom-noti-close" aria-label="Close">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" 
@@ -323,7 +375,6 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
                 </button>`;
 	};
 
-	// Create overlay
 	const overlay = document.createElement("div");
 	overlay.className = "notification-overlay";
 	document.body.appendChild(overlay);
@@ -334,49 +385,73 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
             `<span class="noti-count-badge">${finalConfig.count}</span>` : '';
         
         return `
-            <button class="custom-noti-toggle" id="notiToggleBtn" aria-label="Toggle notifications">
+            <button class="custom-noti-toggle" id="${instanceId}-toggle" aria-label="Toggle notifications">
                 ${getIconSvg()}
                 ${countBadge}
             </button>
         `;
     };
 
-	// Create panel
 	const panel = document.createElement("div");
-	panel.id = "customNotiPanel";
+	panel.id = instanceId;
 	panel.className = `custom-noti-panel ${getCurrentTheme()}`;
 
 	panel.innerHTML = `
         ${getToggleButton()}
         <div class="custom-noti-header">
-            <h5>${finalConfig.title}</h5>
+            <h5 class="custom-noti-title">${escapeHtml(finalConfig.title)}</h5>
             ${getCloseButton()}
         </div>
-        <div class="custom-noti-body" id="notiContent">
+        <div class="custom-noti-body" id="${instanceId}-content">
         </div>
     `;
 
 	document.body.appendChild(panel);
 
-	// Handle content
-	const contentContainer = document.getElementById("notiContent");
-	if (typeof dataDisplay === "function") {
-		contentContainer.innerHTML = dataDisplay() || "";
-	} else {
-		contentContainer.innerHTML = dataDisplay;
-	}
+	/*
+	| Scoped to this panel rather than looked up by a document-wide id, which
+	| returned the *first* panel on the page once a second one existed.
+	|
+	| Content is HTML by contract — that is what dataDisplay is for — so it is
+	| not escaped. Callers rendering user data escape it themselves, or use
+	| setText(), which does.
+	*/
+	const contentContainer = panel.querySelector(".custom-noti-body");
 
-	// Theme change listener
+	const setContent = (content) => {
+		const resolved = typeof content === "function" ? content() : content;
+		contentContainer.innerHTML = resolved ?? "";
+		return contentContainer;
+	};
+
+	const setText = (text) => {
+		contentContainer.textContent = String(text ?? "");
+		return contentContainer;
+	};
+
+	const setTitle = (title) => {
+		const heading = panel.querySelector(".custom-noti-title");
+		if (heading) heading.textContent = String(title ?? "");
+	};
+
+	setContent(dataDisplay);
+
+	/*
+	| Declared out here, not inside the if. cleanup() referred to it from the
+	| outer scope, where a block-scoped const was never visible — so destroy()
+	| threw a ReferenceError before removing anything.
+	*/
+	const themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+	const themeChangeHandler = (e) => {
+		panel.className = `custom-noti-panel ${e.matches ? "dark" : "light"}`;
+	};
+
 	if (finalConfig.theme === "system") {
-		const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-		const themeChangeHandler = (e) => {
-			panel.className = `custom-noti-panel ${e.matches ? "dark" : "light"}`;
-		};
-
-		if (mediaQuery.addEventListener) {
-			mediaQuery.addEventListener("change", themeChangeHandler);
-		} else if (mediaQuery.addListener) {
-			mediaQuery.addListener(themeChangeHandler);
+		if (themeMediaQuery.addEventListener) {
+			themeMediaQuery.addEventListener("change", themeChangeHandler);
+		} else if (themeMediaQuery.addListener) {
+			themeMediaQuery.addListener(themeChangeHandler);
 		}
 	}
 
@@ -400,7 +475,7 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
 	};
 
 	// Event listeners with IE11 compatibility
-	const toggleBtn = document.getElementById("notiToggleBtn");
+	const toggleBtn = panel.querySelector(".custom-noti-toggle");
 	const closeBtn = panel.querySelector(".custom-noti-close");
 
 	toggleBtn.addEventListener("click", (e) => {
@@ -416,18 +491,23 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
 		}
 	});
 
-	// Handle escape key
-	document.addEventListener("keydown", (e) => {
-		e = e || window.event; // IE11 compatibility
+	/*
+	| Named, because cleanup() tried to remove a handleEscKey that was never
+	| declared — the second ReferenceError on that path, and the reason this
+	| listener outlived every panel it was bound to.
+	*/
+	const handleEscKey = (event) => {
+		const e = event || window.event; // IE11 compatibility
 		if (
 			(e.key === "Escape" || e.key === "Esc") &&
 			panel.classList.contains("show")
 		) {
 			togglePanel();
 		}
-	});
+	};
 
-    // Update count function with formatting
+	document.addEventListener("keydown", handleEscKey);
+
     const updateCount = (newCount) => {
         const formattedCount = formatCount(newCount);
         if (formattedCount === null && newCount !== null) {
@@ -451,23 +531,26 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
         }
     };
 
-	// Clean up function
+	let destroyed = false;
+
 	const cleanup = () => {
+		if (destroyed) return;
+		destroyed = true;
+
 		if (finalConfig.theme === "system") {
-			const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-			if (mediaQuery.removeEventListener) {
-				mediaQuery.removeEventListener("change", themeChangeHandler);
-			} else if (mediaQuery.removeListener) {
-				mediaQuery.removeListener(themeChangeHandler);
+			if (themeMediaQuery.removeEventListener) {
+				themeMediaQuery.removeEventListener("change", themeChangeHandler);
+			} else if (themeMediaQuery.removeListener) {
+				themeMediaQuery.removeListener(themeChangeHandler);
 			}
 		}
+
 		document.removeEventListener("keydown", handleEscKey);
 		panel.remove();
 		overlay.remove();
 		style.remove();
 	};
 
-	// Return public methods
 	return {
 		open: () => {
 			if (!panel.classList.contains("show")) {
@@ -481,7 +564,12 @@ const showNotiPanel = (dataDisplay = null, config = {}) => {
 		},
 		toggle: togglePanel,
 		isOpen: () => panel.classList.contains("show"),
+		isDestroyed: () => destroyed,
 		getBootstrapVersion: () => bootstrapVersion,
+		getElement: () => panel,
+		setContent,
+		setText,
+		setTitle,
 		updateCount,
 		destroy: cleanup,
 	};

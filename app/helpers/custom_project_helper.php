@@ -44,7 +44,7 @@ if (!function_exists('show_404')) {
 if (!function_exists('modalPartialAlert')) {
     function modalPartialAlert(string $message): string
     {
-        return '<div class="alert alert-danger" role="alert">' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . '</div>';
+        return '<div class="alert alert-danger" role="alert">' . htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</div>';
     }
 }
 
@@ -238,13 +238,11 @@ if (!function_exists('getPermissionSlug')) {
     {
         $slug = [];
 
-        // Check if the permission array is valid
         if (empty($permission) || !is_array($permission)) {
             return $slug;
         }
 
         foreach ($permission as $perm) {
-            // Check if abilities key exists and has an abilities_slug
             if (isset($perm['abilities']['abilities_slug'])) {
                 $abilitySlug = $perm['abilities']['abilities_slug'];
 
@@ -258,7 +256,6 @@ if (!function_exists('getPermissionSlug')) {
             }
         }
 
-        // Return unique slugs
         return array_unique($slug);
     }
 }

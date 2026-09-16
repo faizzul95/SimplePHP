@@ -100,13 +100,7 @@ class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonS
 
     // ─── Retrieval ───────────────────────────────────────────
 
-    /**
-     * Get the first item, optionally matching a callback.
-     *
-     * @param callable|null $callback fn($value, $key): bool
-     * @param mixed $default
-     * @return TValue|mixed
-     */
+    /** Get the first item, optionally matching a callback. */
     public function first(?callable $callback = null, mixed $default = null): mixed
     {
         if ($callback === null) {
@@ -134,13 +128,6 @@ class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonS
         return $this->reverse()->first($callback, $default);
     }
 
-    /**
-     * Get an item by key.
-     *
-     * @param TKey $key
-     * @param mixed $default
-     * @return TValue|mixed
-     */
     public function get(mixed $key, mixed $default = null): mixed
     {
         if (array_key_exists($key, $this->items)) {
@@ -173,9 +160,7 @@ class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonS
     /**
      * Get values for a given key from all items.
      *
-     * @param string|int $valueKey
      * @param string|int|null $indexKey Optional key to use as the array index
-     * @return static
      */
     public function pluck(string|int $valueKey, string|int|null $indexKey = null): static
     {
@@ -867,11 +852,7 @@ class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonS
         return new static($items);
     }
 
-    /**
-     * Remove and return an item by key.
-     *
-     * @return TValue|mixed
-     */
+    /** Remove and return an item by key. */
     public function pull(mixed $key, mixed $default = null): mixed
     {
         $items = $this->items;
@@ -927,11 +908,6 @@ class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonS
 
     // ─── Search ──────────────────────────────────────────────
 
-    /**
-     * Search for a value and return its key.
-     *
-     * @return TKey|false
-     */
     public function search(mixed $value, bool $strict = false): mixed
     {
         if ($value instanceof \Closure) {
@@ -1013,14 +989,7 @@ class Collection implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonS
 
     // ─── Internal Helpers ────────────────────────────────────
 
-    /**
-     * Get a value from an item using dot notation.
-     *
-     * @param mixed $target  Array or object
-     * @param string|int $key
-     * @param mixed $default
-     * @return mixed
-     */
+    /** Get a value from an item using dot notation. */
     public static function dataGet(mixed $target, string|int $key, mixed $default = null): mixed
     {
         if (is_int($key) || !str_contains((string) $key, '.')) {

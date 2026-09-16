@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Core\Http\Controller;
+use Core\Http\Reply;
 use Core\Http\Request;
 
 class DashboardController extends Controller
@@ -18,7 +19,7 @@ class DashboardController extends Controller
         $this->view('dashboard.admin');
     }
 
-    public function countAdminDashboard(Request $request): void
+    public function countAdminDashboard(Request $request): Reply
     {
         $data = db()->table('users')->selectRaw("
             SUM(CASE WHEN user_status = '1' THEN 1 ELSE 0 END) as userActive,
@@ -31,6 +32,6 @@ class DashboardController extends Controller
             $data[$key] = number_format($value);
         }
 
-        jsonResponse(['code' => 200, 'data' => $data]);
+        return ok(null, $data);
     }
 }

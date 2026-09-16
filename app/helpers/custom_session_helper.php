@@ -21,10 +21,30 @@ if (!function_exists('flashErrorsKey')) {
     }
 }
 
+if (!function_exists('resetFlashSessionState')) {
+    /**
+     * Forget that this request already rotated its flash bag.
+     *
+     * Called by WorkerState between requests. Held in a function static the flag
+     * survived the request that set it, so under RoadRunner the second request a
+     * worker served never rotated: keys flashed for one user stayed readable by
+     * the next, and nothing was ever cleaned up.
+     */
+    function resetFlashSessionState(): void
+    {
+        initializeFlashSessionState(true);
+    }
+}
+
 if (!function_exists('initializeFlashSessionState')) {
-    function initializeFlashSessionState(): void
+    function initializeFlashSessionState(bool $reset = false): void
     {
         static $initialized = false;
+
+        if ($reset) {
+            $initialized = false;
+            return;
+        }
 
         if ($initialized || session_status() !== PHP_SESSION_ACTIVE) {
             return;

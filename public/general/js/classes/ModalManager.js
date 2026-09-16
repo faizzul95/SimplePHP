@@ -389,13 +389,11 @@ class ModalManager {
             const titleId = this.generateUniqueId('title');
             const contentId = this.generateUniqueId('content');
             
-            // Create modal HTML
             const modalHtml = this.createModalHtml(modalId, titleId, contentId, config);
             
             // Add to DOM
             document.body.insertAdjacentHTML('beforeend', modalHtml);
             
-            // Get modal element
             const modalElement = document.getElementById(modalId);
             if (!modalElement) {
                 throw new Error('Failed to create modal element');
@@ -408,7 +406,6 @@ class ModalManager {
                 focus: config.focus
             };
             
-            // Create Bootstrap modal instance
             const modal = this.createModalInstance(modalElement, bsOptions);
             
             // Create modal controller object
@@ -471,13 +468,11 @@ class ModalManager {
                 }
             };
             
-            // Add event listeners
             this.addModalEventListeners(modalElement, config, modalController);
             
             // Store active modal
             this.activeModals.set(modalId, modalController);
             
-            // Show modal
             modal.show();
             this.syncOverlayStack();
             
@@ -526,7 +521,6 @@ class ModalManager {
         }
     }
 
-    // Load content from API
     async loadApiContent(modalController, config) {
         try {
             // Fire onLoadStart callback
@@ -534,12 +528,10 @@ class ModalManager {
                 config.onLoadStart(modalController);
             }
 
-            // Show loader
             if (config.showLoader) {
                 modalController.updateContent(this.createLoaderHtml(config.loaderText));
             }
 
-            // Fetch data with retries
             const response = await this.fetchWithRetry(config.url, {
                 method: config.method,
                 headers: config.headers,
@@ -602,7 +594,6 @@ class ModalManager {
         }
     }
 
-    // Fetch with retry logic
     async fetchWithRetry(url, options, retries, delay) {
         let lastError;
         
@@ -1316,16 +1307,45 @@ class ModalManager {
         ].join('');
     }
 
+    /**
+     * Escape text destined for innerHTML.
+     *
+     * Not a general-purpose sanitiser — it makes a *text* value safe in element
+     * content or a quoted attribute, which is all this class needs.
+     */
+    escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, character => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+        })[character]);
+    }
+
     createContentLoadErrorHtml(message, shellId = null) {
+        /*
+        | Both interpolations are escaped.
+        |
+        | `message` reaches here from a server error body and from
+        | `requestError.message`, and went straight into innerHTML — so an API
+        | that echoed user input into an error string turned a failed modal load
+        | into reflected XSS.
+        |
+        | `shellId` lands inside a quoted onclick attribute, where an apostrophe
+        | closes the string and everything after it is script.
+        */
+        const safeShellId = this.escapeHtml(shellId);
+
         const retryButton = shellId
-            ? '<button type="button" class="btn btn-outline-primary btn-sm mt-3" onclick="window.__modalContentRetry && window.__modalContentRetry[\'' + shellId + '\'] && window.__modalContentRetry[\'' + shellId + '\']()">Retry</button>'
+            ? '<button type="button" class="btn btn-outline-primary btn-sm mt-3" onclick="window.__modalContentRetry &amp;&amp; window.__modalContentRetry[\'' + safeShellId + '\'] &amp;&amp; window.__modalContentRetry[\'' + safeShellId + '\']()">Retry</button>'
             : '';
 
         return [
             '<div class="text-center py-4">',
             '    <div class="text-danger mb-3"><i class="bi bi-exclamation-triangle-fill fs-2"></i></div>',
             '    <h6 class="text-danger">Unable to load content</h6>',
-            '    <p class="text-muted small mb-0">' + message + '</p>',
+            '    <p class="text-muted small mb-0">' + this.escapeHtml(message) + '</p>',
             '    ' + retryButton,
             '</div>'
         ].join('');
@@ -1574,7 +1594,6 @@ class ModalManager {
         return this.loadSharedOverlayContent(config);
     }
 
-    // Create loader HTML
     createLoaderHtml(text = 'Loading...') {
         return `
             <div class="text-center py-4">
@@ -1586,7 +1605,6 @@ class ModalManager {
         `;
     }
 
-    // Create error HTML with refresh button
     createErrorHtml(errorMessage, showRefresh = true, modalController = null) {
         const refreshButton = showRefresh && modalController ? `
             <button type="button" class="btn btn-outline-primary btn-sm mt-3" onclick="handleRefresh('${modalController.modalId}')">
@@ -1620,7 +1638,6 @@ class ModalManager {
         `;
     }
 
-    // Format JSON content for display
     formatJsonContent(data) {
         try {
             if (typeof data === 'object') {
@@ -1633,7 +1650,6 @@ class ModalManager {
         }
     }
 
-    // Add event listeners to modal
     addModalEventListeners(modalElement, config, controller) {
         try {
             if (config.onShow) {
@@ -1670,7 +1686,6 @@ class ModalManager {
         }
     }
 
-    // Create modal HTML
     createModalHtml(modalId, titleId, contentId, config) {
         try {
             const sizeClass = this.getModalSizeClass(config.size);
@@ -1679,7 +1694,6 @@ class ModalManager {
             const dialogClasses = [sizeClass, centeredClass, scrollableClass].filter(Boolean).join(' ');
             const titleTag = this.getModalTitleTag();
             
-            // Header HTML
             let headerHtml = '';
             if (config.showHeader) {
                 const closeButton = config.showClose ? 
@@ -1693,7 +1707,6 @@ class ModalManager {
                 `;
             }
             
-            // Footer HTML
             let footerHtml = '';
             if (config.showFooter && config.footerButtons.length > 0) {
                 const buttonsHtml = config.footerButtons.map(btn => {
@@ -1771,7 +1784,6 @@ class ModalManager {
         }
     }
 
-    // Load content from API for offcanvas
     async loadOffcanvasApiContent(offcanvasController, config) {
         try {
             // Fire onLoadStart callback
@@ -1779,12 +1791,10 @@ class ModalManager {
                 config.onLoadStart(offcanvasController);
             }
 
-            // Show loader
             if (config.showLoader) {
                 offcanvasController.updateContent(this.createLoaderHtml(config.loaderText));
             }
 
-            // Fetch data with retries
             const response = await this.fetchWithRetry(config.url, {
                 method: config.method,
                 headers: config.headers,
@@ -1847,7 +1857,6 @@ class ModalManager {
         }
     }
 
-    // Create error HTML with refresh button for offcanvas
     createOffcanvasErrorHtml(errorMessage, showRefresh = true, offcanvasController = null) {
         const refreshButton = showRefresh && offcanvasController ? `
             <button type="button" class="btn btn-outline-primary btn-sm mt-3" onclick="handleOffcanvasRefresh('${offcanvasController.offcanvasId}')">
@@ -1891,13 +1900,11 @@ class ModalManager {
             const titleId = this.generateUniqueId('offcanvas-title');
             const contentId = this.generateUniqueId('offcanvas-content');
             
-            // Create offcanvas HTML
             const offcanvasHtml = this.createOffcanvasHtml(offcanvasId, titleId, contentId, config);
             
             // Add to DOM
             document.body.insertAdjacentHTML('beforeend', offcanvasHtml);
             
-            // Get offcanvas element
             const offcanvasElement = document.getElementById(offcanvasId);
             if (!offcanvasElement) {
                 throw new Error('Failed to create offcanvas element');
@@ -1916,7 +1923,6 @@ class ModalManager {
                     focus: true,
                 };
             
-            // Create Bootstrap offcanvas instance
             const offcanvas = this.createOffcanvasInstance(offcanvasElement, bsOptions);
             const usesOffcanvasFallbackModal = !this.canUseBootstrapOffcanvas() || !offcanvasElement.classList.contains('offcanvas');
             
@@ -1981,13 +1987,11 @@ class ModalManager {
                 }
             };
             
-            // Add event listeners
             this.addOffcanvasEventListeners(offcanvasElement, config, offcanvasController);
             
             // Store active offcanvas
             this.activeOffcanvas.set(offcanvasId, offcanvasController);
             
-            // Show offcanvas
             offcanvas.show();
             this.syncOverlayStack();
             
@@ -1998,7 +2002,6 @@ class ModalManager {
         }
     }
 
-    // Add event listeners to offcanvas
     addOffcanvasEventListeners(offcanvasElement, config, controller) {
         try {
             const showEventName = controller.usesModalFallback ? 'show.bs.modal' : 'show.bs.offcanvas';
@@ -2048,7 +2051,6 @@ class ModalManager {
         }
     }
 
-    // Create offcanvas HTML
     createOffcanvasHtml(offcanvasId, titleId, contentId, config) {
         try {
             if (!this.canUseBootstrapOffcanvas()) {
@@ -2087,7 +2089,6 @@ class ModalManager {
             
             const styleAttr = customStyles ? `style="${customStyles}"` : '';
             
-            // Header HTML
             let headerHtml = '';
             if (config.showHeader) {
                 const closeButton = config.showClose ? 
@@ -2117,7 +2118,6 @@ class ModalManager {
         }
     }
 
-    // Get modal by ID
     getModal(modalId) {
         try {
             return this.activeModals.get(modalId);
@@ -2127,7 +2127,6 @@ class ModalManager {
         }
     }
 
-    // Get offcanvas by ID
     getOffcanvas(offcanvasId) {
         try {
             return this.activeOffcanvas.get(offcanvasId);
@@ -2137,7 +2136,6 @@ class ModalManager {
         }
     }
 
-    // Get all active modals
     getActiveModals() {
         try {
             return Array.from(this.activeModals.values());
@@ -2147,7 +2145,6 @@ class ModalManager {
         }
     }
 
-    // Get all active offcanvas
     getActiveOffcanvas() {
         try {
             return Array.from(this.activeOffcanvas.values());
@@ -2157,7 +2154,6 @@ class ModalManager {
         }
     }
 
-    // Close all modals
     closeAllModals() {
         try {
             this.activeModals.forEach(controller => {
@@ -2168,7 +2164,6 @@ class ModalManager {
         }
     }
 
-    // Close all offcanvas
     closeAllOffcanvas() {
         try {
             this.activeOffcanvas.forEach(controller => {
@@ -2189,7 +2184,6 @@ class ModalManager {
         }
     }
 
-    // Get count of active modals
     getModalCount() {
         try {
             return this.activeModals.size;
@@ -2199,7 +2193,6 @@ class ModalManager {
         }
     }
 
-    // Get count of active offcanvas
     getOffcanvasCount() {
         try {
             return this.activeOffcanvas.size;
@@ -2209,7 +2202,6 @@ class ModalManager {
         }
     }
 
-    // Set default modal configuration
     setDefaultModalConfig(config) {
         try {
             this.defaultModalConfig = { ...this.defaultModalConfig, ...config };
@@ -2218,7 +2210,6 @@ class ModalManager {
         }
     }
 
-    // Set default offcanvas configuration
     setDefaultOffcanvasConfig(config) {
         try {
             this.defaultOffcanvasConfig = { ...this.defaultOffcanvasConfig, ...config };
@@ -2227,7 +2218,6 @@ class ModalManager {
         }
     }
 
-    // Set default API configuration
     setDefaultApiConfig(config) {
         try {
             this.defaultApiConfig = { ...this.defaultApiConfig, ...config };

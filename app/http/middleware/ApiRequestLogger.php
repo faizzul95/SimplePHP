@@ -3,7 +3,9 @@
 namespace App\Http\Middleware;
 
 use Components\Logger;
+use Core\Http\JsonResponse;
 use Core\Http\Request;
+use Core\Http\Responsable;
 use Core\Http\Middleware\MiddlewareInterface;
 
 /**
@@ -73,24 +75,9 @@ class ApiRequestLogger implements MiddlewareInterface
             $response = $next($request);
 
             $duration = round((microtime(true) - $startTime) * 1000, 2);
-            $statusCode = http_response_code() ?: 200;
+
+            [$statusCode, $responseSummary] = $this->describeResponse($response);
             $outcome = ($statusCode >= 200 && $statusCode < 400) ? 'SUCCESS' : 'FAILED';
-
-            // Log a summary of the response (not the full body to avoid bloat)
-            $responseSummary = 'non-array';
-            if (is_array($response)) {
-                $responseSummary = json_encode(
-                    array_intersect_key($response, array_flip(['code', 'message'])),
-                    JSON_UNESCAPED_SLASHES
-                );
-
-                // Prefer API response code when present to classify outcome.
-                $apiCode = isset($response['code']) && is_numeric($response['code']) ? (int) $response['code'] : null;
-                if ($apiCode !== null) {
-                    $statusCode = $apiCode;
-                    $outcome = ($apiCode >= 200 && $apiCode < 400) ? 'SUCCESS' : 'FAILED';
-                }
-            }
 
             $this->write($logPath, sprintf(
                 "[%s][%s] RESPONSE id=%s status=%s duration=%sms body=%s",
@@ -178,6 +165,65 @@ class ApiRequestLogger implements MiddlewareInterface
     /**
      * Append a line to the log file (non-blocking, best-effort).
      */
+    /**
+     * Work out the status and a short body summary for the log line.
+     *
+     * The status used to come from http_response_code(), which is read *before*
+     * the response is emitted. Once responses became objects the status lived on
+     * the object and had not been sent yet, so every entry — 401, 404, 500 alike —
+     * was logged as 200 and the log became useless for spotting errors.
+     *
+     * @return array{0:int,1:string} [status, summary]
+     */
+    private function describeResponse(mixed $response): array
+    {
+        if ($response instanceof JsonResponse) {
+            $payload = $response->payload();
+
+            // An API body carrying its own `code` is the more specific answer:
+            // a 200 envelope with `code: 422` inside is a failure.
+            $status = isset($payload['code']) && is_numeric($payload['code'])
+                ? (int) $payload['code']
+                : $response->status();
+
+            return [$status, $this->summarisePayload($payload)];
+        }
+
+        if ($response instanceof Responsable) {
+            return [$response->status(), $response::class];
+        }
+
+        if (is_array($response)) {
+            $status = isset($response['code']) && is_numeric($response['code'])
+                ? (int) $response['code']
+                : ($this->currentStatusCode() ?: 200);
+
+            return [$status, $this->summarisePayload($response)];
+        }
+
+        return [$this->currentStatusCode() ?: 200, 'non-array'];
+    }
+
+    /** @param array<mixed, mixed> $payload */
+    private function summarisePayload(array $payload): string
+    {
+        // Only the envelope, never the data — a full body would bloat the log and
+        // could persist personal data outside the database.
+        $summary = json_encode(
+            array_intersect_key($payload, array_flip(['code', 'message'])),
+            JSON_UNESCAPED_SLASHES
+        );
+
+        return is_string($summary) ? $summary : '{}';
+    }
+
+    private function currentStatusCode(): int
+    {
+        $code = http_response_code();
+
+        return is_int($code) ? $code : 0;
+    }
+
     private function write(string $path, string $line): void
     {
         try {
@@ -187,15 +233,10 @@ class ApiRequestLogger implements MiddlewareInterface
         }
     }
 
+    /** Logger::instance() already caches per path; a second cache here just risks drifting from it. */
     private function loggerForPath(string $path): Logger
     {
-        static $instances = [];
-
-        if (!isset($instances[$path])) {
-            $instances[$path] = new Logger($path);
-        }
-
-        return $instances[$path];
+        return Logger::instance($path);
     }
 
     private function appendStructuredLogLine(string $path, string $line): void

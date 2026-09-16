@@ -8,8 +8,6 @@ namespace Core\Database;
  * Optimizes eager loading queries by implementing smart batching,
  * query optimization, and adaptive chunk sizing.
  * 
- * @category Database
- * @package  Core\Database
  * @author   Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license  http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version  1.0.0
@@ -46,9 +44,6 @@ class EagerLoadOptimizer
     /**
      * Calculate optimal chunk size based on data characteristics
      *
-     * @param int    $totalRecords Total number of records
-     * @param string $table Table name
-     * @param array  $history Performance history (optional)
      * @return int Optimal chunk size
      */
     public static function getOptimalChunkSize($totalRecords, $table = null, array $history = [])
@@ -97,8 +92,6 @@ class EagerLoadOptimizer
     /**
      * Record performance metrics for adaptive optimization
      *
-     * @param string $table Table name
-     * @param int    $recordCount Number of records processed
      * @param float  $executionTime Execution time in seconds
      * @return void
      */
@@ -143,9 +136,6 @@ class EagerLoadOptimizer
     /**
      * Load persisted performance history for a table from the QueryCache file layer.
      * Called lazily when $performanceHistory[$table] is not in memory.
-     *
-     * @param string $table
-     * @return void
      */
     protected static function _loadHistoryFromCache(string $table): void
     {
@@ -163,9 +153,6 @@ class EagerLoadOptimizer
 
     /**
      * Persist the in-memory performance history for a table to the QueryCache file layer.
-     *
-     * @param string $table
-     * @return void
      */
     protected static function _saveHistoryToCache(string $table): void
     {
@@ -180,7 +167,6 @@ class EagerLoadOptimizer
     /**
      * Optimize IN clause by removing duplicates and sorting
      *
-     * @param array $values Values for IN clause
      * @return array Optimized values
      */
     public static function optimizeInClause(array $values)
@@ -192,7 +178,6 @@ class EagerLoadOptimizer
         // Remove duplicates
         $values = array_unique($values);
 
-        // Sort for better index usage
         sort($values);
 
         return array_values($values);
@@ -201,7 +186,6 @@ class EagerLoadOptimizer
     /**
      * Determine if query should use batch processing
      *
-     * @param int $recordCount Number of records
      * @return bool
      */
     public static function shouldUseBatching($recordCount)
@@ -212,8 +196,6 @@ class EagerLoadOptimizer
     /**
      * Split array into optimized chunks
      *
-     * @param array  $array Array to split
-     * @param string $table Table name for adaptive sizing
      * @return array Array of chunks
      */
     public static function createOptimalChunks(array $array, $table = null)
@@ -227,8 +209,6 @@ class EagerLoadOptimizer
     /**
      * Yield optimized chunks lazily to avoid large temporary arrays.
      *
-     * @param array  $array Array to split
-     * @param string $table Table name for adaptive sizing
      * @return \Generator<int, array>
      */
     public static function yieldOptimalChunks(array $array, $table = null): \Generator
@@ -247,8 +227,6 @@ class EagerLoadOptimizer
     /**
      * Optimize eager loading query strategy
      *
-     * @param array $primaryKeys Primary keys to load
-     * @param array $options Query options
      * @return array Optimized query strategy
      */
     public static function optimizeQueryStrategy(array $primaryKeys, array $options = [])
@@ -286,12 +264,7 @@ class EagerLoadOptimizer
         return $strategy;
     }
 
-    /**
-     * Set configuration
-     *
-     * @param array $config Configuration options
-     * @return void
-     */
+    /** @return void */
     public static function setConfig(array $config)
     {
         self::$config = array_merge(self::$config, $config);

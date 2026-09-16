@@ -4,9 +4,9 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CspReportController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MasterEmailTemplateController;
+use App\Http\Controllers\ModalController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\UserController;
-use Core\Http\Request;
 
 /** @var \Core\Routing\Router $router */
 
@@ -60,19 +60,9 @@ $router->group(['middleware' => ['web']], function ($router) {
             ->name('rbac.email');
     });
 
-    $router->post('/modal/content', function (Request $request): void {
-        if (strtolower((string) $request->header('x-requested-with', '')) !== 'xmlhttprequest') {
-            http_response_code(403);
-            echo modalPartialAlert('Invalid modal request.');
-            return;
-        }
-
-        $response = renderModalPartial(
-            (string) $request->input('fileName', ''),
-            $request->input('dataArray', [])
-        );
-
-        http_response_code((int) ($response['status'] ?? 500));
-        echo (string) ($response['content'] ?? modalPartialAlert('Unable to load modal content.'));
-    })->webAuth()->name('modal.content');
+    // A controller method, not a closure: route:cache cannot serialise closures,
+    // so a closure route disappears from the cached index after `myth deploy`.
+    $router->post('/modal/content', [ModalController::class, 'content'])
+        ->webAuth()
+        ->name('modal.content');
 });

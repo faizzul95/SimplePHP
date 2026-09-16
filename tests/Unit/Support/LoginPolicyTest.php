@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Support\Auth\LoginPolicy;
+use Core\Auth\LoginPolicy;
 use PHPUnit\Framework\TestCase;
 
 final class LoginPolicyTest extends TestCase

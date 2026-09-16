@@ -10,10 +10,7 @@ namespace Core\Database\Interface;
  * This interface defines methods for converting database query results
  * into different formats such as objects, arrays, or JSON.
  *
- * @category Database
- * @package Core\Database
  * @license http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @version 0.0.1
  */
 
 interface ResultInterface

@@ -35,7 +35,6 @@ Each file is intentionally topic-scoped so AI agents and junior developers can l
 - [13. Database Scopes & Macros](13-database-scopes-macros.md)
 - [14. Request & Response Details](14-request-response-details.md)
 - [15. Auth Component Reference](15-auth-component-reference.md)
-- [16. API Component Reference](16-api-component-reference.md)
 - [17. File Upload System](17-file-upload-system.md)
 - [18. TaskRunner Component](18-task-runner-component.md)
 - [19. Console Built-in Commands](19-console-built-in-commands.md)

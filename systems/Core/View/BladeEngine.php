@@ -278,14 +278,41 @@ class BladeEngine
             return;
         }
 
-        echo '<pre>';
-        foreach ($values as $value) {
-            var_dump($value);
-        }
-        echo '</pre>';
+        $dump = $this->captureDump($values);
 
-        if ($die) {
-            exit;
+        if (!$die) {
+            echo $dump;
+            return;
+        }
+
+        // @dd halts the request. Throwing rather than exiting means the dump still
+        // reaches the browser through the normal emission path, and a worker
+        // process survives a stray @dd left in a template.
+        throw new \Core\Http\ResponseEmitted(
+            new \Core\Http\HtmlResponse($dump, 200, ['Content-Type' => 'text/html; charset=UTF-8'])
+        );
+    }
+
+    /** @param array<int, mixed> $values */
+    private function captureDump(array $values): string
+    {
+        $level = ob_get_level();
+
+        try {
+            ob_start();
+            echo '<pre>';
+            foreach ($values as $value) {
+                var_dump($value);
+            }
+            echo '</pre>';
+
+            return (string) ob_get_clean();
+        } catch (\Throwable $e) {
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+
+            return '<pre>Dump failed: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</pre>';
         }
     }
 
@@ -489,8 +516,14 @@ class BladeEngine
             (string) ($stat['size'] ?? 0) . '|' .
             ($this->shouldCompactCompiledTemplate() ? 'compact' : 'plain')
         );
-        if (isset(self::$compiledPathCache[$source]) && self::$compiledPathCache[$source]['signature'] === $signature) {
-            return self::$compiledPathCache[$source]['path'];
+        // The is_file() looks redundant next to the signature match, and is not:
+        // the memo outlives the file. Run `view:clear` against a warm worker and
+        // every render afterwards includes a path that no longer exists, which
+        // fails silently and serves blank pages until the worker is restarted.
+        // One stat, on a path that already stats the source above.
+        $memo = self::$compiledPathCache[$source] ?? null;
+        if ($memo !== null && $memo['signature'] === $signature && is_file($memo['path'])) {
+            return $memo['path'];
         }
 
         $cacheKey = md5($source . '|' . $signature);
@@ -630,7 +663,7 @@ class BladeEngine
             '@endsession'    => '<?php endif; ?>',
             // Outputs nonce="{value}" attribute — use inside <script> or <style> tags:
             // <script @nonce src="app.js"></script>
-            '@nonce'         => '<?php echo \'nonce="\' . htmlspecialchars((string)(\Core\Security\CspNonce::get()), ENT_QUOTES, \'UTF-8\') . \'"\'; ?>',
+            '@nonce'         => '<?php echo \'nonce="\' . htmlspecialchars((string)(\Core\Security\CspNonce::get()), ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\') . \'"\'; ?>',
             // @sri('url', 'sha384-<hash>') → integrity="sha384-<hash>" crossorigin="anonymous"
             // Usage: <script src="https://cdn.example.com/app.js" @sri('https://cdn.example.com/app.js', 'sha384-ABC...')></script>
             // Generate hashes: php myth security:sri <url>
@@ -642,13 +675,17 @@ class BladeEngine
         $content = preg_replace('/@push\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php \$__blade->startPush('$1'); ?>", $content) ?? $content;
         $content = preg_replace('/@prepend\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php \$__blade->startPrepend('$1'); ?>", $content) ?? $content;
         $content = preg_replace('/@stack\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', "<?php echo \$__blade->yieldStack('$1'); ?>", $content) ?? $content;
-        $content = preg_replace('/@json\(\s*(.+?)\s*\)/', '<?php echo json_encode($1, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>', $content) ?? $content;
+        $content = $this->replaceDirectiveCalls($content, 'json', static fn(string $expression): string =>
+            '<?php echo json_encode(' . trim($expression)
+            . ', JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>');
         $content = $this->compileSriDirectives($content);
 
         $content = preg_replace('/@auth/', '<?php if (auth()->check()): ?>', $content) ?? $content;
         $content = preg_replace('/@guest/', '<?php if (auth()->guest()): ?>', $content) ?? $content;
-        $content = preg_replace('/@can\s*\((.*?)\)/', '<?php if (auth()->can($1)): ?>', $content) ?? $content;
-        $content = preg_replace('/@cannot\s*\((.*?)\)/', '<?php if (auth()->cannot($1)): ?>', $content) ?? $content;
+        $content = $this->replaceDirectiveCalls($content, 'cannot', static fn(string $expression): string =>
+            '<?php if (auth()->cannot(' . trim($expression) . ')): ?>');
+        $content = $this->replaceDirectiveCalls($content, 'can', static fn(string $expression): string =>
+            '<?php if (auth()->can(' . trim($expression) . ')): ?>');
         $content = strtr($content, [
             '@endcan' => '<?php endif; ?>',
             '@endcannot' => '<?php endif; ?>',
@@ -656,7 +693,7 @@ class BladeEngine
 
         // @method('PUT') → hidden input for form method spoofing
         $content = preg_replace_callback('/@method\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', static function ($matches) {
-            $value = htmlspecialchars((string) ($matches[1] ?? ''), ENT_QUOTES, 'UTF-8');
+            $value = htmlspecialchars((string) ($matches[1] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
             return '<input type="hidden" name="_method" value="' . $value . '">';
         }, $content) ?? $content;
 
@@ -664,19 +701,28 @@ class BladeEngine
         $content = preg_replace('/@error\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', '<?php if (isset($errors) && isset($errors[\'$1\'])): ?><?php $message = is_array($errors[\'$1\']) ? $errors[\'$1\'][0] : $errors[\'$1\']; ?>', $content) ?? $content;
 
         // @class(['class1', 'class2' => condition])
-        $content = preg_replace('/@class\(\s*(\[.+?\])\s*\)/', '<?php echo implode(" ", array_keys(array_filter($1, function($v, $k) { return is_numeric($k) ? true : $v; }, ARRAY_FILTER_USE_BOTH))); ?>', $content) ?? $content;
+        $content = $this->replaceDirectiveCalls($content, 'class', static fn(string $expression): string =>
+            '<?php echo implode(" ", array_keys(array_filter(' . trim($expression)
+            . ', function($v, $k) { return is_numeric($k) ? true : $v; }, ARRAY_FILTER_USE_BOTH))); ?>');
 
         // @checked, @selected, @disabled, @readonly, @required (batched)
         foreach (['checked', 'selected', 'disabled', 'readonly', 'required'] as $boolAttr) {
-            $content = preg_replace('/@' . $boolAttr . '\s*\((.*?)\)/', '<?php echo ($1) ? \'' . $boolAttr . '\' : \'\'; ?>', $content) ?? $content;
+            $content = $this->replaceDirectiveCalls(
+                $content,
+                $boolAttr,
+                static fn(string $expression): string =>
+                    '<?php echo (' . trim($expression) . ") ? '{$boolAttr}' : ''; ?>"
+            );
         }
 
         // @env('production') ... @endenv
         $content = preg_replace('/@env\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', '<?php if (defined(\'ENVIRONMENT\') && ENVIRONMENT === \'$1\'): ?>', $content) ?? $content;
 
         // @switch($var) / @case(value)
-        $content = preg_replace('/@switch\s*\((.*?)\)/', '<?php switch ($1): ?>', $content) ?? $content;
-        $content = preg_replace('/@case\s*\((.*?)\)/', '<?php case ($1): ?>', $content) ?? $content;
+        $content = $this->replaceDirectiveCalls($content, 'switch', static fn(string $expression): string =>
+            '<?php switch (' . trim($expression) . '): ?>');
+        $content = $this->replaceDirectiveCalls($content, 'case', static fn(string $expression): string =>
+            '<?php case (' . trim($expression) . '): ?>');
 
         // @once ... @endonce - only render content once per request
         $content = preg_replace_callback('/@once/', function () {
@@ -687,35 +733,58 @@ class BladeEngine
         $content = $this->compileEachDirectives($content);
 
         // @style(['class1', 'class2' => condition]) - like @class but for inline styles
-        $content = preg_replace('/@style\s*\(\s*(\[.+?\])\s*\)/', '<?php echo implode("; ", array_keys(array_filter($1, function($v, $k) { return is_numeric($k) ? true : $v; }, ARRAY_FILTER_USE_BOTH))); ?>', $content) ?? $content;
+        $content = $this->replaceDirectiveCalls($content, 'style', static fn(string $expression): string =>
+            '<?php echo implode("; ", array_keys(array_filter(' . trim($expression)
+            . ', function($v, $k) { return is_numeric($k) ? true : $v; }, ARRAY_FILTER_USE_BOTH))); ?>');
 
         // @session('key') ... @endsession
         $content = preg_replace('/@session\s*\(\s*[\'\"]([^\'\"]+)[\'\"]\s*\)/', '<?php if (isset($_SESSION[\'$1\'])): $value = $_SESSION[\'$1\']; ?>', $content) ?? $content;
 
-        // @dd($var) / @dump($var) - debug-only to avoid leaking state in production
-        $content = preg_replace('/@dd\s*\((.*?)\)/', '<?php $__blade->renderDebugDump([$1], true); ?>', $content) ?? $content;
-        $content = preg_replace('/@dump\s*\((.*?)\)/', '<?php $__blade->renderDebugDump([$1], false); ?>', $content) ?? $content;
+        /*
+         * Control-flow and debug directives (@dd / @dump are debug-only, so they must
+         * not leak state in production — see renderDebugDump()).
+         *
+         * These must go through replaceDirectiveCalls(), which scans for the matching
+         * close parenthesis. The regexes this replaced used a non-greedy `(.*?)\)`,
+         * which stops at the FIRST ")", so any expression containing a nested call was
+         * truncated. `@if(count($users) > 0)` compiled to an opening `if (count($users)`
+         * with `> 0)` left behind as literal text — a PHP parse error. The bundled views
+         * happen to contain no nested parentheses, which is why it went unnoticed.
+         *
+         */
+        $expressionDirectives = [
+            'dd'       => '<?php $__blade->renderDebugDump([%s], true); ?>',
+            'dump'     => '<?php $__blade->renderDebugDump([%s], false); ?>',
+            'if'       => '<?php if (%s): ?>',
+            'elseif'   => '<?php elseif (%s): ?>',
+            'unless'   => '<?php if (!(%s)): ?>',
+            'isset'    => '<?php if (isset(%s)): ?>',
+            // Standalone @empty($var); the forelse form is compiled earlier.
+            'empty'    => '<?php if (empty(%s)): ?>',
+            'foreach'  => '<?php foreach (%s): ?>',
+            'for'      => '<?php for (%s): ?>',
+            'while'    => '<?php while (%s): ?>',
+            'break'    => '<?php if (%s) break; ?>',
+            'continue' => '<?php if (%s) continue; ?>',
+        ];
 
-        $content = preg_replace('/@if\s*\((.*?)\)/', '<?php if ($1): ?>', $content) ?? $content;
-        $content = preg_replace('/@elseif\s*\((.*?)\)/', '<?php elseif ($1): ?>', $content) ?? $content;
+        foreach ($expressionDirectives as $directive => $template) {
+            $content = $this->replaceDirectiveCalls(
+                $content,
+                $directive,
+                static fn(string $expression): string => sprintf($template, trim($expression))
+            );
+        }
 
-        $content = preg_replace('/@unless\s*\((.*?)\)/', '<?php if (!($1)): ?>', $content) ?? $content;
-        $content = preg_replace('/@isset\s*\((.*?)\)/', '<?php if (isset($1)): ?>', $content) ?? $content;
-
-        // Standalone @empty($var)
-        $content = preg_replace('/@empty\s*\((.*?)\)/', '<?php if (empty($1)): ?>', $content) ?? $content;
-
-        $content = preg_replace('/@foreach\s*\((.*?)\)/', '<?php foreach ($1): ?>', $content) ?? $content;
-
-        $content = preg_replace('/@for\s*\((.*?)\)/', '<?php for ($1): ?>', $content) ?? $content;
-
-        $content = preg_replace('/@while\s*\((.*?)\)/', '<?php while ($1): ?>', $content) ?? $content;
-
-        $content = preg_replace('/@break\s*\((.*?)\)/', '<?php if ($1) break; ?>', $content) ?? $content;
-        $content = preg_replace('/@continue\s*\((.*?)\)/', '<?php if ($1) continue; ?>', $content) ?? $content;
+        // Bare @break / @continue — needed by @switch/@case, which previously had no way
+        // to terminate a case. Must run after the conditional forms above, or the
+        // trailing "($x)" of "@break($x)" would survive as literal text. The lookahead
+        // keeps it from eating a longer word such as "@breakpoint".
+        $content = preg_replace('/@break(?![A-Za-z0-9_(])/', '<?php break; ?>', $content) ?? $content;
+        $content = preg_replace('/@continue(?![A-Za-z0-9_(])/', '<?php continue; ?>', $content) ?? $content;
 
         $content = preg_replace('/\{!!\s*(.+?)\s*!!\}/s', '<?php echo $1; ?>', $content) ?? $content;
-        $content = preg_replace('/\{{\s*(.+?)\s*\}}/s', '<?php echo htmlspecialchars((string)($1), ENT_QUOTES, "UTF-8"); ?>', $content) ?? $content;
+        $content = preg_replace('/\{{\s*(.+?)\s*\}}/s', '<?php echo htmlspecialchars((string)($1), ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8"); ?>', $content) ?? $content;
 
         if (!empty($verbatimStore)) {
             $content = strtr($content, $verbatimStore);
@@ -911,24 +980,51 @@ class BladeEngine
         return $content;
     }
 
+    /**
+     * Compile every `@directive(...)` occurrence using a balanced-parenthesis scan.
+     *
+     * The name must be followed by a word boundary, so `@for` does not match
+     * `@foreach`, and whitespace between the name and `(` is tolerated to match
+     * the `\s*` the regex-based compilation used to allow. An occurrence with no
+     * following `(`, or with unbalanced parentheses, is left untouched — that is
+     * how bare `@break` survives to be handled separately.
+     */
     private function replaceDirectiveCalls(string $content, string $directive, callable $compiler): string
     {
-        $needle = '@' . $directive . '(';
+        $needle = '@' . $directive;
+        $needleLength = strlen($needle);
+        $length = strlen($content);
         $offset = 0;
         $result = '';
 
         while (($position = strpos($content, $needle, $offset)) !== false) {
-            $result .= substr($content, $offset, $position - $offset);
-            $start = $position + strlen($needle) - 1;
-            $parsed = $this->extractBalancedExpression($content, $start);
+            $afterName = $position + $needleLength;
+
+            // Word boundary: @for must not consume @foreach.
+            $nextChar = $content[$afterName] ?? '';
+            if ($nextChar !== '' && ($nextChar === '_' || ctype_alnum($nextChar))) {
+                $result .= substr($content, $offset, $afterName - $offset);
+                $offset = $afterName;
+                continue;
+            }
+
+            $parenPosition = $afterName;
+            while ($parenPosition < $length && ctype_space($content[$parenPosition])) {
+                $parenPosition++;
+            }
+
+            $parsed = ($content[$parenPosition] ?? '') === '('
+                ? $this->extractBalancedExpression($content, $parenPosition)
+                : null;
 
             if ($parsed === null) {
-                $result .= substr($content, $position, strlen($needle));
-                $offset = $start + 1;
+                $result .= substr($content, $offset, $afterName - $offset);
+                $offset = $afterName;
                 continue;
             }
 
             [$expression, $endPosition] = $parsed;
+            $result .= substr($content, $offset, $position - $offset);
             $result .= $compiler($expression);
             $offset = $endPosition + 1;
         }

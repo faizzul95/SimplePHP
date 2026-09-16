@@ -16,9 +16,6 @@ use Core\Database\QueryAllowlist;
  * whereRaw, _whereRawInternal.
  *
  * Consumed by: BaseDatabase
- *
- * @category Database
- * @package  Core\Database\Concerns
  */
 trait HasWhereConditions
 {
@@ -27,9 +24,6 @@ trait HasWhereConditions
     /**
      * Add a where clause using a positive allowlist for the column name.
      *
-     * @param string $column
-     * @param mixed $value
-     * @param string $operator
      * @param array<string>|null $allowedColumns
      * @return $this
      */
@@ -46,9 +40,6 @@ trait HasWhereConditions
      * Validates the expression with _forbidRawQuery() to block stacked queries,
      * comment injection, and other dangerous patterns before appending the clause.
      *
-     * @param string $rawQuery
-     * @param array  $value
-     * @param string $whereType
      * @return $this
      */
     public function whereRaw($rawQuery, $value = [], $whereType = 'AND')
@@ -63,9 +54,6 @@ trait HasWhereConditions
      *
      * Skips _forbidRawQuery() — only call this when the expression is framework-generated.
      *
-     * @param string $rawQuery
-     * @param array  $value
-     * @param string $whereType
      * @return $this
      */
     protected function _whereRawInternal($rawQuery, $value = [], $whereType = 'AND')
@@ -92,9 +80,6 @@ trait HasWhereConditions
     /**
      * Add an AND where clause, grouped closure, or associative array of clauses.
      *
-     * @param mixed $columnName
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     public function where($columnName, $operator = null, $value = null)
@@ -134,9 +119,6 @@ trait HasWhereConditions
             $this->validateOperator($operator, ['IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']);
 
             $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in query builder. Please use query() function.');
-            if (!is_array($value)) {
-                $this->_forbidRawQuery($value, 'Full/Sub SQL statements are not allowed in query builder. Please use query() function.');
-            }
 
             $this->_buildWhereClause($this->_qualifyColumn($columnName), $value, $operator, 'AND');
 
@@ -149,35 +131,29 @@ trait HasWhereConditions
 
     /**
      * Normalize a column reference into a safely quoted identifier.
-     *
-     * @param string $column
-     * @return string
      */
     protected function _qualifyColumn(string $column): string
     {
         $column = trim($column);
+
         if ($column === '*' || $column === '') {
             return $column;
         }
-        if (strpos($column, '`') !== false) {
-            return $column;
+
+        // Unqualified names are scoped to the current table so a join cannot make
+        // them ambiguous. Everything else — quoting, escaping, splitting on the
+        // dot — is the grammar's, so a second engine changes one class rather
+        // than every call site.
+        if (!str_contains($column, '.') && !empty($this->table)) {
+            $column = $this->table . '.' . $column;
         }
-        if (strpos($column, '.') !== false) {
-            $parts = explode('.', $column, 2);
-            return '`' . str_replace('`', '``', $parts[0]) . '`.`' . str_replace('`', '``', $parts[1]) . '`';
-        }
-        if (!empty($this->table)) {
-            return '`' . str_replace('`', '``', $this->table) . '`.`' . str_replace('`', '``', $column) . '`';
-        }
-        return '`' . str_replace('`', '``', $column) . '`';
+
+        return $this->wrapIdentifier($column);
     }
 
     /**
      * Add an OR where clause, grouped closure, or associative array of clauses.
      *
-     * @param mixed $columnName
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     public function orWhere($columnName, $operator = null, $value = null)
@@ -217,9 +193,6 @@ trait HasWhereConditions
             $this->validateOperator($operator, ['IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']);
 
             $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in orWhere(). Please use query() function.');
-            if (!is_array($value)) {
-                $this->_forbidRawQuery($value, 'Full/Sub SQL statements are not allowed in orWhere(). Please use query() function.');
-            }
 
             $this->_buildWhereClause($this->_qualifyColumn($columnName), $value, $operator, 'OR');
 
@@ -233,9 +206,6 @@ trait HasWhereConditions
     /**
      * Add a where clause comparing two columns.
      *
-     * @param string $column1
-     * @param string $operator
-     * @param string|null $column2
      * @return $this
      */
     public function whereColumn($column1, $operator = null, $column2 = null)
@@ -251,8 +221,11 @@ trait HasWhereConditions
         $this->_forbidRawQuery($column1, 'Full/Sub SQL statements are not allowed in whereColumn().');
         $this->_forbidRawQuery($column2, 'Full/Sub SQL statements are not allowed in whereColumn().');
 
-        $col1 = '`' . str_replace('`', '``', $column1) . '`';
-        $col2 = '`' . str_replace('`', '``', $column2) . '`';
+        // wrapIdentifier splits on the dot. The old form wrapped the whole
+        // qualified name, so whereColumn('orders.user_id', 'users.id') asked the
+        // server for a single column literally called "orders.user_id".
+        $col1 = $this->wrapIdentifier($column1);
+        $col2 = $this->wrapIdentifier($column2);
 
         return $this->whereRaw("$col1 $operator $col2", [], 'AND');
     }
@@ -260,9 +233,6 @@ trait HasWhereConditions
     /**
      * Add an OR where clause comparing two columns.
      *
-     * @param string $column1
-     * @param string $operator
-     * @param string|null $column2
      * @return $this
      */
     public function orWhereColumn($column1, $operator = null, $column2 = null)
@@ -278,8 +248,11 @@ trait HasWhereConditions
         $this->_forbidRawQuery($column1, 'Full/Sub SQL statements are not allowed in orWhereColumn().');
         $this->_forbidRawQuery($column2, 'Full/Sub SQL statements are not allowed in orWhereColumn().');
 
-        $col1 = '`' . str_replace('`', '``', $column1) . '`';
-        $col2 = '`' . str_replace('`', '``', $column2) . '`';
+        // wrapIdentifier splits on the dot. The old form wrapped the whole
+        // qualified name, so whereColumn('orders.user_id', 'users.id') asked the
+        // server for a single column literally called "orders.user_id".
+        $col1 = $this->wrapIdentifier($column1);
+        $col2 = $this->wrapIdentifier($column2);
 
         return $this->whereRaw("$col1 $operator $col2", [], 'OR');
     }
@@ -287,8 +260,6 @@ trait HasWhereConditions
     /**
      * Add an IN condition to the query.
      *
-     * @param string $column
-     * @param array $value
      * @return $this
      */
     public function whereIn($column, $value = [])
@@ -307,8 +278,6 @@ trait HasWhereConditions
     /**
      * Add an OR IN condition to the query.
      *
-     * @param string $column
-     * @param array $value
      * @return $this
      */
     public function orWhereIn($column, $value = [])
@@ -327,8 +296,6 @@ trait HasWhereConditions
     /**
      * Add a NOT IN condition to the query.
      *
-     * @param string $column
-     * @param array $value
      * @return $this
      */
     public function whereNotIn($column, $value = [])
@@ -347,8 +314,6 @@ trait HasWhereConditions
     /**
      * Add an OR NOT IN condition to the query.
      *
-     * @param string $column
-     * @param array $value
      * @return $this
      */
     public function orWhereNotIn($column, $value = [])
@@ -367,10 +332,8 @@ trait HasWhereConditions
     /**
      * Split oversized IN predicates into grouped chunks to avoid driver limits.
      *
-     * @param string $column
      * @param array<int, mixed> $value
      * @param 'IN'|'NOT IN' $operator
-     * @param 'AND'|'OR' $whereType
      * @return $this
      */
     protected function buildChunkedInCondition(string $column, array $value, string $operator, string $whereType)
@@ -406,9 +369,6 @@ trait HasWhereConditions
     /**
      * Add a BETWEEN condition after validating the range bounds.
      *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
      * @return $this
      */
     public function whereBetween($columnName, $start, $end)
@@ -437,9 +397,6 @@ trait HasWhereConditions
     /**
      * Add an OR BETWEEN condition after validating the range bounds.
      *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
      * @return $this
      */
     public function orWhereBetween($columnName, $start, $end)
@@ -468,9 +425,6 @@ trait HasWhereConditions
     /**
      * Add a NOT BETWEEN condition after validating the range bounds.
      *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
      * @return $this
      */
     public function whereNotBetween($columnName, $start, $end)
@@ -499,9 +453,6 @@ trait HasWhereConditions
     /**
      * Add an OR NOT BETWEEN condition after validating the range bounds.
      *
-     * @param string $columnName
-     * @param mixed $start
-     * @param mixed $end
      * @return $this
      */
     public function orWhereNotBetween($columnName, $start, $end)
@@ -530,7 +481,6 @@ trait HasWhereConditions
     /**
      * Add an IS NULL condition to the query.
      *
-     * @param string $column
      * @return $this
      */
     public function whereNull($column)
@@ -541,7 +491,6 @@ trait HasWhereConditions
     /**
      * Add an OR IS NULL condition to the query.
      *
-     * @param string $column
      * @return $this
      */
     public function orWhereNull($column)
@@ -552,7 +501,6 @@ trait HasWhereConditions
     /**
      * Add an IS NOT NULL condition to the query.
      *
-     * @param string $column
      * @return $this
      */
     public function whereNotNull($column)
@@ -563,7 +511,6 @@ trait HasWhereConditions
     /**
      * Add an OR IS NOT NULL condition to the query.
      *
-     * @param string $column
      * @return $this
      */
     public function orWhereNotNull($column)
@@ -574,9 +521,6 @@ trait HasWhereConditions
     /**
      * Add a negated where clause or negated grouped closure.
      *
-     * @param mixed $column
-     * @param mixed $operator
-     * @param mixed $value
      * @return $this
      */
     public function whereNot($column, $operator = null, $value = null)
@@ -601,14 +545,7 @@ trait HasWhereConditions
         return $this->where($column, $operator ?? '!=', $value);
     }
 
-    /**
-     * Add an "or where not" clause to the query.
-     *
-     * @param string|\Closure $column
-     * @param mixed $operator
-     * @param mixed $value
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNot($column, $operator = null, $value = null)
     {
         if ($column instanceof \Closure) {
@@ -631,49 +568,25 @@ trait HasWhereConditions
         return $this->orWhere($column, $operator ?? '!=', $value);
     }
 
-    /**
-     * Add a "where like" clause to the query.
-     *
-     * @param string $column
-     * @param string $value
-     * @return $this
-     */
+    /** @return $this */
     public function whereLike($column, $value)
     {
         return $this->where($column, 'LIKE', $value);
     }
 
-    /**
-     * Add an "or where like" clause to the query.
-     *
-     * @param string $column
-     * @param string $value
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereLike($column, $value)
     {
         return $this->orWhere($column, 'LIKE', $value);
     }
 
-    /**
-     * Add a "where not like" clause to the query.
-     *
-     * @param string $column
-     * @param string $value
-     * @return $this
-     */
+    /** @return $this */
     public function whereNotLike($column, $value)
     {
         return $this->where($column, 'NOT LIKE', $value);
     }
 
-    /**
-     * Add an "or where not like" clause to the query.
-     *
-     * @param string $column
-     * @param string $value
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNotLike($column, $value)
     {
         return $this->orWhere($column, 'NOT LIKE', $value);
@@ -682,9 +595,6 @@ trait HasWhereConditions
     /**
      * Add a grouped OR predicate across multiple columns.
      *
-     * @param array $columns
-     * @param string $operator
-     * @param mixed $value
      * @return $this
      */
     public function whereAny(array $columns, $operator, $value)
@@ -709,9 +619,6 @@ trait HasWhereConditions
     /**
      * Add a grouped AND predicate across multiple columns.
      *
-     * @param array $columns
-     * @param string $operator
-     * @param mixed $value
      * @return $this
      */
     public function whereAll(array $columns, $operator, $value)
@@ -732,9 +639,6 @@ trait HasWhereConditions
     /**
      * Add a grouped predicate asserting none of the columns match.
      *
-     * @param array $columns
-     * @param string $operator
-     * @param mixed $value
      * @return $this
      */
     public function whereNone(array $columns, $operator, $value)
@@ -759,8 +663,6 @@ trait HasWhereConditions
     /**
      * Add a "where between columns" clause: column BETWEEN column_start AND column_end.
      *
-     * @param string $column
-     * @param array $columns [start_column, end_column]
      * @return $this
      */
     public function whereBetweenColumns($column, array $columns)
@@ -773,19 +675,16 @@ trait HasWhereConditions
         $this->validateColumn($columns[0]);
         $this->validateColumn($columns[1]);
 
-        $col  = str_replace('`', '``', $column);
-        $col1 = str_replace('`', '``', $columns[0]);
-        $col2 = str_replace('`', '``', $columns[1]);
+        $col  = $this->wrapIdentifier($column);
+        $col1 = $this->wrapIdentifier($columns[0]);
+        $col2 = $this->wrapIdentifier($columns[1]);
 
-        return $this->whereRaw("`$col` BETWEEN `$col1` AND `$col2`");
+        return $this->whereRaw("{$col} BETWEEN {$col1} AND {$col2}");
     }
 
     /**
      * Add a FULLTEXT MATCH ... AGAINST predicate.
      *
-     * @param array|string $columns
-     * @param string $value
-     * @param array $options
      * @return $this
      */
     public function whereFullText($columns, $value, array $options = [])
@@ -819,8 +718,6 @@ trait HasWhereConditions
     /**
      * Add an integer-only IN predicate without PDO placeholders.
      *
-     * @param string $column
-     * @param array $values
      * @return $this
      */
     public function whereIntegerInRaw($column, array $values)
@@ -835,8 +732,6 @@ trait HasWhereConditions
     /**
      * Add a NOT IN clause with raw integer values.
      *
-     * @param string $column
-     * @param array $values
      * @return $this
      */
     public function whereIntegerNotInRaw($column, array $values)
@@ -851,10 +746,8 @@ trait HasWhereConditions
     /**
      * Build a grouped raw integer IN/NOT IN predicate for large numeric lists.
      *
-     * @param string $column
      * @param array<int, int|string> $values
      * @param 'IN'|'NOT IN' $operator
-     * @param 'AND'|'OR' $whereType
      * @return $this
      */
     protected function buildChunkedIntegerRawCondition(string $column, array $values, string $operator, string $whereType)
@@ -896,10 +789,6 @@ trait HasWhereConditions
      * Build a driver-aware temporal where clause using the registered query grammar.
      *
      * @param string $type  date|day|month|year|time
-     * @param mixed  $column
-     * @param mixed  $operator
-     * @param mixed  $value
-     * @param string $whereType
      * @return $this
      */
     protected function applyTemporalWhereClause(string $type, $column, $operator = null, $value = null, string $whereType = 'AND')
@@ -945,8 +834,6 @@ trait HasWhereConditions
     /**
      * Conditionally mutate the builder when the predicate is truthy.
      *
-     * @param mixed $condition
-     * @param callable $callback
      * @return $this
      */
     public function when($condition, $callback)
@@ -965,8 +852,6 @@ trait HasWhereConditions
     /**
      * Execute callback unless condition is true.
      *
-     * @param mixed $condition
-     * @param callable $callback
      * @return $this
      */
     public function unless($condition, $callback)
@@ -985,7 +870,6 @@ trait HasWhereConditions
     /**
      * Execute callback and return the builder (for debugging/side effects).
      *
-     * @param callable $callback
      * @return $this
      */
     public function tap($callback)
@@ -1005,6 +889,75 @@ trait HasWhereConditions
      * @param string $comparison
      * @return $this
      */
+    /**
+     * Add an EXISTS predicate built from an arbitrary sub-query.
+     *
+     * whereHas() covers the common case — "rows in table B that point back at
+     * this row" — but forces the foreign-key correlation, so anything else (a
+     * correlated aggregate, an EXISTS over a join, a self-referencing check) had
+     * no builder form at all and had to drop to query(). This is the general
+     * shape:
+     *
+     *     $db->table('users')->whereExists(function ($q) {
+     *         $q->table('orders')
+     *           ->whereColumn('orders.user_id', 'users.id')
+     *           ->where('total', '>', 100);
+     *     });
+     *
+     * @param \Closure $callback Receives a fresh builder for the sub-query
+     * @return $this
+     */
+    public function whereExists(\Closure $callback)
+    {
+        return $this->_buildWhereExists($callback, 'AND', 'EXISTS');
+    }
+
+    /** @return $this */
+    public function orWhereExists(\Closure $callback)
+    {
+        return $this->_buildWhereExists($callback, 'OR', 'EXISTS');
+    }
+
+    /** @return $this */
+    public function whereNotExists(\Closure $callback)
+    {
+        return $this->_buildWhereExists($callback, 'AND', 'NOT EXISTS');
+    }
+
+    /** @return $this */
+    public function orWhereNotExists(\Closure $callback)
+    {
+        return $this->_buildWhereExists($callback, 'OR', 'NOT EXISTS');
+    }
+
+    /** @return $this */
+    private function _buildWhereExists(\Closure $callback, string $boolean, string $comparison)
+    {
+        $sub = $this->createSubQueryBuilder();
+        $callback($sub);
+
+        if (empty($sub->table)) {
+            throw new \InvalidArgumentException(
+                $comparison . '(): the sub-query has no table. Call $query->table(...) inside the closure.'
+            );
+        }
+
+        $sub->_buildSelectQuery();
+        $sql = trim((string) $sub->_query);
+
+        if ($sql === '') {
+            throw new \RuntimeException($comparison . '(): the sub-query produced no SQL.');
+        }
+
+        // The sub-query's bindings have to reach the outer statement in the order
+        // its placeholders appear, which _whereRawInternal appends them in.
+        return $this->_whereRawInternal(
+            $comparison . ' (' . $sql . ')',
+            $sub->_binds ?? [],
+            $boolean
+        );
+    }
+
     private function _buildWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null, string $operator = 'AND', string $comparison = 'EXISTS')
     {
         $this->validateTableName($relationTable, 'Relation table');
@@ -1049,10 +1002,6 @@ trait HasWhereConditions
     /**
      * Add an EXISTS predicate for a related table.
      *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
      * @return $this
      */
     public function whereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
@@ -1063,10 +1012,6 @@ trait HasWhereConditions
     /**
      * Add an OR EXISTS predicate for a related table.
      *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
      * @return $this
      */
     public function orWhereHas($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
@@ -1077,10 +1022,6 @@ trait HasWhereConditions
     /**
      * Add a NOT EXISTS predicate for a related table.
      *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
      * @return $this
      */
     public function whereDoesntHave($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
@@ -1091,10 +1032,6 @@ trait HasWhereConditions
     /**
      * Add an OR NOT EXISTS predicate for a related table.
      *
-     * @param string $relationTable
-     * @param string $foreignKey
-     * @param string $localKey
-     * @param \Closure|null $callback
      * @return $this
      */
     public function orWhereDoesntHave($relationTable, $foreignKey, $localKey, ?\Closure $callback = null)
@@ -1105,10 +1042,6 @@ trait HasWhereConditions
     /**
      * Append a normalized WHERE fragment and merge any required bindings.
      *
-     * @param string $columnName
-     * @param mixed $value
-     * @param string $operator
-     * @param string $whereType
      * @return void
      */
     protected function _buildWhereClause($columnName, $value = null, $operator = '=', $whereType = 'AND')

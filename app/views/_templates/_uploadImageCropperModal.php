@@ -84,7 +84,6 @@
 
 		$('#changePictureUpload').attr('action', data.url);
 
-		// reloadFunction = data.reloadFunction;
 		$('#deleteBtn').addClass('d-none');
 
 		if (!empty(data.id)) {
@@ -142,13 +141,6 @@
 				height: boundaryHeight
 			},
 
-			// // resize controls
-			// resizeControls: {
-			//     width: true,
-			//     height: true
-			// },
-
-			// // enable image resize
 			enableResize: false,
 
 			// // show image zoom control
@@ -163,7 +155,6 @@
 			// restrict zoom so image cannot be smaller than viewport
 			enforceBoundary: true,
 
-			// enable orientation
 			enableOrientation: true,
 
 			// enable key movement

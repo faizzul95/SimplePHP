@@ -19,10 +19,12 @@ final class Hasher
     private const THREADS     = 2;
 
     /**
-     * Dummy hash used when user is not found.
-     * Prevents timing-based account enumeration by normalising response time.
+     * Verified against when no user matches, so the miss path costs the same as a
+     * real verification. Must be a genuine Argon2id hash built with the constants
+     * above — password_verify() rejects a malformed one in microseconds, which
+     * silently disables the defence. Regenerate if the cost constants change.
      */
-    private const DUMMY_HASH = '$argon2id$v=19$m=65536,t=4,p=2$ZHVtbXlzYWx0ZHVtbXlzYWx0$dummyhashvaluethatnevermatchesanythingXXXXXXX';
+    private const DUMMY_HASH = '$argon2id$v=19$m=65536,t=4,p=2$V2lqd3VrL3B2bkprZmhiZw$e+YqNg1bnZD6kYH8+CEpbUk/s4O7OxrUalEMIXr83P4';
 
     /**
      * Hash a plaintext password using Argon2id.

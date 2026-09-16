@@ -2,8 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\RedirectResponse;
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 class EnsureGuest implements MiddlewareInterface
@@ -14,16 +15,17 @@ class EnsureGuest implements MiddlewareInterface
     {
         if (auth()->check(self::AUTH_GUARDS)) {
             if ($request->expectsJson()) {
-                Response::json(['code' => 403, 'message' => 'Already authenticated'], 403);
+                Abort::json(['code' => 403, 'message' => 'Already authenticated'], 403);
             }
 
+            // A browser that is already signed in belongs on its landing page,
+            // not on a 403 — being logged in is not an error.
             $landingUrl = menu_manager()->resolveAuthenticatedLandingUrl();
             if ($landingUrl !== null) {
-                Response::redirect($landingUrl);
+                Abort::response(new RedirectResponse($landingUrl));
             }
 
-            show_403();
-            exit;
+            Abort::forbidden('You are already signed in.');
         }
 
         return $next($request);

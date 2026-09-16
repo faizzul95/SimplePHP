@@ -108,7 +108,6 @@ function sendUsingMailer($recipientData = NULL, $subject = NULL, $dataBody = NUL
             $response =  ['success' => false, 'message' => 'Email unable to sent'];
         }
     } catch (\Exception $e) {
-        // die("Message could not be sent. Mailer Error: {$mail->ErrorInfo}");
         $response = ['success' => false, 'message' => "Message could not be sent. Mailer Error: {$mail->ErrorInfo}"];
     }
 

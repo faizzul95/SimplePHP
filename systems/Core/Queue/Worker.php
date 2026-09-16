@@ -3,6 +3,7 @@
 namespace Core\Queue;
 
 use Components\Logger;
+use Core\Database\ServerCapabilities;
 
 /**
  * Queue Worker
@@ -21,6 +22,9 @@ class Worker
     private string $failedTable;
     private bool $shouldQuit = false;
 
+    /** Cached SKIP LOCKED support; null until first probed. */
+    private ?bool $skipLockedSupported = null;
+
     public function __construct(?array $config = null)
     {
         $this->config = $config ?? (\config('queue') ?? []);
@@ -28,14 +32,10 @@ class Worker
         $this->table = $connConfig['table'] ?? 'system_jobs';
         $this->failedTable = $connConfig['failed_table'] ?? 'system_failed_jobs';
 
-        // Ensure tables exist on first run
         (new Dispatcher($this->config))->ensureTable();
     }
 
     /**
-     * Start the worker loop.
-     *
-     * @param string   $queue    Queue name to process
      * @param array    $options  Worker options (sleep, tries, timeout, once)
      * @param callable $callback Status callback: fn(string $status, string $message)
      */
@@ -47,6 +47,10 @@ class Worker
         $timeout = $options['timeout'] ?? $workerDefaults['timeout'] ?? 60;
         $maxPriority = isset($options['max_priority']) ? max(Job::PRIORITY_CRITICAL, min(Job::PRIORITY_BULK, (int) $options['max_priority'])) : null;
         $once    = $options['once']    ?? false;
+
+        // Remember the restart signal as it stood at boot. Anything newer than
+        // this was published after we started, which means our code is stale.
+        $bootedWith = RestartSignal::lastRequestedAt();
 
         // Register signal handlers for graceful shutdown
         if ($this->supportsSignalHandling()) {
@@ -66,6 +70,33 @@ class Worker
         while (!$this->shouldQuit) {
             if ($this->supportsSignalDispatch()) {
                 $this->dispatchSignals();
+            }
+
+            // Checked between jobs, never during one: a deploy must not interrupt
+            // work already in flight.
+            if (RestartSignal::shouldRestart($bootedWith)) {
+                if ($callback) {
+                    $callback('info', 'Restart requested — exiting so the supervisor can start us on the new code.');
+                }
+
+                return;
+            }
+
+            // `myth down` stopped HTTP traffic but workers kept draining the queue,
+            // so jobs ran against a database that might be mid-migration. Pause
+            // instead of exiting, so the supervisor does not treat it as a crash
+            // and the queue resumes by itself on `myth up`.
+            if ($this->shouldPauseForMaintenance()) {
+                if ($once) {
+                    if ($callback) {
+                        $callback('info', 'Application is in maintenance mode — nothing processed.');
+                    }
+
+                    return;
+                }
+
+                $this->waitOut($sleep, $callback, 'Application is in maintenance mode — pausing.');
+                continue;
             }
 
             $job = $this->pop($queue, $maxPriority);
@@ -106,8 +137,15 @@ class Worker
     /**
      * Pop the next available job from the queue.
      *
-     * Uses a transaction with SELECT ... FOR UPDATE to atomically
-     * claim a job and prevent multiple workers from processing the same job.
+     * Claims a row inside a transaction with SELECT ... FOR UPDATE SKIP LOCKED, so
+     * N workers running in parallel each take a different job rather than queueing
+     * behind the same one.
+     *
+     * The transaction is given an explicit retry budget. It previously used
+     * transaction()'s old default of 1 — no retry — which meant the single most
+     * contended statement in the framework treated a routine InnoDB deadlock as a
+     * lost job. Contention here is expected and normal: it is exactly what
+     * `queue:work --workers=N` is for.
      */
     private function pop(string $queue, ?int $maxPriority = null): ?array
     {
@@ -146,11 +184,79 @@ class Worker
                 $row['priority'] = (int) ($row['priority'] ?? Job::PRIORITY_NORMAL);
 
                 return $row;
-            });
+            }, $this->claimAttempts());
         } catch (\Throwable $e) {
             $this->logQueueError('Queue pop error: ' . $e->getMessage());
             return null;
         }
+    }
+
+    /**
+     * Free a job's uniqueness claim once it reaches a terminal state.
+     *
+     * Only called on success or permanent failure — never between retries, where
+     * the job is still in flight and a duplicate must stay blocked.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function releaseUniqueLock(array $payload): void
+    {
+        $key = $payload['unique_key'] ?? null;
+
+        if (is_string($key) && $key !== '') {
+            UniqueLock::release($key);
+        }
+    }
+
+    /**
+     * Whether to stop taking jobs while the application is down.
+     *
+     * On by default: `myth down` normally precedes a migration or a deploy, and a
+     * worker writing to the database through that window is the thing maintenance
+     * mode exists to prevent. Set queue.pause_during_maintenance = false for
+     * queues that must keep draining regardless.
+     */
+    private function shouldPauseForMaintenance(): bool
+    {
+        if (($this->config['pause_during_maintenance'] ?? true) !== true) {
+            return false;
+        }
+
+        return \Components\Maintenance::isActive();
+    }
+
+    /**
+     * Sleep in short slices so a shutdown signal is still handled promptly.
+     */
+    private function waitOut(int $seconds, ?callable $callback, string $message): void
+    {
+        if ($callback) {
+            $callback('info', $message);
+        }
+
+        $ticks = max(1, $seconds) * 10;
+
+        for ($i = 0; $i < $ticks && !$this->shouldQuit; $i++) {
+            usleep(100_000);
+
+            if ($this->supportsSignalDispatch()) {
+                $this->dispatchSignals();
+            }
+        }
+    }
+
+    /**
+     * How many times to replay a losing job claim before giving up this tick.
+     *
+     * Losing the claim is not a failure — the worker simply sleeps and tries
+     * again — so this is deliberately small. The point is to absorb the deadlock
+     * that N parallel workers produce, not to fight for a job indefinitely.
+     */
+    private function claimAttempts(): int
+    {
+        $configured = $this->config['connections']['database']['claim_attempts'] ?? null;
+
+        return max(1, (int) ($configured ?? 3));
     }
 
     /**
@@ -192,6 +298,8 @@ class Worker
                 ->where('id', $jobRow['id'])
                 ->delete();
 
+            $this->releaseUniqueLock($payload);
+
             if ($callback) {
                 $callback('processed', $shortName);
             }
@@ -217,11 +325,17 @@ class Worker
                 // Move to failed jobs
                 $this->markAsFailed($jobRow, $e);
 
+                // Terminal: the work is over one way or another, so the key must
+                // become available again or the job can never be re-dispatched.
+                $this->releaseUniqueLock($payload);
+
                 if ($callback) {
                     $callback('failed', "{$shortName}: {$e->getMessage()}");
                 }
             } else {
-                // Release back to queue for retry
+                // Release back to queue for retry. The uniqueness claim is
+                // deliberately held: the job is still in flight, and freeing the
+                // key now would let a duplicate be queued alongside the retry.
                 $this->release($jobRow);
 
                 if ($callback) {
@@ -431,9 +545,47 @@ class Worker
             $bindings[] = $maxPriority;
         }
 
-        $sql .= ' ORDER BY `priority` ASC, `available_at` ASC, `created_at` ASC LIMIT 1 FOR UPDATE SKIP LOCKED';
+        $sql .= ' ORDER BY `priority` ASC, `available_at` ASC, `created_at` ASC LIMIT 1 FOR UPDATE';
+
+        // SKIP LOCKED is what makes parallel workers actually parallel: without it
+        // every worker blocks on the same head-of-queue row. It is also a syntax
+        // error on MySQL < 8.0.1 and MariaDB < 10.6, where appending it does not
+        // degrade the queue — it breaks it. Fall back to a plain FOR UPDATE there;
+        // workers serialise, but they run.
+        if ($this->supportsSkipLocked()) {
+            $sql .= ' SKIP LOCKED';
+        }
 
         return ['sql' => $sql, 'bindings' => $bindings];
+    }
+
+    /**
+     * Whether the connected server understands SKIP LOCKED.
+     *
+     * Cached for the life of the process — the answer cannot change, and probing
+     * the version on every job claim would cost more than the feature saves.
+     */
+    protected function supportsSkipLocked(): bool
+    {
+        if ($this->skipLockedSupported !== null) {
+            return $this->skipLockedSupported;
+        }
+
+        $configured = $this->config['connections']['database']['skip_locked'] ?? null;
+
+        if ($configured !== null) {
+            return $this->skipLockedSupported = (bool) $configured;
+        }
+
+        try {
+            $version = (string) db()->getVersion();
+        } catch (\Throwable $e) {
+            $this->logQueueError('Unable to read the server version for SKIP LOCKED support: ' . $e->getMessage());
+
+            return $this->skipLockedSupported = false;
+        }
+
+        return $this->skipLockedSupported = ServerCapabilities::supportsSkipLocked($version, 'queue');
     }
 
     private function supportsSignalHandling(): bool

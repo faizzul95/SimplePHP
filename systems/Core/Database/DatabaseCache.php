@@ -7,12 +7,9 @@ namespace Core\Database;
  *
  * This class handles caching functionality.
  *
- * @category  Cache
- * @package   Core\Database
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @link      -
- * @version   0.0.1
  */
 
 class DatabaseCache
@@ -45,12 +42,7 @@ class DatabaseCache
         $this->zlibEnabled = extension_loaded('zlib');
     }
 
-    /**
-     * Get cached data for a key.
-     *
-     * @param string $key Cache key.
-     * @return mixed Cached data or null if not found or expired.
-     */
+    /** @return mixed Cached data or null if not found or expired. */
     public function get($key)
     {
         $filename = $this->getCacheFilename($key);
@@ -79,8 +71,6 @@ class DatabaseCache
     /**
      * Set cached data for a key with expiration time.
      *
-     * @param string $key Cache key.
-     * @param mixed $data Data to be cached.
      * @param int|null $expire Expiration time in seconds. Null for no expiration. Defaults to 3600 (1 hour).
      * @return bool True on success, false otherwise.
      */
@@ -105,12 +95,7 @@ class DatabaseCache
         return file_put_contents($filename, $compressedData, LOCK_EX) !== false;
     }
 
-    /**
-     * Delete cached data for a key.
-     *
-     * @param string $key Cache key.
-     * @return bool True on success, false otherwise.
-     */
+    /** @return bool True on success, false otherwise. */
     public function delete($key)
     {
         $filename = $this->getCacheFilename($key);
@@ -120,7 +105,6 @@ class DatabaseCache
     /**
      * Generate cache filename based on key.
      *
-     * @param string $key Cache key.
      * @return string Cache filename.
      */
     protected function getCacheFilename($key)
@@ -144,7 +128,6 @@ class DatabaseCache
     /**
      * Compresses data using gzip, deflate if available, otherwise using base64.
      *
-     * @param mixed $data The data to compress.
      * @return string|false Returns the compressed data as a string, or false on failure.
      */
     protected function compressData($data)
@@ -170,7 +153,6 @@ class DatabaseCache
     /**
      * Decompresses data compressed with gzip or base64.
      *
-     * @param string $compressedData The compressed data string.
      * @return mixed|false Returns the original data or false on failure.
      */
     protected function decompressData($compressedData)

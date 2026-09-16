@@ -11,12 +11,7 @@ namespace Core\Database\Interface;
  * in a secure and flexible way. It utilizes prepared statements to prevent
  * SQL injection vulnerabilities.
  *
- * @category Database
- * @package Core\Database
- * @author 
  * @license http://opensource.org/licenses/gpl-3.0.html GNU Public License
- * @link 
- * @version 0.0.1
  */
 
 interface BuilderStatementInterface
@@ -28,229 +23,91 @@ interface BuilderStatementInterface
      */
     public function reset();
 
-    /**
-     * Specifies the table to perform the query on.
-     *
-     * @param string $table The name of the table.
-     * @return $this
-     */
+    /** @return $this */
     public function table(string $table);
 
-    /**
-     * Specifies the columns to select in the query.
-     *
-     * @param string|array $columns The columns to select, default is '*'.
-     * @return $this
-     */
+    /** @return $this */
     public function select(string|array $columns = '*');
 
-    /**
-     * Sets the DISTINCT flag for the query.
-     *
-     * @param string|null $column Optional column to apply DISTINCT on.
-     * @return $this
-     */
+    /** @return $this */
     public function distinct(string|null $column = null);
 
     /**
      * Adds a raw where clause to the query.
      *
-     * @param string $rawQuery The raw where query string.
      * @param array $binds An associative array of parameter names and their values.
      * @param string $whereType The type of where clause ('AND' or 'OR').
      * @return $this
      */
     public function whereRaw(string $rawQuery, array $binds = [], string $whereType = 'AND');
 
-    /**
-     * Adds a where clause to the query.
-     *
-    * @param string|array|\Closure $column The column name.
-    * @param string|null $value The value to compare.
-     * @param string $operator The comparison operator, default is '='.
-     * @return $this
-     */
+    /** @return $this */
     public function where(string|array|\Closure $column, mixed $value = null, string $operator = '=');
 
-    /**
-     * Adds an OR where clause to the query.
-     *
-    * @param string|array|\Closure $column The column name.
-    * @param string|null $value The value to compare.
-     * @param string $operator The comparison operator, default is '='.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhere(string|array|\Closure $column, mixed $value = null, string $operator = '=');
 
-    /**
-     * Adds a whereIn clause to the query.
-     *
-     * @param string $column The column name.
-     * @param array $value The array of values to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function whereIn(string $column, array $value = []);
 
-    /**
-     * Adds an OR whereIn clause to the query.
-     *
-     * @param string $column The column name.
-     * @param array $value The array of values to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereIn(string $column, array $value = []);
 
-    /**
-     * Adds a whereNotIn clause to the query.
-     *
-     * @param string $column The column name.
-     * @param array $value The array of values to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function whereNotIn(string $column, array $value = []);
 
-    /**
-     * Adds an OR whereNotIn clause to the query.
-     *
-     * @param string $column The column name.
-     * @param array $value The array of values to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNotIn(string $column, array $value = []);
 
-    /**
-     * Adds a whereBetween clause to the query.
-     *
-     * @param string $column The column name.
-    * @param string $start The start value.
-    * @param string $end The end value.
-     * @return $this
-     */
+    /** @return $this */
     public function whereBetween(string $column, mixed $start, mixed $end);
 
-    /**
-     * Adds an OR whereBetween clause to the query.
-     *
-     * @param string $column The column name.
-    * @param string $start The start value.
-    * @param string $end The end value.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereBetween(string $column, mixed $start, mixed $end);
 
-    /**
-     * Adds a whereNotBetween clause to the query.
-     *
-     * @param string $column The column name.
-    * @param string $start The start value.
-    * @param string $end The end value.
-     * @return $this
-     */
+    /** @return $this */
     public function whereNotBetween(string $column, string $start, string $end);
 
-    /**
-     * Adds an OR whereNotBetween clause to the query.
-     *
-     * @param string $column The column name.
-    * @param string $start The start value.
-    * @param string $end The end value.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNotBetween(string $column, string $start, string $end);
 
-    /**
-     * Adds a whereNull clause to the query.
-     *
-     * @param string $column The column name.
-     * @return $this
-     */
+    /** @return $this */
     public function whereNull(string $column);
 
-    /**
-     * Adds an OR whereNull clause to the query.
-     *
-     * @param string $column The column name.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNull(string $column);
 
-    /**
-     * Adds a whereNotNull clause to the query.
-     *
-     * @param string $column The column name.
-     * @return $this
-     */
+    /** @return $this */
     public function whereNotNull(string $column);
 
-    /**
-     * Adds an OR whereNotNull clause to the query.
-     *
-     * @param string $column The column name.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNotNull(string $column);
 
     /**
      * Adds a WHERE NOT clause (negated condition or grouped closure).
      *
-     * @param string|\Closure $column Column name or closure for grouped NOT.
-     * @param mixed $operator Operator or value.
-     * @param mixed $value Value if operator is provided.
      * @return $this
      */
     public function whereNot($column, $operator = null, $value = null);
 
-    /**
-     * Adds an OR WHERE NOT clause.
-     *
-     * @param string|\Closure $column Column name or closure for grouped NOT.
-     * @param mixed $operator Operator or value.
-     * @param mixed $value Value if operator is provided.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNot($column, $operator = null, $value = null);
 
-    /**
-     * Adds a WHERE LIKE clause.
-     *
-     * @param string $column The column name.
-     * @param mixed $value The LIKE pattern.
-     * @return $this
-     */
+    /** @return $this */
     public function whereLike($column, $value);
 
-    /**
-     * Adds an OR WHERE LIKE clause.
-     *
-     * @param string $column The column name.
-     * @param mixed $value The LIKE pattern.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereLike($column, $value);
 
-    /**
-     * Adds a WHERE NOT LIKE clause.
-     *
-     * @param string $column The column name.
-     * @param mixed $value The LIKE pattern.
-     * @return $this
-     */
+    /** @return $this */
     public function whereNotLike($column, $value);
 
-    /**
-     * Adds an OR WHERE NOT LIKE clause.
-     *
-     * @param string $column The column name.
-     * @param mixed $value The LIKE pattern.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereNotLike($column, $value);
 
     /**
      * Adds a WHERE IN clause for raw integer values (no binding, faster for large lists).
      *
-     * @param string $column The column name.
-     * @param array $values Array of integer values.
      * @return $this
      */
     public function whereIntegerInRaw($column, array $values);
@@ -258,108 +115,42 @@ interface BuilderStatementInterface
     /**
      * Adds a WHERE NOT IN clause for raw integer values.
      *
-     * @param string $column The column name.
-     * @param array $values Array of integer values.
      * @return $this
      */
     public function whereIntegerNotInRaw($column, array $values);
 
-    /**
-     * Adds a whereDate clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator
-    * @param string|null $value The date to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function whereDate(string $column, ?string $operator, ?string $value);
 
-    /**
-     * Adds a OR whereDate clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The date to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereDate(string $column, ?string $operator, ?string $value);
 
-    /**
-     * Adds a whereDay clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The day to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function whereDay(string $column, ?string $operator, ?string $value);
 
-    /**
-     * Adds a OR whereDay clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The day to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereDay(string $column, ?string $operator, ?string $value);
 
-    /**
-     * Adds a whereMonth clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The month to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function whereMonth(string $column, ?string $operator, ?string $value);
 
-    /**
-     * Adds a OR whereMonth clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The month to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereMonth(string $column, ?string $operator, ?string $value);
 
-    /**
-     * Adds a whereYear clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The year to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function whereYear(string $column, ?string $operator, ?string $value);
 
-    /**
-     * Adds a OR whereYear clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The year to compare.
-     * @return $this
-     */
+    /** @return $this */
     public function orWhereYear(string $column, ?string $operator, ?string $value);
 
     /**
-     * Adds a whereTime clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The time to compare (e.g. '14:30:00').
+     * @param string|null $value The time to compare (e.g. '14:30:00').
      * @return $this
      */
     public function whereTime(string $column, ?string $operator, ?string $value);
 
     /**
-     * Adds an OR whereTime clause to the query.
-     *
-     * @param string $column The column name.
-     * @param string|null $operator The comparison operator.
-    * @param string|null $value The time to compare (e.g. '14:30:00').
+     * @param string|null $value The time to compare (e.g. '14:30:00').
      * @return $this
      */
     public function orWhereTime(string $column, ?string $operator, ?string $value);
@@ -367,9 +158,7 @@ interface BuilderStatementInterface
     /**
      * Adds a where json contains clause to search within a JSON column.
      *
-     * @param string $columnName The name of the JSON column.
      * @param string $jsonPath The JSON path to search within.
-     * @param mixed $value The value to search for.
      * @return $this
      */
     public function whereJsonContains(string $columnName, string $jsonPath, $value);
@@ -377,7 +166,6 @@ interface BuilderStatementInterface
     /**
      * Add a where clause comparing two columns
      *
-     * @param string $column1 First column
      * @param string|null $operator Comparison operator (if null, defaults to '=')
      * @param string|null $column2 Second column (if null, operator becomes '=' and column2 becomes operator)
      * @return $this
@@ -387,9 +175,6 @@ interface BuilderStatementInterface
     /**
      * Add an or where clause comparing two columns
      *
-     * @param string $column1 First column
-     * @param string|null $operator Comparison operator
-     * @param string|null $column2 Second column
      * @return $this
      */
     public function orWhereColumn(string $column1, ?string $operator = null, ?string $column2 = null);
@@ -397,9 +182,6 @@ interface BuilderStatementInterface
     /**
      * Add a WHERE clause matching ANY of the given columns.
      *
-     * @param array $columns Array of column names.
-     * @param string $operator Comparison operator.
-    * @param string|null $value The value to compare.
      * @return $this
      */
     public function whereAny(array $columns, $operator, $value);
@@ -407,9 +189,6 @@ interface BuilderStatementInterface
     /**
      * Add a WHERE clause matching ALL of the given columns.
      *
-     * @param array $columns Array of column names.
-     * @param string $operator Comparison operator.
-     * @param mixed $value The value to compare.
      * @return $this
      */
     public function whereAll(array $columns, $operator, $value);
@@ -417,9 +196,6 @@ interface BuilderStatementInterface
     /**
      * Add a WHERE clause matching NONE of the given columns.
      *
-     * @param array $columns Array of column names.
-     * @param string $operator Comparison operator.
-     * @param mixed $value The value to compare.
      * @return $this
      */
     public function whereNone(array $columns, $operator, $value);
@@ -427,17 +203,12 @@ interface BuilderStatementInterface
     /**
      * Add a WHERE clause checking if a column value is between two other column values.
      *
-     * @param string $column The column to check.
      * @param array $columns Array of two column names [min_column, max_column].
      * @return $this
      */
     public function whereBetweenColumns($column, array $columns);
 
     /**
-     * Add a WHERE FULLTEXT search clause.
-     *
-     * @param string|array $columns Column(s) with fulltext index.
-     * @param string $value The search value.
      * @param array $options Options: 'mode' => 'boolean'|'natural'|'expansion'.
      * @return $this
      */
@@ -463,7 +234,6 @@ interface BuilderStatementInterface
     /**
      * Execute callback unless condition is true (opposite of when)
      *
-     * @param mixed $condition Condition to check
      * @param callable $callback Callback to execute if condition is false
      * @return $this
      */
@@ -478,68 +248,36 @@ interface BuilderStatementInterface
     public function tap(callable $callback);
 
     /**
-     * Adds a join clause to the query.
-     *
-     * @param string $table The table to join.
-     * @param string $foreignKey The foreign key column.
-     * @param string $localKey The local key column.
      * @param string $joinType The join type that only support 'INNER', 'LEFT', 'RIGHT', 'OUTER', 'LEFT OUTER', 'RIGHT OUTER'.
      * @return $this
      */
     public function join(string $table, string $foreignKey, string $localKey, string $joinType = 'LEFT');
 
     /**
-     * Adds a left join clause to the query.
-     *
-     * @param string $table The table to join.
-     * @param string $foreignKey The foreign key column.
-     * @param string $localKey The local key column.
      * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
-     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
     public function leftJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
-     * Adds a right join clause to the query.
-     *
-     * @param string $table The table to join.
-     * @param string $foreignKey The foreign key column.
-     * @param string $localKey The local key column.
      * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
-     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
     public function rightJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
-     * Adds an inner join clause to the query.
-     *
-     * @param string $table The table to join.
-     * @param string $foreignKey The foreign key column.
-     * @param string $localKey The local key column.
      * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
-     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
     public function innerJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
-     * Adds an outer join clause to the query.
-     *
-     * @param string $table The table to join.
-     * @param string $foreignKey The foreign key column.
-     * @param string $localKey The local key column.
      * @param string|\Closure|null $conditions Additional conditions for the join. Can be a string or a closure for complex conditions.
-     *                                        If closure is provided, it receives query builder instance for building conditions.
      * @return $this
      */
     public function outerJoin(string $table, string $foreignKey, string $localKey, string|\Closure|null $conditions = null);
 
     /**
-     * Adds an order by clause to the query.
-     *
-     * @param string|array $column The column to order by.
      * @param string $direction The direction of the order ('ASC' or 'DESC').
      * @return $this
      */
@@ -548,7 +286,6 @@ interface BuilderStatementInterface
     /**
      * Order by column in descending order (created_at by default)
      *
-     * @param string $column Column to order by
      * @return $this
      */
     public function latest(string $column = 'created_at');
@@ -556,7 +293,6 @@ interface BuilderStatementInterface
     /**
      * Order by column in ascending order (created_at by default)
      *
-     * @param string $column Column to order by
      * @return $this
      */
     public function oldest(string $column = 'created_at');
@@ -564,8 +300,6 @@ interface BuilderStatementInterface
     /**
      * Clear existing order by and optionally set new order
      *
-     * @param string|null $column Optional column to order by
-     * @param string $direction Order direction
      * @return $this
      */
     public function reorder(?string $column = null, string $direction = 'DESC');
@@ -580,7 +314,6 @@ interface BuilderStatementInterface
     /**
      * Order by a column in descending order.
      *
-     * @param string $column The column to order by.
      * @return $this
      */
     public function orderByDesc($column);
@@ -588,24 +321,17 @@ interface BuilderStatementInterface
     /**
      * Order by a column in ascending order.
      *
-     * @param string $column The column to order by.
      * @return $this
      */
     public function orderByAsc($column);
 
-    /**
-     * Adds a CROSS JOIN clause to the query.
-     *
-     * @param string $table The table to cross join.
-     * @return $this
-     */
+    /** @return $this */
     public function crossJoin($table);
 
     /**
      * Add a subquery select expression.
      *
      * @param \Closure|string $query Closure or raw SQL for the subquery.
-     * @param string $alias Alias for the subquery column.
      * @return $this
      */
     public function selectSub($query, $alias);
@@ -613,117 +339,61 @@ interface BuilderStatementInterface
     /**
      * Adds a raw order by clause to the query.
      *
-     * @param string $string The raw order by string.
-    * @param string|null $bindParams Parameters to bind to the raw order by string.
+     * @param string|null $bindParams Parameters to bind to the raw order by string.
      * @return $this
      */
     public function orderByRaw(string $string, ?string $bindParams);
 
-    /**
-     * Adds a group by clause to the query.
-     *
-     * @param string|array $columns The columns to group by.
-     * @return $this
-     */
+    /** @return $this */
     public function groupBy(string|array $columns);
 
     /**
      * Adds a raw GROUP BY expression.
      *
      * @param string $expression The raw GROUP BY expression.
-     * @param array $bindings Optional parameter bindings.
      * @return $this
      */
     public function groupByRaw($expression, array $bindings = []);
 
-    /**
-     * Adds a having clause to the query.
-     *
-     * @param string $column The column name.
-        * @param string|null $value The value to compare.
-     * @param string $operator The comparison operator, default is '='.
-     * @return $this
-     */
+    /** @return $this */
     public function having(string $column, ?string $value, string $operator = '=');
 
     /**
      * Adds a raw having clause to the query.
      *
-     * @param string $conditions The conditions for having query.
      * @return $this
      */
     public function havingRaw(string $conditions);
 
-    /**
-     * Adds a HAVING BETWEEN clause.
-     *
-     * @param string $column The column name.
-     * @param array $values Array of two values [min, max].
-     * @return $this
-     */
+    /** @return $this */
     public function havingBetween($column, array $values);
 
-    /**
-     * Adds a limit clause to the query.
-     *
-     * @param int $limit The number of rows to return.
-     * @return $this
-     */
+    /** @return $this */
     public function limit(int $limit);
 
-    /**
-     * Adds an offset clause to the query.
-     *
-     * @param int $offset The number of rows to skip.
-     * @return $this
-     */
+    /** @return $this */
     public function offset(int $offset);
 
-    /**
-     * Alias for offset() - skip records
-     *
-     * @param int $offset Number of records to skip
-     * @return $this
-     */
+    /** @return $this */
     public function skip(int $offset);
 
-    /**
-     * Alias for limit() - take records
-     *
-     * @param int $limit Number of records to take
-     * @return $this
-     */
+    /** @return $this */
     public function take(int $limit);
 
     /**
      * Simple pagination helper - set offset and limit for a page
      *
      * @param int $page Page number (1-indexed)
-     * @param int $perPage Records per page
      * @return $this
      */
     public function forPage(int $page, int $perPage = 15);
 
-    /**
-     * Specifies a relationship to load with the query.
-     *
-     * @param string $aliasKey The alias key for the relationship.
-     * @param string $table The related table.
-     * @param string $foreignKey The foreign key column.
-     * @param string $localKey The local key column.
-     * @param \Closure|null $callback A callback function to apply to the relationship.
-     * @return $this
-     */
+    /** @return $this */
     public function with(string $aliasKey, string $table, string $foreignKey, string $localKey, ?\Closure $callback = null);
 
     /**
      * Specifies a one-to-one relationship to load with the query.
      *
-     * @param string $aliasKey The alias key for the relationship.
-     * @param string $table The related table.
-     * @param string $foreignKey The foreign key column.
-     * @param string $localKey The local key column.
-     * @param \Closure|null $callback A callback function to apply to the relationship.
      * @return $this
      */
     public function withOne(string $aliasKey, string $table, string $foreignKey, string $localKey, ?\Closure $callback = null);
@@ -808,44 +478,24 @@ interface BuilderStatementInterface
     public function withMax($aliasKey, $table, $foreignKey, $localKey, $maxColumn, ?\Closure $callback = null);
 
     /**
-     * Add a whereHas condition to the query with a conditional subquery.
-     *
-     * @param string $relationTable The related table to query against
-     * @param string $foreignKey The foreign key on the related table
-     * @param string $localKey The local key on the main table
      * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
      * @return $this
      */
     public function whereHas(string $relationTable, string $foreignKey, string $localKey, ?\Closure $callback = null);
 
     /**
-     * Add an orWhereHas clause to the query.
-     *
-     * @param string $relationTable The related table to query against
-     * @param string $foreignKey The foreign key on the related table
-     * @param string $localKey The local key on the main table
      * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
      * @return $this
      */
     public function orWhereHas(string $relationTable, string $foreignKey, string $localKey, ?\Closure $callback = null);
 
     /**
-     * Add a whereDoesntHave clause to the query.
-     *
-     * @param string $relationTable The related table to query against
-     * @param string $foreignKey The foreign key on the related table
-     * @param string $localKey The local key on the main table
      * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
      * @return $this
      */
     public function whereDoesntHave(string $relationTable, string $foreignKey, string $localKey, ?\Closure $callback = null);
 
     /**
-     * Add a orWhereDoesntHave clause to the query.
-     *
-     * @param string $relationTable The related table to query against
-     * @param string $foreignKey The foreign key on the related table
-     * @param string $localKey The local key on the main table
      * @param \Closure|null $callback A callback to apply additional conditions on the relationship query
      * @return $this
      */

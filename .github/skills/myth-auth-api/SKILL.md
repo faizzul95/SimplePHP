@@ -22,7 +22,7 @@ The auth system supports 8 methods — do not assume Laravel Passport/Sanctum AP
 
 Reference: [03-auth-tokens-api.md](../../../docs/framework_knowledge/03-auth-tokens-api.md) · [15-auth-component-reference.md](../../../docs/framework_knowledge/15-auth-component-reference.md)
 
-**Entry point:** `auth()` — returns `App\Support\Auth\AuthManager` (extends `Components\Auth`).
+**Entry point:** `auth()` — returns `Core\Auth\AuthManager` (extends `Components\Auth`).
 
 ### Supported Auth Methods
 
@@ -158,7 +158,7 @@ if ($this->cannot('users.delete')) {
 
 ## 5. API Route Patterns
 
-Reference: [02-routing-http-flow.md](../../../docs/framework_knowledge/02-routing-http-flow.md) · [16-api-component-reference.md](../../../docs/framework_knowledge/16-api-component-reference.md)
+Reference: [02-routing-http-flow.md](../../../docs/framework_knowledge/02-routing-http-flow.md)
 
 ### API route groups (`app/routes/api.php`)
 

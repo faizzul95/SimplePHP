@@ -199,15 +199,10 @@ final class SlowQueryLogger
         AuditLogger::log($eventType, $context, $severity);
     }
 
+    /** Logger::instance() already caches per path; a second cache here just risks drifting from it. */
     private static function fileLogger(): Logger
     {
-        static $logger = null;
-
-        if (!$logger instanceof Logger) {
-            $logger = new Logger(self::LOG_PATH);
-        }
-
-        return $logger;
+        return Logger::instance(self::LOG_PATH);
     }
 
     private static function appendStructuredLogLine(string $payload): void

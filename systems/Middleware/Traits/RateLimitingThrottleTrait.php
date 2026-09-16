@@ -201,7 +201,6 @@ trait RateLimitingThrottleTrait
 
 	/**
 	 * Check if the current client is whitelisted
-	 * @return bool
 	 */
 	private function isWhitelisted(string $ip, string $url): bool
 	{
@@ -218,7 +217,6 @@ trait RateLimitingThrottleTrait
 
 	/**
 	 * Check if the current request is a spoofed IP address
-	 * @return bool
 	 */
 	private function isSpoofedIP(string $ip): bool
 	{
@@ -489,7 +487,6 @@ trait RateLimitingThrottleTrait
 		$throttleData['temp_blocked_until_time'] = NULL;
 		$this->saveThrottleData($ip, $throttleData);
 
-		// return new data with new request interval
 		return $this->loadThrottleData($ip);
 	}
 
@@ -530,7 +527,6 @@ trait RateLimitingThrottleTrait
 		$throttleData['reset_request_interval'] = time() + $this->limitInterval; // set new interval
 		$this->saveThrottleData($ip, $throttleData);
 
-		// return new data with new request interval
 		return $this->loadThrottleData($ip);
 	}
 
@@ -560,7 +556,6 @@ trait RateLimitingThrottleTrait
 			$this->saveThrottleData($ip, $throttleData);
 		}
 
-		// return new data with new request interval
 		return $this->loadThrottleData($ip);
 	}
 
@@ -604,54 +599,40 @@ trait RateLimitingThrottleTrait
 		return implode(' ', $elapsed_time);
 	}
 
-	/**
-	 * Function to check rate limiting
-	 */
 	public function isRateLimiting()
 	{
-		// $ip = $CI->input->ip_address();
 		$ip = $this->getClientIp();
 		$url = rtrim(request()->segment(1) . '/' . request()->segment(2), '/');
 
-		// check if ip/url is in whitelist
 		if ($this->isWhitelisted($ip, $url)) {
 			return;
 		} else {
 
-		// check if ip is currently in permanent blocked
 			if ($this->isPermanentBlocked($ip)) {
 				jsonResponse(['code' => 403, 'message' => 'You are permanently blocked'], 403);
-				exit;
 			}
 
 			// get throttle data using ip
 			$throttleData = $this->loadThrottleData($ip);
 
-			// reset inactivity in certain period times.
 			$throttleData = $this->resetInactivityIP($ip, $throttleData);
 
-			// check if ip is currently in temporary blocked
 			if ($this->isTempBlocked($throttleData)) {
-				// check if temporary blocked has reached, then block the ip permanently
 				if ($this->isMaxTemporaryBlockedReached($throttleData)) {
 					$this->blockIpPermanent($ip);
 					jsonResponse(['code' => 403, 'message' => 'You are permanently blocked, Please contact support to further information'], 403);
-					exit;
 				}
 
-				// Check if current time more then temporary blocked, unblock the ip
 				if (time() >= $throttleData['temp_blocked_until_time']) {
 					$throttleData = $this->unblockIp($ip, $throttleData); // get the latest throttle data
 				} else {
 					jsonResponse(['code' => 429, 'message' => 'Too many requests, You are temporarily blocked. Please try again in ' . $this->elapsedTime($throttleData['temp_blocked_until_time'])], 429);
-					exit;
 				}
 			}
 
 			if ($this->isSpoofedIP($ip)) {
 				$this->blockIpTemporary($ip, $throttleData);
 				jsonResponse(['code' => 400, 'message' => 'IP addresses do not match, IP has been temporary blocked'], 400);
-				exit;
 			}
 
 			// if interval request is reach. then reset the request count to 0
@@ -659,21 +640,17 @@ trait RateLimitingThrottleTrait
 				$throttleData = $this->resetRequestCount($ip, $throttleData); // get the latest throttle data
 			}
 
-			// Check if request limit is reached
 			if ($this->isMaxRequestsExceeded($throttleData)) {
 
 				if ($this->isMaxWarningsReached($throttleData)) {
 					$this->blockIpTemporary($ip, $throttleData);
 					jsonResponse(['code' => 429, 'message' => 'You are temporarily blocked, Please try again later'], 429);
-					exit;
 				}
 
 				$this->incrementWarningCount($ip, $throttleData);
 				jsonResponse(['code' => 429, 'message' => 'Too many requests'], 429);
-				exit;
 			}
 
-			// increate request count
 			$this->incrementRequestCount($ip, $throttleData);
 		}
 	}

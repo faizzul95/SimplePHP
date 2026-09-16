@@ -12,19 +12,19 @@ use Core\View\BladeEngine;
  *   use Core\Http\Controller;
  *   class MyController extends Controller { ... }
  *
- * Features:
- *   - View rendering via Blade engine
- *   - JSON response helpers (success/error/paginate)
+ * Provides:
+ *   - View rendering via the Blade engine
  *   - Record lookup with automatic 404 handling
- *   - ID encoding/decoding with validation
- *   - Explicit authorization helpers
- *   - Redirect helpers
- *   - Page state management for menu/breadcrumb
+ *   - The current user's identity and permissions
+ *   - Page state for the menu and breadcrumb
+ *
+ * Deliberately not here: responses and redirects. `ok()`, `fail()` and
+ * `redirect()` are global helpers that work identically in a controller, a
+ * middleware and a console command, so duplicating them as protected methods
+ * only created a second way to do the same thing — and the two drifted.
  */
 abstract class Controller
 {
-    use SecureResourceAccess;
-
     protected const AUTH_METHODS = ['session', 'token', 'oauth2'];
 
     protected BladeEngine $blade;
@@ -40,7 +40,6 @@ abstract class Controller
      * Render a Blade view and terminate the request.
      *
      * @param string $view  Dot-notation view name (e.g. 'dashboard.admin')
-     * @param array  $params Variables passed to the view
      */
     protected function view(string $view, array $params = []): void
     {
@@ -54,7 +53,6 @@ abstract class Controller
      *
      * @param string      $page           Active menu group   (e.g. 'rbac')
      * @param string|null $subpage        Active submenu item (e.g. 'roles')
-     * @param string      $titlePageValue Page title
      * @param string      $titleSubPageValue Sub-page / breadcrumb title
      */
     protected function setPageState(
@@ -95,9 +93,7 @@ abstract class Controller
     /**
      * Send a JSON success response and terminate.
      *
-     * @param string     $message  Human-readable message
      * @param array|null $data     Optional extra payload merged into the response
-     * @param int        $code     Success code (default 200)
      */
     protected function successResponse(string $message = 'Success', ?array $data = null, int $code = 200): void
     {
@@ -108,13 +104,7 @@ abstract class Controller
         jsonResponse($response, $code);
     }
 
-    /**
-     * Send a JSON error response and terminate.
-     *
-     * @param string $message  Human-readable message
-     * @param int    $code     Error code (default 422)
-     * @param array  $errors   Optional field-level errors
-     */
+    /** Send a JSON error response and terminate. */
     protected function errorResponse(string $message = 'Error', int $code = 422, array $errors = []): void
     {
         $response = ['code' => $code, 'message' => $message];
@@ -124,43 +114,12 @@ abstract class Controller
         jsonResponse($response, $code);
     }
 
-    /**
-     * Return a paginated JSON response (DataTables compatible).
-     * Terminates the request.
-     *
-     * @param array $result The paginated result array from paginate_ajax()
-     */
-    protected function paginateResponse(array $result): void
-    {
-        jsonResponse($result);
-    }
-
     // ─── Record Helpers ──────────────────────────────────────────────
-
-    /**
-     * Decode an encoded ID or terminate with 400 if invalid.
-     *
-     * @param string $encodedId  The encoded (hashed) ID
-     * @param string $message    Human-readable message for the error
-     * @return int|string  The decoded ID
-     */
-    protected function decodeIdOrFail(string $encodedId, string $message = 'ID is required'): int|string
-    {
-        $id = decodeID($encodedId);
-        if (empty($id)) {
-            $this->errorResponse($message, 400);
-        }
-        return $id;
-    }
 
     /**
      * Fetch a single record from a table or terminate with 404.
      *
-     * @param string      $table      Table name
-     * @param int|string  $id         Primary key value
-     * @param string|null $select     Columns to select (null = '*' = all)
      * @param bool        $softDelete Respect soft-delete (whereNull deleted_at)
-     * @param string      $message    Error message on 404
      * @return array  The fetched record
      */
     protected function findOrFail(
@@ -191,104 +150,10 @@ abstract class Controller
         return $record;
     }
 
-    /**
-     * Decode + fetch in one call. Terminates with 400/404 on failure.
-     *
-     * @param string      $encodedId  Encoded ID string
-     * @param string      $table      Table name
-     * @param string      $label      Human-readable name
-     * @param string|null $select     Columns to select
-     * @param bool        $softDelete Respect soft-delete
-     * @return array  The fetched record (with decoded 'id' injected)
-     */
-    protected function findByEncodedIdOrFail(
-        string $encodedId,
-        string $table,
-        string $label = 'Record',
-        ?string $select = null,
-        bool $softDelete = true
-    ): array {
-        $id = $this->decodeIdOrFail($encodedId, $label);
-        return $this->findOrFail($table, $id, $select, $softDelete, $label);
-    }
-
-    // ─── Authorization ───────────────────────────────────────────────
-
-    /**
-     * Check a permission slug and terminate with 403 if denied.
-     *
-     * @param string $permissionSlug The permission to check (e.g. 'user-delete')
-     * @param string $message        Custom denial message
-     */
-    protected function authorizeOrFail(string $permissionSlug, string $message = 'Unauthorized'): void
-    {
-        if (!permission($permissionSlug)) {
-            $this->errorResponse($message, 403);
-        }
-    }
-
-    // ─── Soft-Delete Helpers ─────────────────────────────────────────
-
-    /**
-     * Soft-delete a record by encoded ID and return a JSON response.
-     *
-     * @param string $encodedId Encoded ID
-     * @param string $table     Table name
-     * @param string $label     Human-readable entity name
-     * @param array  $extra     Extra columns to set on delete (e.g. ['user_status' => 3])
-     */
-    protected function softDeleteByEncodedId(
-        string $encodedId,
-        string $table,
-        string $label = 'Record',
-        array $extra = []
-    ): void {
-        $id = $this->decodeIdOrFail($encodedId, $label);
-
-        $result = db()->table($table)->where('id', $id)->softDelete(
-            array_merge($extra, ['deleted_at' => timestamp()])
-        );
-
-        if (isError($result['code'])) {
-            $this->errorResponse("Failed to delete {$label}", 422);
-        }
-
-        $this->successResponse("{$label} deleted");
-    }
-
-    /**
-     * Restore a soft-deleted record by encoded ID and return a JSON response.
-     *
-     * @param string $encodedId  Encoded ID
-     * @param string $table      Table name
-     * @param string $label      Human-readable entity name
-     * @param array  $extra      Extra columns to set on restore
-     */
-    protected function restoreByEncodedId(
-        string $encodedId,
-        string $table,
-        string $label = 'Record',
-        array $extra = []
-    ): void {
-        $id = $this->decodeIdOrFail($encodedId, $label);
-
-        $result = db()->table($table)->where('id', $id)->update(
-            array_merge($extra, ['deleted_at' => null])
-        );
-
-        if (isError($result['code'])) {
-            $this->errorResponse("Failed to restore {$label}", 422);
-        }
-
-        $this->successResponse("{$label} restored");
-    }
-
     // ─── Utility ─────────────────────────────────────────────────────
 
     /**
      * Get the current authenticated user ID.
-     *
-     * @return int|null
      */
     protected function authId(): ?int
     {
@@ -313,7 +178,6 @@ abstract class Controller
      * Get the current authenticated user's data across session, token, and oauth2.
      *
      * @param string|null $key  Optional key to pluck (e.g. 'name', 'email')
-     * @return mixed
      */
     protected function authUser(?string $key = null): mixed
     {
@@ -337,23 +201,13 @@ abstract class Controller
         ], $user);
     }
 
-    /**
-     * Check if the current user has a specific permission.
-     *
-     * @param string $slug Permission slug
-     * @return bool
-     */
+    /** Check if the current user has a specific permission. */
     protected function can(string $slug): bool
     {
         return permission($slug);
     }
 
-    /**
-     * Check if the current user lacks a specific permission.
-     *
-     * @param string $slug Permission slug
-     * @return bool
-     */
+    /** Check if the current user lacks a specific permission. */
     protected function cannot(string $slug): bool
     {
         return !permission($slug);
@@ -438,15 +292,5 @@ abstract class Controller
         }
 
         return null;
-    }
-
-    protected function redirectTo(string $path, int $status = 302): void
-    {
-        redirect()->to($path, $status)->send();
-    }
-
-    protected function redirectRoute(string $name, array $params = [], int $status = 302): void
-    {
-        redirect()->route($name, $params, $status)->send();
     }
 }

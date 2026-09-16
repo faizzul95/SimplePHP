@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 /**
@@ -54,13 +54,16 @@ class RequireAuth implements MiddlewareInterface
                 header('WWW-Authenticate: ' . auth()->digestChallengeHeader());
             }
 
+            // Basic and Digest send a WWW-Authenticate challenge above; redirecting
+            // would swallow it, so those guards always answer with JSON.
             $hasChallengeGuard = !empty(array_intersect($normalizedGuards, ['basic', 'digest']));
-            if ($request->expectsJson() || $hasChallengeGuard) {
-                Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
-            }
 
-            Response::redirect(url(REDIRECT_LOGIN));
+            Abort::unauthenticated($request, forceJson: $hasChallengeGuard);
         }
+
+        // Who the failing request belonged to is the second thing you want after
+        // the request id, and it is only knowable once auth has resolved.
+        \Core\Support\LogContext::putSafely('user_id', static fn() => auth()->id($guards));
 
         return $next($request);
     }

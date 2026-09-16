@@ -11,8 +11,6 @@ use Components\Logger;
 /**
  * Scopeable trait for adding query scopes
  *
- * @category  Database
- * @package   Core\Database\Traits
  * @license   MIT License
  * @version   1.0.0
  */
@@ -26,11 +24,7 @@ trait Scopeable
     protected static array $_scopes = [];
 
     /**
-     * Register a query scope
-     *
-     * @param callable $callback The scope implementation
      * @param string|null $name Optional name for the scope. If not provided, will be auto-detected from caller
-     * @return void
      * @throws InvalidArgumentException If callback is not callable or name cannot be determined
      */
     public static function scope(callable $callback, ?string $name = null): void
@@ -70,7 +64,6 @@ trait Scopeable
      * Register multiple scopes at once
      *
      * @param array<string, callable> $scopes Array of scope name => callback pairs
-     * @return void
      * @throws InvalidArgumentException If any scope is invalid
      */
     public static function scopes(array $scopes): void
@@ -80,12 +73,7 @@ trait Scopeable
         }
     }
 
-    /**
-     * Check if a scope exists
-     *
-     * @param string $name The scope name
-     * @return bool
-     */
+    /** Check if a scope exists */
     public function hasScope(string $name): bool
     {
         return isset(static::$_scopes[static::class][$name]);
@@ -114,7 +102,6 @@ trait Scopeable
     /**
      * Remove a registered scope
      *
-     * @param string $name The name of the scope to remove
      * @return bool True if scope was removed, false if it didn't exist
      */
     public static function removeScope(string $name): bool
@@ -129,8 +116,6 @@ trait Scopeable
 
     /**
      * Clear all scopes for this class
-     *
-     * @return void
      */
     public static function clearScopes(): void
     {
@@ -140,8 +125,6 @@ trait Scopeable
     /**
      * Call a scope method
      *
-     * @param string $name The scope name
-     * @param array $parameters The scope parameters
      * @return mixed
      * @throws BadMethodCallException If scope doesn't exist
      */
@@ -157,7 +140,6 @@ trait Scopeable
             $scope = static::$_scopes[static::class][$name];
 
             if ($scope instanceof Closure) {
-                // Bind scope to current instance
                 $scope = $scope->bindTo($this, static::class);
                 return $scope(...$parameters);
             }
@@ -176,8 +158,6 @@ trait Scopeable
     /**
      * Apply multiple scopes
      *
-     * @param array $scopes Array of scope names or [name => parameters]
-     * @return static
      * @throws InvalidArgumentException If scopes array is malformed
      * @throws BadMethodCallException If any scope doesn't exist
      */
@@ -216,8 +196,6 @@ trait Scopeable
 
     /**
      * Check if any scopes are registered
-     *
-     * @return bool
      */
     public static function hasScopes(): bool
     {
@@ -226,21 +204,13 @@ trait Scopeable
 
     /**
      * Get count of registered scopes
-     *
-     * @return int
      */
     public static function getScopeCount(): int
     {
         return count(static::$_scopes[static::class] ?? []);
     }
 
-    /**
-     * Log error message (shared with Macroable trait)
-     *
-     * @param string $message The error message
-     * @param array $context Additional context
-     * @return void
-     */
+    /** Log error message (shared with Macroable trait) */
     protected function logErrorScope(string $message, array $context = []): void
     {
         $rootDir = defined('ROOT_DIR') ? ROOT_DIR : dirname(__DIR__, 4) . DIRECTORY_SEPARATOR;

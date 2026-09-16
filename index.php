@@ -2,7 +2,16 @@
 
 try {
     require_once __DIR__ . '/bootstrap.php';
-    maintenance()->handleRequest();
+
+    // Maintenance mode runs before routing, so its short-circuit lands here rather
+    // than in the Kernel. It throws ResponseEmitted instead of exiting so worker
+    // SAPIs survive a maintenance window.
+    try {
+        maintenance()->handleRequest();
+    } catch (\Core\Http\ResponseEmitted $emitted) {
+        \Core\Http\Emitter::send($emitted->response());
+        return;
+    }
 
     $request = \Core\Http\Request::capture();
     dispatch_event('request.captured', ['request' => $request]);

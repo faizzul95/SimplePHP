@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Core\Http\Controller;
+use Core\Http\Reply;
 use Core\Http\Request;
 use App\Http\Requests\SaveEmailTemplateRequest;
 
@@ -19,7 +20,7 @@ class MasterEmailTemplateController extends Controller
         $this->view('rbac.emailTemplate');
     }
 
-    public function listEmailTemplateDatatable(Request $request): void
+    public function listEmailTemplateDatatable(Request $request): array
     {
         $statusF = $request->input('email_status');
 
@@ -36,13 +37,16 @@ class MasterEmailTemplateController extends Controller
 
         $result['data'] = array_map([$this, 'mapEmailTemplateDatatableRow'], $result['data']);
 
-        jsonResponse($result);
+        // Already the exact shape DataTables expects (draw / recordsTotal /
+        // data), and Emitter turns a returned array into a JSON response — so
+        // wrapping it would only nest the payload a level deeper.
+        return $result;
     }
 
-    public function show(int|string $id): void
+    public function show(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'Email template ID is required']);
+        if ($id === '') {
+            return fail('Email template ID is required', 400);
         }
 
         $emailTemplate = db()->table('master_email_templates')
@@ -51,27 +55,25 @@ class MasterEmailTemplateController extends Controller
             ->fetch();
 
         if (!$emailTemplate) {
-            jsonResponse(['code' => 404, 'message' => 'Email template not found']);
+            return fail('Email template not found', 404);
         }
 
-        jsonResponse(['code' => 200, 'data' => $emailTemplate]);
+        return ok(null, $emailTemplate);
     }
 
-    public function save(SaveEmailTemplateRequest $request): void
+    public function save(SaveEmailTemplateRequest $request): Reply
     {
         $dataToSave = $request->validated();
         $templateId = $dataToSave['id'] ?? null;
         unset($dataToSave['id']);
 
         $result = db()->table('master_email_templates')->insertOrUpdate(
-            [
-                'id' => $templateId
-            ],
+            ['id' => $templateId],
             $dataToSave
         );
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to save email template']);
+            return fail('Failed to save email template');
         }
 
         $savedTemplateId = $templateId ?: ($result['id'] ?? null);
@@ -81,26 +83,27 @@ class MasterEmailTemplateController extends Controller
             ->safeOutput()
             ->fetch() : null;
 
-        jsonResponse([
-            'code' => 200,
-            'message' => 'Email template saved',
-            'data' => $savedRow ? $this->mapEmailTemplateDatatableRow($savedRow) : null,
-        ]);
+        // JSON for the datatable's XHR, a redirect carrying the message as flash
+        // for a plain form post. Neither branch is written here.
+        return ok(
+            'Email template saved',
+            $savedRow ? $this->mapEmailTemplateDatatableRow($savedRow) : null
+        )->route('rbac.email');
     }
 
-    public function destroy(int|string $id): void
+    public function destroy(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'Email template ID is required']);
+        if ($id === '') {
+            return fail('Email template ID is required', 400);
         }
 
         $result = db()->table('master_email_templates')->where('id', $id)->delete();
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to delete email template']);
+            return fail('Failed to delete email template');
         }
 
-        jsonResponse(['code' => 200, 'message' => 'Email template deleted']);
+        return ok('Email template deleted')->route('rbac.email');
     }
 
     private function mapEmailTemplateDatatableRow(array $row): array

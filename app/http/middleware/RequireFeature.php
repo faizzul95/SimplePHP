@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Middleware\MiddlewareInterface;
 use Core\Http\Request;
-use Core\Http\Response;
 
 class RequireFeature implements MiddlewareInterface
 {
@@ -49,18 +49,6 @@ class RequireFeature implements MiddlewareInterface
 
     protected function reject(Request $request, int $status, string $message)
     {
-        if ($request->expectsJson()) {
-            Response::json([
-                'code' => $status,
-                'message' => $message,
-                'features' => $this->features,
-            ], $status);
-        }
-
-        return [
-            'code' => $status,
-            'message' => $message,
-            'features' => $this->features,
-        ];
+        Abort::problem($request, $status, $message, ['features' => $this->features]);
     }
 }

@@ -15,7 +15,7 @@ $applicationName = defined('APP_NAME') ? APP_NAME : 'Application';
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= htmlspecialchars($applicationName . ' | ' . $pageTitle, ENT_QUOTES, 'UTF-8') ?></title>
+    <title><?= htmlspecialchars($applicationName . ' | ' . $pageTitle, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></title>
     <style>
         :root {
             color-scheme: light;
@@ -103,16 +103,16 @@ $applicationName = defined('APP_NAME') ? APP_NAME : 'Application';
 <body>
     <main class="panel">
         <div class="eyebrow">Temporarily Offline</div>
-        <h1><?= htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8') ?></h1>
-        <p><?= htmlspecialchars($pageMessage, ENT_QUOTES, 'UTF-8') ?></p>
+        <h1><?= htmlspecialchars($pageTitle, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></h1>
+        <p><?= htmlspecialchars($pageMessage, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
         <div class="meta">
-            <div class="meta-item">HTTP <?= htmlspecialchars((string) $pageStatusCode, ENT_QUOTES, 'UTF-8') ?></div>
-            <div class="meta-item"><?= htmlspecialchars($applicationName, ENT_QUOTES, 'UTF-8') ?></div>
+            <div class="meta-item">HTTP <?= htmlspecialchars((string) $pageStatusCode, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
+            <div class="meta-item"><?= htmlspecialchars($applicationName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
             <?php if ($pageRetryAfter !== null): ?>
-                <div class="meta-item">Retry after <?= htmlspecialchars((string) $pageRetryAfter, ENT_QUOTES, 'UTF-8') ?> seconds</div>
+                <div class="meta-item">Retry after <?= htmlspecialchars((string) $pageRetryAfter, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> seconds</div>
             <?php endif; ?>
             <?php if ($pageRefreshAfter !== null): ?>
-                <div class="meta-item">Refresh after <?= htmlspecialchars((string) $pageRefreshAfter, ENT_QUOTES, 'UTF-8') ?> seconds</div>
+                <div class="meta-item">Refresh after <?= htmlspecialchars((string) $pageRefreshAfter, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> seconds</div>
             <?php endif; ?>
         </div>
     </main>

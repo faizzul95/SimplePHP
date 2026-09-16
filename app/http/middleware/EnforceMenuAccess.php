@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\Abort;
 use Core\Http\Request;
-use Core\Http\Response;
 use Core\Http\Middleware\MiddlewareInterface;
 
 class EnforceMenuAccess implements MiddlewareInterface
@@ -27,24 +27,15 @@ class EnforceMenuAccess implements MiddlewareInterface
         $isAuthenticated = function_exists('auth') ? auth()->check(self::AUTH_GUARDS) : false;
 
         if ($requiresAuth && !$isAuthenticated) {
-            if ($request->expectsJson()) {
-                Response::json(['code' => 401, 'message' => 'Unauthorized'], 401);
-            }
-
-            Response::redirect(url(REDIRECT_LOGIN));
+            Abort::unauthenticated($request);
         }
 
         if (!$manager->canAccessPath($request->path())) {
-            if ($request->expectsJson()) {
-                Response::json([
-                    'code' => 403,
-                    'message' => 'Forbidden: Menu route is not accessible in the current state',
-                    'state' => (string) ($item['state'] ?? ''),
-                ], 403);
-            }
-
-            show_403();
-            exit;
+            Abort::denied(
+                $request,
+                'Forbidden: Menu route is not accessible in the current state',
+                ['state' => (string) ($item['state'] ?? '')]
+            );
         }
 
         return $next($request);

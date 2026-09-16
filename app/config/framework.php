@@ -1,5 +1,31 @@
 <?php
 
+/*
+| How the application's own API authenticates — see api.php for what each mode
+| means. Read from the already-loaded api config where possible so the value is
+| defined in exactly one place, with the env as a fallback in case load order
+| ever changes.
+*/
+$apiAuthDriver = strtolower(trim((string) (
+    $config['api']['driver'] ?? env('API_AUTH_DRIVER', 'token')
+)));
+
+$apiAppMiddleware = match ($apiAuthDriver) {
+    // Cookies: the browser attaches them by itself, so the origin check and the
+    // CSRF token are what stop another site from driving the API.
+    'session' => ['api', 'origin.policy:strict', 'session.stateful:force', 'auth.web', 'csrf:force'],
+
+    // Either credential. CSRF applies only to callers that got in on the cookie;
+    // `csrf:stateful` decides that from the authentication that actually
+    // succeeded, not from the presence of an Authorization header.
+    'hybrid' => ['api', 'session.stateful:force', 'auth:token,session', 'csrf:stateful'],
+
+    // Token-first default. Nothing here is ambient: no session is started and no
+    // CSRF token is required, because a bearer credential cannot be replayed by
+    // a browser the caller does not control.
+    default => ['api', 'auth.api'],
+};
+
 $config['framework'] = [
     'bootstrap' => [
         // Session bootstrap policy by runtime:
@@ -17,6 +43,16 @@ $config['framework'] = [
         // a temporary bypass cookie for this browser.
         'secret' => (string) env('MYTH_MAINTENANCE_SECRET', ''),
         'view' => 'app/views/errors/503.php',
+        /*
+        | Paths that stay reachable while the app is down. Matched with fnmatch(),
+        | so wildcards work. A load balancer that cannot reach the health endpoint
+        | pulls the node out of rotation, and a payment provider that receives a
+        | 503 usually stops retrying — both turn a planned window into an outage.
+        */
+        'allowed_paths' => env_list('MYTH_MAINTENANCE_ALLOWED_PATHS', [
+            'api/v1/health',
+            'up',
+        ]),
         'bypass_cookie' => [
             'name' => (string) env('MYTH_MAINTENANCE_BYPASS_COOKIE', 'myth_maintenance'),
             'ttl' => (int) env('MYTH_MAINTENANCE_BYPASS_TTL', 43200),
@@ -99,6 +135,9 @@ $config['framework'] = [
         'origin.policy' => \App\Http\Middleware\EnforceOriginPolicy::class,
         'request.fingerprint' => \App\Http\Middleware\AttachRequestFingerprint::class,
         'csrf' => \App\Http\Middleware\VerifyCsrfToken::class,
+        // The token-client counterpart to csrf: replay and tamper protection.
+        // Runs after auth — the signing key is the bearer token presented.
+        'signed' => \App\Http\Middleware\VerifyRequestSignature::class,
         'guest' => \App\Http\Middleware\EnsureGuest::class,
         'auth' => \App\Http\Middleware\RequireAuth::class,
         'auth.web' => \App\Http\Middleware\RequireSessionAuth::class,
@@ -128,12 +167,27 @@ $config['framework'] = [
         'idor'        => \Middleware\DetectIdor::class,
         'compress'    => \Middleware\CompressResponse::class,
     ],
+    /*
+    | Applied to every route ahead of its own stack, so a route registered outside
+    | the web/api groups still gets these. Keep it to middleware that is safe and
+    | cheap everywhere — anything stateful or route-specific belongs in a group.
+    */
+    'middleware_global' => [
+        'headers',
+        'trusted.hosts',
+        'trusted.proxies',
+        'ip.blocklist',
+    ],
     'middleware_groups' => [
-        'web' => ['session.stateful', 'headers', 'preload.assets', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:web', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'csrf'],
+        // `xss` sits on the web group as well as the api group so every form
+        // submit is scanned, not just the ones that go through the API. It logs
+        // rather than blocks unless security.xss_input_blocking is on — see the
+        // note there for why a blocklist cannot be the primary defence.
+        'web' => ['session.stateful', 'headers', 'preload.assets', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:web', 'request.fingerprint', 'request.safety', 'origin.policy', 'menu.access', 'xss', 'csrf'],
         'api' => ['headers', 'trusted.hosts', 'trusted.proxies', 'ip.blocklist', 'throttle:api', 'content.type', 'request.fingerprint', 'request.safety', 'xss', 'api.log'],
         'api.public.submit' => ['api', 'throttle:auth'],
         'api.external.auth' => ['api', 'auth.api'],
-        'api.app' => ['api', 'origin.policy:strict', 'session.stateful:force', 'auth.web', 'csrf:force'],
+        'api.app' => $apiAppMiddleware,
         'api.upload.image' => ['api.app', 'content.type:multipart', 'upload.guard:image-cropper'],
         'api.upload.action' => ['api.app', 'upload.guard:delete'],
     ],
@@ -164,21 +218,44 @@ $config['framework'] = [
             'required_fields' => ['id'],
         ],
     ],
+    /*
+    | Two windows per limiter.
+    |
+    | max_attempts / decay_seconds / scope is the per-route budget: it stops one
+    | client hammering one endpoint, and it is close to useless against a flood,
+    | because the key includes the path. An attacker walking a thousand URLs gets
+    | a thousand fresh budgets, so 120/minute becomes 120,000/minute.
+    |
+    | burst_max_attempts / burst_decay_seconds is a coarse per-IP ceiling across
+    | every route the limiter guards, checked first and costing one counter. Size
+    | it above what a real session generates in a minute — page loads, XHR polls,
+    | assets served through PHP — and below what a flood generates. Set it to 0 to
+    | turn the coarse gate off.
+    */
     'rate_limiters' => [
         'web' => [
-            'max_attempts' => 120,
-            'decay_seconds' => 60,
+            'max_attempts' => (int) env('RATE_LIMIT_WEB_MAX', 120),
+            'decay_seconds' => (int) env('RATE_LIMIT_WEB_DECAY', 60),
             'scope' => 'auth-route',
+            'burst_max_attempts' => (int) env('RATE_LIMIT_WEB_BURST', 600),
+            'burst_decay_seconds' => (int) env('RATE_LIMIT_WEB_BURST_DECAY', 60),
         ],
         'api' => [
-            'max_attempts' => 120,
-            'decay_seconds' => 60,
+            'max_attempts' => (int) env('RATE_LIMIT_API_MAX', 120),
+            'decay_seconds' => (int) env('RATE_LIMIT_API_DECAY', 60),
             'scope' => 'auth-route',
+            'burst_max_attempts' => (int) env('RATE_LIMIT_API_BURST', 300),
+            'burst_decay_seconds' => (int) env('RATE_LIMIT_API_BURST_DECAY', 60),
         ],
+        // Credential endpoints. The per-route budget is already tight, and the
+        // burst ceiling stops the same address working through a list of accounts
+        // one login attempt at a time.
         'auth' => [
-            'max_attempts' => 10,
-            'decay_seconds' => 60,
+            'max_attempts' => (int) env('RATE_LIMIT_AUTH_MAX', 10),
+            'decay_seconds' => (int) env('RATE_LIMIT_AUTH_DECAY', 60),
             'scope' => 'ip-route',
+            'burst_max_attempts' => (int) env('RATE_LIMIT_AUTH_BURST', 30),
+            'burst_decay_seconds' => (int) env('RATE_LIMIT_AUTH_BURST_DECAY', 300),
         ],
     ],
 ];

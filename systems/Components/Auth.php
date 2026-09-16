@@ -2,11 +2,11 @@
 
 namespace Components;
 
-use App\Support\Auth\AuthorizationService;
-use App\Support\Auth\AccessCredentialService;
-use App\Support\Auth\AuthMethodResolver;
-use App\Support\Auth\LoginPolicy;
-use App\Support\Auth\TokenService;
+use Core\Auth\AuthorizationService;
+use Core\Auth\AccessCredentialService;
+use Core\Auth\AuthMethodResolver;
+use Core\Auth\LoginPolicy;
+use Core\Auth\TokenService;
 use Components\Logger;
 
 class Auth
@@ -17,6 +17,15 @@ class Auth
     private TokenService $tokenService;
     private AccessCredentialService $accessCredentialService;
     private AuthMethodResolver $methodResolver;
+    /**
+     * Whether reading the login-attempt history failed during this attempt.
+     *
+     * An unreadable attempt log reads as "no recent failures", which reads as
+     * "not locked out" — so the failure has to be visible to the caller rather
+     * than swallowed into an empty array.
+     */
+    private bool $loginAttemptStoreFailed = false;
+
     private ?array $tokenUserCache = null;
     private ?array $sessionUserCache = null;
     private ?array $jwtUserCache = null;
@@ -464,6 +473,10 @@ class Auth
 
         $passwordCol = $uc['password'] ?? 'password';
         if (empty($user)) {
+            // Burn the same Argon2id work a real verify would, so a missing user and a
+            // wrong password are indistinguishable by response time.
+            \Core\Security\Hasher::dummyVerify((string) $password);
+
             $this->registerLoginFailure($credentials);
             $this->markAttemptStatus('invalid_credentials', 'Invalid username or password', 401, [], $credentials);
             return false;
@@ -471,7 +484,27 @@ class Auth
 
         $policy = (array) ($this->config['systems_login_policy'] ?? []);
         $statusColumn = $this->safeColumn((string) ($policy['user_status_column'] ?? ($uc['status'] ?? 'user_status')), 'user_status');
-        if (($policy['enforce_user_status'] ?? true) === true && array_key_exists($statusColumn, $user)) {
+        if (($policy['enforce_user_status'] ?? true) === true) {
+            // Fail closed: a mistyped column name used to skip the check in silence,
+            // letting disabled accounts sign in.
+            if (!array_key_exists($statusColumn, $user)) {
+                Logger::instance()->log_error(sprintf(
+                    'Login blocked: enforce_user_status is on but column "%s" is absent from the users row. '
+                    . 'Check systems_login_policy.user_status_column.',
+                    $statusColumn
+                ));
+
+                $this->markAttemptStatus(
+                    'account_status_unverifiable',
+                    'Your account is not allowed to sign in.',
+                    403,
+                    [],
+                    $credentials
+                );
+
+                return false;
+            }
+
             $allowed = array_map('intval', (array) ($policy['allowed_user_status'] ?? [1]));
             $currentStatus = (int) ($user[$statusColumn] ?? 0);
             if (!in_array($currentStatus, $allowed, true)) {
@@ -512,10 +545,8 @@ class Auth
 
     /**
      * Log a user in by ID. Sets session variables.
-     * 
-     * @param int   $userId       The user ID to log in
+     *
      * @param array $sessionData  Additional session data to store (merged with defaults)
-     * @return bool
      */
     public function login(int $userId, array $sessionData = []): bool
     {
@@ -627,13 +658,7 @@ class Auth
             ->update($updates);
     }
 
-    /**
-     * Log a user in by their ID (alias for login).
-     *
-     * @param int   $userId       The user ID
-     * @param array $sessionData  Additional session data
-     * @return bool
-     */
+    /** Log a user in by their ID (alias for login). */
     public function loginUsingId(int $userId, array $sessionData = []): bool
     {
         return $this->login($userId, $sessionData);
@@ -2554,6 +2579,24 @@ class Auth
         };
     }
 
+    /**
+     * Credential tables already verified in this process.
+     *
+     * These CREATE TABLE IF NOT EXISTS calls fired on every createApiKey() /
+     * createOAuth2Token(), each one a DDL round-trip and a metadata lock for a
+     * table that migration 20260308_005 already creates. The answer cannot change
+     * within a process, so verify at most once.
+     *
+     * @var array<string, true>
+     */
+    private static array $ensuredCredentialTables = [];
+
+    /** Reset the per-process schema guard (worker mode and test isolation). */
+    public static function resetEnsuredCredentialTables(): void
+    {
+        self::$ensuredCredentialTables = [];
+    }
+
     private function ensureApiKeyTable(): void
     {
         $apiKeyConfig = (array) ($this->config['api_key'] ?? []);
@@ -2563,6 +2606,12 @@ class Auth
         }
 
         $table = $this->safeTable((string) ($this->config['api_key_table'] ?? 'users_api_keys'));
+
+        if (isset(self::$ensuredCredentialTables[$table])) {
+            return;
+        }
+
+        self::$ensuredCredentialTables[$table] = true;
 
         \db()->query(
             "CREATE TABLE IF NOT EXISTS {$table} (
@@ -2592,6 +2641,12 @@ class Auth
         }
 
         $table = $this->safeTable((string) ($this->config['oauth2_table'] ?? 'oauth2_access_tokens'));
+
+        if (isset(self::$ensuredCredentialTables[$table])) {
+            return;
+        }
+
+        self::$ensuredCredentialTables[$table] = true;
 
         \db()->query(
             "CREATE TABLE IF NOT EXISTS {$table} (
@@ -2718,7 +2773,34 @@ class Auth
             return true;
         }
 
+        $this->loginAttemptStoreFailed = false;
+
         $lockState = $this->resolveLoginLockState($credentials);
+
+        /*
+        | The attempt log could not be read, so there is no way to know whether
+        | this address has already failed five times. `fail_open_if_cache_unavailable`
+        | decides which way to be wrong — and until now it decided nothing at all:
+        | the setting was in the config and in .env.example and was never read,
+        | so an operator setting it to false believed they had closed a door that
+        | was not there.
+        |
+        | It still defaults to open, because a broken attempts table should not
+        | lock every user out of a working application. Sites that would rather
+        | refuse logins than lose brute-force protection now have a switch that
+        | works.
+        */
+        if ($this->loginAttemptStoreFailed && ($policy['fail_open_if_cache_unavailable'] ?? true) !== true) {
+            $this->loginPolicy->setAttemptStatus(
+                'auth.login.policy_unavailable',
+                'Sign-in is temporarily unavailable. Please try again shortly.',
+                503
+            );
+            $this->auditLastAttemptStatus('auth.login.policy_unavailable', $credentials);
+
+            return false;
+        }
+
         if (($lockState['locked'] ?? false) === true) {
             $allowed = $this->loginPolicy->denyLockedAttempt($lockState);
             $this->auditLastAttemptStatus('auth.login.locked', $credentials);
@@ -3248,6 +3330,21 @@ class Auth
             sort($timestamps);
             return $timestamps;
         } catch (\Throwable $e) {
+            /*
+            | Silently returning an empty list means "no recent attempts", which
+            | means "not locked out" — so any error reading the attempt log
+            | disabled brute-force protection entirely, with nothing written
+            | anywhere to say so. The flag lets canAttemptWithLoginPolicy() decide
+            | whether that is acceptable; the log entry means someone finds out
+            | either way.
+            */
+            $this->loginAttemptStoreFailed = true;
+
+            \Core\Support\SafeLog::exception(
+                $e,
+                'Login attempt history could not be read; brute-force protection is degraded'
+            );
+
             return [];
         }
     }

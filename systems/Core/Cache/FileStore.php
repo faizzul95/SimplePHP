@@ -59,10 +59,6 @@ class FileStore
      * Writes atomically via a temp file + rename() so concurrent readers
      * never see a half-written payload (POSIX rename is atomic; on Windows
      * it is best-effort but still safer than an in-place overwrite).
-     *
-     * @param string $key
-     * @param mixed  $value
-     * @param int    $seconds  0 = forever
      */
     public function put(string $key, mixed $value, int $seconds = 0): bool
     {
@@ -160,8 +156,16 @@ class FileStore
      * Uses an exclusive file lock across read+compute+write to keep concurrent
      * increments atomic (otherwise two workers can read the same value and
      * lose updates).
+     *
+     * @param int|null $seconds TTL to apply when this call creates the key.
+     *                          Without it a counter incremented into existence
+     *                          was written with expire 0 — never expires — so a
+     *                          rate-limit counter recreated this way pinned the
+     *                          caller at the limit forever and left a file behind
+     *                          that nothing would ever clean up. An existing
+     *                          key's own expiry is always preserved.
      */
-    public function increment(string $key, int $amount = 1): int
+    public function increment(string $key, int $amount = 1, ?int $seconds = null): int
     {
         $path = $this->path($key);
         $dir  = dirname($path);
@@ -174,7 +178,7 @@ class FileStore
         if ($handle === false) {
             // Fall back to put with best-effort semantics if we cannot open the file.
             $new = ((int) $this->get($key, 0)) + $amount;
-            $this->put($key, $new, 0);
+            $this->put($key, $new, max(0, (int) $seconds));
             return $new;
         }
 
@@ -192,15 +196,25 @@ class FileStore
 
             $expire = 0;
             $current = 0;
+            $isLive = false;
+
             if ($contents !== '') {
                 $expire = (int) substr($contents, 0, 10);
                 if ($expire === 0 || time() < $expire) {
+                    $isLive = true;
                     $data = substr($contents, 10);
                     $decoded = json_decode($data, true);
                     if ($decoded !== null || $data === 'null') {
                         $current = (int) $decoded;
                     }
                 }
+            }
+
+            // Creating or replacing an expired entry: apply the caller's TTL.
+            // A live entry keeps the expiry it was written with, so counting
+            // towards a window never extends that window.
+            if (!$isLive) {
+                $expire = ($seconds !== null && $seconds > 0) ? time() + $seconds : 0;
             }
 
             $new = $current + $amount;

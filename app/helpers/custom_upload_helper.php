@@ -2,7 +2,6 @@
 
 function folder($foldername = 'directory', $folderid = NULL, $type = 'image')
 {
-    // $foldername = replaceFolderName($foldername);
     $type = replaceFolderName($type);
 
     if (empty($folderid)) {
@@ -551,7 +550,6 @@ if (!function_exists('extractSafeCSVContent')) {
             return $result;
         }
 
-        // Set buffer size to reduce memory usage
         stream_set_read_buffer($handle, $options['buffer_size']);
 
         $rowNumber = 0;
@@ -570,7 +568,6 @@ if (!function_exists('extractSafeCSVContent')) {
                     return $result;
                 }
 
-                // Trim headers to remove whitespace
                 $result['header'] = array_map('trim', $headers);
                 $result['total_skipped_rows'] += 1;
 
@@ -611,7 +608,6 @@ if (!function_exists('extractSafeCSVContent')) {
                     $malicious = $check['malicious'] ?? false;
                     $sanitizeValue = $check['value'] ?? $cellValue;
 
-                    // Check if cell contains malicious content
                     if ($malicious) {
                         $issue = [
                             'row' => $result['total_processed_rows'] + 1,
@@ -684,7 +680,6 @@ if (!function_exists('extractSafeCSVContent')) {
                     unset($check);
                 }
 
-                // Free memory
                 unset($row);
 
                 if ($rowNumber % $options['optimize_memory'] === 0) {

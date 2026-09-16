@@ -11,8 +11,6 @@ use Core\Database\Schema\ForeignKeyDefinition;
  *
  * Each database driver extends this class to generate driver-specific DDL statements.
  *
- * @category  Database
- * @package   Core\Database\Schema\Grammars
  * @author    Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license   http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version   1.0.0
@@ -87,8 +85,6 @@ abstract class SchemaGrammar
     /**
      * Compile a CREATE PROCEDURE statement.
      *
-     * @param string $name       Procedure name
-     * @param array  $parameters Array of ['name' => ..., 'direction' => IN|OUT|INOUT, 'type' => ...]
      * @param string $body       The procedure body (SQL statements)
      * @param array  $options    Optional: definer, comment, deterministic, etc.
      */
@@ -102,10 +98,6 @@ abstract class SchemaGrammar
     /**
      * Compile a CREATE FUNCTION statement.
      *
-     * @param string $name       Function name
-     * @param array  $parameters Array of ['name' => ..., 'type' => ...]
-     * @param string $returnType Return data type
-     * @param string $body       The function body
      * @param array  $options    Optional: definer, comment, deterministic, etc.
      */
     abstract public function compileCreateFunction(string $name, array $parameters, string $returnType, string $body, array $options = []): string;
@@ -127,16 +119,7 @@ abstract class SchemaGrammar
 
     // ─── Triggers ────────────────────────────────────────────
 
-    /**
-     * Compile a CREATE TRIGGER statement.
-     *
-     * @param string $name    Trigger name
-     * @param string $table   Table the trigger acts on
-     * @param string $timing  BEFORE | AFTER
-     * @param string $event   INSERT | UPDATE | DELETE
-     * @param string $body    Trigger body
-     * @param array  $options Optional: definer, etc.
-     */
+    /** Compile a CREATE TRIGGER statement. */
     abstract public function compileCreateTrigger(string $name, string $table, string $timing, string $event, string $body, array $options = []): string;
 
     /**

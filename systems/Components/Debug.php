@@ -69,7 +69,6 @@ class Debug
         $minutes = floor(($totalSeconds % 3600) / 60);
         $hours = floor($totalSeconds / 3600);
 
-        // Format the execution time with nanoseconds
         $formattedExecutionTime = sprintf("%dh %dm %ds %dms %dns", $hours, $minutes, $seconds, $milliseconds, $nanoseconds);
 
         // Handle cases where some time units are zero
@@ -334,7 +333,6 @@ class Debug
     /**
      * Start a timer for performance testing.
      *
-     * @param string $name Timer name
      * @return float Start time
      */
     public function startTimer($name = 'default')
@@ -345,7 +343,6 @@ class Debug
     /**
      * End a timer and get the elapsed time.
      *
-     * @param string $name Timer name
      * @param bool $echo Whether to echo the result (default: true)
      * @param bool $detailed Whether to use detailed formatting (default: false)
      * @return float|string Elapsed time or formatted time string
@@ -383,8 +380,6 @@ class Debug
     /**
      * Format and display SQL query with optional highlighting.
      *
-     * @param string $sql SQL query to format
-     * @param array $params Parameters for the query (optional)
      * @param bool $echo Whether to echo the result (default: true)
      * @return string Formatted SQL
      */
@@ -460,8 +455,6 @@ class Debug
     /**
      * Create a highlight around specific HTML to draw attention to it.
      *
-     * @param string $content Content to highlight
-     * @param string $color Highlight color (default: yellow)
      * @param bool $echo Whether to echo the result (default: true)
      * @return string Highlighted HTML
      */
@@ -479,8 +472,6 @@ class Debug
     /**
      * Display information about a variable.
      *
-     * @param mixed $var Variable to inspect
-     * @param string $varName Variable name (optional)
      * @param bool $echo Whether to echo the result (default: true)
      * @return string Formatted variable information
      */
@@ -520,10 +511,6 @@ class Debug
     }
 
     /**
-     * Display a nice error message.
-     *
-     * @param string $message Error message
-     * @param string $title Error title (optional)
      * @param bool $die Whether to terminate execution (default: false)
      * @return void
      */
@@ -542,13 +529,7 @@ class Debug
         }
     }
 
-    /**
-     * Display a warning message.
-     *
-     * @param string $message Warning message
-     * @param string $title Warning title (optional)
-     * @return void
-     */
+    /** @return void */
     public function warning($message, $title = 'Warning')
     {
         $output = '<div style="background-color:#fff3cd; padding:15px; border-left:5px solid #ffc107; margin:15px 0; font-family:sans-serif;">';
@@ -559,13 +540,7 @@ class Debug
         echo $output;
     }
 
-    /**
-     * Display a success message.
-     *
-     * @param string $message Success message
-     * @param string $title Success title (optional)
-     * @return void
-     */
+    /** @return void */
     public function success($message, $title = 'Success')
     {
         $output = '<div style="background-color:#f1f9f7; padding:15px; border-left:5px solid #28a745; margin:15px 0; font-family:sans-serif;">';
@@ -578,9 +553,7 @@ class Debug
 
     /**
      * Log a variable to browser console using JavaScript.
-     * 
-     * @param mixed $data Data to log
-     * @param string $label Label for the console log (optional)
+     *
      * @return void
      */
     public function console($data, $label = null)
@@ -597,8 +570,6 @@ class Debug
     /**
      * Create a simple table from array data.
      *
-     * @param array $data Array data to display (array of arrays)
-     * @param array $headers Table headers (optional)
      * @param bool $echo Whether to echo the result (default: true)
      * @return string HTML table
      */
@@ -693,7 +664,6 @@ class Debug
      */
     public function extensions($echo = true)
     {
-        // Get and sort extensions
         $extensions = get_loaded_extensions();
         sort($extensions);
 
@@ -751,7 +721,6 @@ class Debug
             }
         </script>';
 
-        // Loop through categorized extensions and display them
         foreach ($categorizedExtensions as $category => $extList) {
             $output .= '<h3 style="background:#007BFF; color:#fff; padding:10px; margin-top:20px; border-radius:5px;">' . $category . '</h3>';
             $output .= '<ul class="ext-category" style="list-style:none; padding:10px; columns:2;">';
@@ -881,7 +850,6 @@ class Debug
         $prevTime = $startTime;
 
         foreach (self::$flowLog as $i => $entry) {
-            // Check if time tracking is enabled for this entry
             $hasTime = isset($entry['withTime']) ? $entry['withTime'] : true; // Default to true for backward compatibility
 
             // Time difference calculations
@@ -977,7 +945,6 @@ class Debug
 
         $output .= '<table style="width:100%; border-collapse:collapse; background:#fff; box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.05); border-radius:5px; overflow:hidden;">';
 
-        // 🖥️ Server Info
         $output .= '<tr><th colspan="2" id="server-info" style="background:#007BFF; color:#fff; padding:10px; text-align:left;">🛠️ Server Information</th></tr>';
         $output .= $addRow('Server Name', $_SERVER['SERVER_NAME'] ?? 'N/A');
         $output .= $addRow('Server IP', $_SERVER['SERVER_ADDR'] ?? 'N/A');
@@ -990,7 +957,6 @@ class Debug
         $output .= $addRow('Server Timezone', date_default_timezone_get());
         $output .= $addRow('Server Uptime', $this->getServerUptime());
 
-        // 💻 OS & Hardware
         $output .= '<tr><th colspan="2" id="os-hardware" style="background:#28A745; color:#fff; padding:10px; text-align:left;">💻 OS & Hardware</th></tr>';
         $output .= $addRow('Operating System', php_uname('s') . ' ' . php_uname('r'));
         $output .= $addRow('Hostname', php_uname('n'));
@@ -1042,7 +1008,6 @@ class Debug
             }
         }
 
-        // 🐘 PHP Information
         $output .= '<tr><th colspan="2" id="php-info" style="background:#6610f2; color:#fff; padding:10px; text-align:left;">🐘 PHP Information</th></tr>';
         $output .= $addRow('PHP Version', phpversion());
         $output .= $addRow('PHP SAPI', php_sapi_name());
@@ -1071,7 +1036,6 @@ class Debug
                 ', Zlib: ' . $checkExtension('zlib')
         );
 
-        // 🚀 Performance & Limits
         $output .= '<tr><th colspan="2" id="performance" style="background:#FFC107; color:#fff; padding:10px; text-align:left;">🚀 Performance & Limits</th></tr>';
         $memLimit = ini_get('memory_limit');
         $output .= $addRow('Memory Limit', $memLimit, (intval($memLimit) < 128));
@@ -1086,7 +1050,6 @@ class Debug
         $output .= $addRow('Display Errors', ini_get('display_errors'));
         $output .= $addRow('Error Reporting Level', $this->getErrorReportingLevel());
 
-        // 📤 Storage
         $output .= '<tr><th colspan="2" id="storage" style="background:#DC3545; color:#fff; padding:10px; text-align:left;">💾 Storage</th></tr>';
         if (function_exists('disk_total_space')) {
             $totalDisk = disk_total_space("/");
@@ -1108,7 +1071,6 @@ class Debug
         $tempDirWritable = is_writable($tempDir) ? 'Yes' : 'No';
         $output .= $addRow('Temp Directory Writable', $tempDirWritable, ($tempDirWritable === 'No'));
 
-        // 🌐 Request Information
         $output .= '<tr><th colspan="2" id="request" style="background:#17A2B8; color:#fff; padding:10px; text-align:left;">🌐 Request Information</th></tr>';
         $output .= $addRow('Request Time', date('Y-m-d H:i:s', $_SERVER['REQUEST_TIME'] ?? time()));
         $output .= $addRow('Request Method', $_SERVER['REQUEST_METHOD'] ?? 'N/A');
@@ -1123,13 +1085,11 @@ class Debug
         $output .= $addRow('Referrer', $_SERVER['HTTP_REFERER'] ?? 'N/A');
         $output .= $addRow('HTTPS Enabled', isset($_SERVER['HTTPS']) ? 'Yes' : 'No');
 
-        // Get current memory usage
         $memUsage = memory_get_usage();
         $memPeakUsage = memory_get_peak_usage();
         $output .= $addRow('Current Memory Usage', number_format($memUsage / 1048576, 2) . ' MB');
         $output .= $addRow('Peak Memory Usage', number_format($memPeakUsage / 1048576, 2) . ' MB');
 
-        // 🛡️ Security & Sessions
         $output .= '<tr><th colspan="2" id="security" style="background:#E83E8C; color:#fff; padding:10px; text-align:left;">🛡️ Security & Sessions</th></tr>';
         if (function_exists('session_status')) {
             $sessionStatus = session_status() === PHP_SESSION_ACTIVE ? 'Active' : 'Inactive';
@@ -1224,8 +1184,7 @@ class Debug
 
     /**
      * Check if an environment variable name might contain sensitive information
-     * 
-     * @param string $varName The name of the environment variable
+     *
      * @return bool True if potentially sensitive
      */
     private function isSensitiveEnvVar($varName)
@@ -1342,8 +1301,6 @@ class Debug
     /**
      * Debug a specific section of code with timing and context.
      *
-     * @param callable $callback Function to debug
-     * @param array $args Arguments to pass to the function
      * @param bool $echo Whether to echo the result (default: true)
      * @return mixed Result of the callback function
      */
@@ -1499,8 +1456,6 @@ class Debug
     /**
      * Analyze a variable with detailed type information and structure.
      *
-     * @param mixed $var Variable to analyze
-     * @param string $name Variable name
      * @param bool $echo Whether to echo the result (default: true)
      * @return string Detailed analysis
      */
@@ -1554,7 +1509,6 @@ class Debug
     /**
      * Analyze an object with detailed information.
      *
-     * @param object $obj Object to analyze
      * @return string HTML output with analysis
      */
     private function _analyzeObject($obj)
@@ -1564,18 +1518,15 @@ class Debug
 
         $output = '<p><strong>Class:</strong> ' . $className . '</p>';
 
-        // Parent class
         if ($parent = $reflection->getParentClass()) {
             $output .= '<p><strong>Parent Class:</strong> ' . $parent->getName() . '</p>';
         }
 
-        // Interfaces
         $interfaces = $reflection->getInterfaceNames();
         if (!empty($interfaces)) {
             $output .= '<p><strong>Implements:</strong> ' . implode(', ', $interfaces) . '</p>';
         }
 
-        // Properties
         $properties = $reflection->getProperties();
         if (!empty($properties)) {
             $output .= '<h4>Properties</h4>';
@@ -1624,7 +1575,6 @@ class Debug
             $output .= '</table>';
         }
 
-        // Methods
         $methods = $reflection->getMethods();
         if (!empty($methods)) {
             $output .= '<h4>Methods</h4>';
@@ -1684,7 +1634,6 @@ class Debug
     /**
      * Analyze an array with detailed information.
      *
-     * @param array $arr Array to analyze
      * @return string HTML output with analysis
      */
     private function _analyzeArray($arr)
@@ -1771,7 +1720,6 @@ class Debug
     /**
      * Analyze a string with detailed information.
      *
-     * @param string $str String to analyze
      * @return string HTML output with analysis
      */
     private function _analyzeString($str)
@@ -1822,7 +1770,6 @@ class Debug
             }
         }
 
-        // Encoding detection
         $encoding = mb_detect_encoding($str, "UTF-8, ASCII, ISO-8859-1, Windows-1252", true);
         $output .= '<p><strong>Encoding:</strong> ' . ($encoding ?: 'Unknown') . '</p>';
 
@@ -1874,7 +1821,6 @@ class Debug
     /**
      * Analyze a number with detailed information.
      *
-     * @param int|float $num Number to analyze
      * @return string HTML output with analysis
      */
     private function _analyzeNumber($num)
@@ -1906,7 +1852,6 @@ class Debug
             $output .= '<p><strong>Integer part:</strong> ' . $parts[0] . '</p>';
             $output .= '<p><strong>Fractional part:</strong> ' . (isset($parts[1]) ? $parts[1] : '0') . '</p>';
 
-            // Scientific notation
             $output .= '<p><strong>Scientific notation:</strong> ' . sprintf('%e', $num) . '</p>';
 
             // Precision analysis
@@ -1933,7 +1878,6 @@ class Debug
     {
         // Function to add table rows
         $addRow = function ($icon, $label, $value = null, $secure = true, $important = false) {
-            // Check if $value is a Closure, Array, or Object
             if ($value instanceof \Closure) {
                 $value = 'Closure';
             } elseif (is_array($value) || is_object($value)) {
@@ -1962,7 +1906,6 @@ class Debug
                 '<span style="color:#DC3545">❌ Disabled</span>';
         };
 
-        // Function to create progress bar
         $createProgressBar = function ($percent, $label = '') {
             $color = '#4CAF50'; // Default green
             if ($percent > 75) $color = '#FFC107'; // Yellow for > 75%
@@ -2083,7 +2026,6 @@ class Debug
         $output .= $addRow('📝', 'Input Time', ini_get('max_input_time') . ' seconds');
         $output .= $addRow('📑', 'Default Socket Timeout', ini_get('default_socket_timeout') . ' seconds');
 
-        // OPcache status
         if (function_exists('opcache_get_status') && !in_array('opcache_get_status', explode(',', ini_get('disable_functions')))) {
             try {
                 $opcache = opcache_get_status(false);
@@ -2165,7 +2107,6 @@ class Debug
         $output .= $addRow('🔢', 'Max File Uploads', ini_get('max_file_uploads'));
         $output .= $addRow('📂', 'Upload Temp Directory', ini_get('upload_tmp_dir') ?: sys_get_temp_dir());
 
-        // Check if upload directory is writable
         $uploadDir = ini_get('upload_tmp_dir') ?: sys_get_temp_dir();
         $output .= $addRow(
             '✍️',
@@ -2183,7 +2124,6 @@ class Debug
         $output .= $addRow('📅', 'Current Server Time', date('Y-m-d H:i:s T'));
         $output .= $addRow('⏱️', 'Server Uptime', $this->getServerUptime());
 
-        // Get timezone offset
         $timezone = new \DateTimeZone(date_default_timezone_get());
         $now = new \DateTime('now', $timezone);
         $offset = $timezone->getOffset($now) / 3600;
@@ -2192,19 +2132,16 @@ class Debug
         // Database Info
         $output .= '<tr><th colspan="2" id="database" style="background:#E83E8C; color:#fff; padding:10px; text-align:left; position:sticky; top:0;">🗄️ Database Support</th></tr>';
 
-        // MySQL/MariaDB
         $output .= $addRow('🐬', 'MySQL/MariaDB', $checkExtension('mysqli'), false);
         if (extension_loaded('mysqli')) {
             $output .= $addRow('ℹ️', 'MySQL Client Info', mysqli_get_client_info());
         }
 
-        // PostgreSQL
         $output .= $addRow('🐘', 'PostgreSQL', $checkExtension('pgsql'), false);
         if (extension_loaded('pgsql')) {
             $output .= $addRow('ℹ️', 'PostgreSQL Client Info', function_exists('pg_version') ? pg_version()['client'] : 'N/A');
         }
 
-        // SQLite
         $output .= $addRow('🔄', 'SQLite', $checkExtension('sqlite3'), false);
         if (extension_loaded('sqlite3')) {
             $sqliteVer = \SQLite3::version();
@@ -2260,11 +2197,9 @@ class Debug
 
         $output .= $addRow('📝', 'Error Log', ini_get('error_log') ?: 'Not configured');
 
-        // Open basedir
         $openBasedir = ini_get('open_basedir');
         $output .= $addRow('📁', 'Open Basedir', $openBasedir ? $openBasedir : 'Not Restricted');
 
-        // Disabled functions
         $disabledFunctions = ini_get('disable_functions');
         $output .= $addRow(
             '⛔',
@@ -2295,13 +2230,11 @@ class Debug
             ini_get('allow_url_include')
         );
 
-        // PHP Extensions
         $output .= '<tr><th colspan="2" id="extensions" style="background:#343A40; color:#fff; padding:10px; text-align:left; position:sticky; top:0;">🧩 PHP Extensions</th></tr>';
 
         $extensions = get_loaded_extensions();
         sort($extensions); // Sort alphabetically
 
-        // Count extensions
         $output .= $addRow('🔢', 'Total Extensions', count($extensions));
 
         // Key extension categories
@@ -2414,9 +2347,8 @@ class Debug
 
     /**
      * Format bytes to human readable format
-     * 
+     *
      * @param int $bytes Number of bytes
-     * @param int $precision Decimal precision
      * @return string Formatted size
      */
     public function formatBytes($bytes, $precision = 2)
@@ -2557,27 +2489,6 @@ class Debug
     }
 
     /**
-     * Checks if server is running on a Linux system
-     * 
-     * @return bool True if running on Linux
-     */
-    private function isLinux()
-    {
-        return (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN');
-    }
-
-    /**
-     * Checks if a PHP extension is available and enabled
-     * 
-     * @param string $extension The extension name to check
-     * @return bool True if extension is loaded
-     */
-    private function isExtensionLoaded($extension)
-    {
-        return extension_loaded($extension);
-    }
-
-    /**
      * Get detailed version information about PHP and relevant extensions
      * 
      * @return array Version information
@@ -2648,7 +2559,6 @@ class Debug
             ];
         }
 
-        // Check for OPcache
         if (!extension_loaded('opcache')) {
             $recommendations[] = [
                 'severity' => 'warning',
@@ -2656,7 +2566,6 @@ class Debug
             ];
         }
 
-        // Check for display_errors in production
         if (ini_get('display_errors') && PHP_SAPI !== 'cli') {
             $recommendations[] = [
                 'severity' => 'critical',
@@ -2664,7 +2573,6 @@ class Debug
             ];
         }
 
-        // Check for allow_url_include
         if (ini_get('allow_url_include')) {
             $recommendations[] = [
                 'severity' => 'critical',

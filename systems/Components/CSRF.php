@@ -64,12 +64,7 @@ class CSRF
      */
     private const MAX_URI_LENGTH = 2000;
 
-    /**
-     * Constructor
-     * 
-     * @param array $config Configuration array
-     * @throws InvalidArgumentException If configuration is invalid
-     */
+    /** @throws InvalidArgumentException If configuration is invalid */
     public function __construct(array $config = [])
     {
         $this->security = new Security();
@@ -78,9 +73,6 @@ class CSRF
     }
 
     /**
-     * Validate and merge configuration with defaults
-     * 
-     * @param array $config User configuration
      * @return array Merged configuration
      * @throws InvalidArgumentException If configuration is invalid
      */
@@ -138,7 +130,6 @@ class CSRF
                 return true;
             }
 
-            // Check if CSRF protection is enabled
             if (!$this->config['csrf_protection']) {
                 return true;
             }
@@ -190,14 +181,34 @@ class CSRF
             return '';
         }
 
-        // Check if valid token already exists
         if ($this->tokenCache !== null) {
             return $this->tokenCache;
         }
 
-        $existingToken = $this->getTokenFromCookie();
-        if ($existingToken && !$this->isTokenExpired()) {
+        // The session copy first: it is the one validateToken() compares
+        // against, and unlike the cookie it cannot be written from outside.
+        $existingToken = $this->getTokenFromSession();
+        $mirroredFromCookie = false;
+
+        if ($existingToken === '') {
+            $existingToken = $this->getTokenFromCookie();
+            $mirroredFromCookie = $existingToken !== '';
+        }
+
+        if ($existingToken !== '' && $this->isValidTokenFormat($existingToken) && !$this->isTokenExpired()) {
+            /*
+            | A cookie that outlived its session — most often because login
+            | called session_regenerate_id() — has no session copy yet. Adopt it
+            | rather than issuing a new one, so the token already rendered into
+            | the open page keeps working, and record it so the next request
+            | validates against the session rather than falling back.
+            */
+            if ($mirroredFromCookie && session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION[$this->sessionTokenKey()] = $existingToken;
+            }
+
             $this->tokenCache = $existingToken;
+
             return $existingToken;
         }
 
@@ -220,7 +231,10 @@ class CSRF
             return '';
         }
 
-        return $this->tokenCache ?? $this->getTokenFromCookie() ?? '';
+        // Session before cookie, so a page renders the token the server will
+        // actually accept rather than one an attacker planted in the cookie jar.
+        return $this->tokenCache
+            ?: ($this->getTokenFromSession() ?: $this->getTokenFromCookie());
     }
 
     /**
@@ -239,8 +253,8 @@ class CSRF
             $token = $this->init();
         }
 
-        $tokenName = htmlspecialchars($this->config['csrf_token_name'], ENT_QUOTES, 'UTF-8');
-        $tokenValue = htmlspecialchars($token, ENT_QUOTES, 'UTF-8');
+        $tokenName = htmlspecialchars($this->config['csrf_token_name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $tokenValue = htmlspecialchars($token, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
         return sprintf(
             '<input type="hidden" name="%s" value="%s" />',
@@ -266,8 +280,6 @@ class CSRF
 
     /**
      * Check if current request is a state-changing (write) method
-     * 
-     * @return bool
      */
     private function isWriteRequest(): bool
     {
@@ -278,8 +290,6 @@ class CSRF
     /**
      * Check if current URI is excluded from CSRF verification.
      * Supports wildcard patterns (e.g. 'api/*').
-     * 
-     * @return bool
      */
     private function isExcludedUri(): bool
     {
@@ -304,8 +314,6 @@ class CSRF
 
     /**
      * Check if current URI is in inclusion list
-     * 
-     * @return bool
      */
     private function isIncludedUri(): bool
     {
@@ -335,26 +343,43 @@ class CSRF
     /**
      * Validate CSRF token
      * 
-     * @return bool
      * @throws RuntimeException If validation fails due to system error
      */
     private function validateToken(): bool
     {
         $postToken = $this->getTokenFromPost();
-        $cookieToken = $this->getTokenFromCookie();
 
-        // Check if tokens exist
-        if (empty($postToken) || empty($cookieToken)) {
+        /*
+        | The expected value comes from the session when there is one, and only
+        | falls back to the cookie when there is not.
+        |
+        | Double-submit — comparing the request against a cookie — assumes an
+        | attacker cannot write the cookie. On a shared parent domain that
+        | assumption is false: any subdomain, including a vendor-hosted status
+        | page or a compromised staging host, can set a cookie on the parent and
+        | therefore supply *both* halves of the pair. The session copy cannot be
+        | written from outside, so a forged pair no longer matches anything.
+        |
+        | The cookie stays as the transport the JavaScript client reads; it is
+        | just no longer the thing we compare against.
+        */
+        $expected = $this->getTokenFromSession();
+        $fromSession = $expected !== '';
+
+        if (!$fromSession) {
+            $expected = $this->getTokenFromCookie();
+        }
+
+        if (empty($postToken) || empty($expected)) {
             return false;
         }
 
-        // Validate token formats
-        if (!$this->isValidTokenFormat($postToken) || !$this->isValidTokenFormat($cookieToken)) {
+        if (!$this->isValidTokenFormat($postToken) || !$this->isValidTokenFormat($expected)) {
             return false;
         }
 
         // Check if tokens match using timing-safe comparison
-        if (!hash_equals($cookieToken, $postToken)) {
+        if (!hash_equals($expected, $postToken)) {
             return false;
         }
 
@@ -468,8 +493,6 @@ class CSRF
 
     /**
      * Get token from POST data or X-CSRF-TOKEN header
-     * 
-     * @return string
      */
     private function getTokenFromPost(): string
     {
@@ -491,20 +514,37 @@ class CSRF
 
     /**
      * Get token from cookie
-     * 
-     * @return string
      */
     private function getTokenFromCookie(): string
     {
         return $_COOKIE[$this->config['csrf_cookie_name']] ?? '';
     }
 
+    /** The session key holding the authoritative token. */
+    private function sessionTokenKey(): string
+    {
+        return '_csrf_token';
+    }
+
     /**
-     * Validate token format
-     * 
-     * @param string $token Token to validate
-     * @return bool
+     * The token as the server recorded it.
+     *
+     * Empty when there is no session — a stateless API request, or a page served
+     * before the session started. validateToken() then falls back to the cookie,
+     * which is the pre-existing behaviour and no worse than it was.
      */
+    private function getTokenFromSession(): string
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            return '';
+        }
+
+        $token = $_SESSION[$this->sessionTokenKey()] ?? '';
+
+        return is_string($token) ? $token : '';
+    }
+
+    /** Validate token format */
     private function isValidTokenFormat(string $token): bool
     {
         // Check length (hex representation of TOKEN_LENGTH bytes)
@@ -518,8 +558,6 @@ class CSRF
 
     /**
      * Check if token is expired
-     * 
-     * @return bool
      */
     private function isTokenExpired(): bool
     {
@@ -542,7 +580,6 @@ class CSRF
     /**
      * Generate cryptographically secure token
      * 
-     * @return string
      * @throws RuntimeException If token generation fails
      */
     private function generateToken(): string
@@ -557,8 +594,7 @@ class CSRF
 
     /**
      * Set token in cookie with security flags
-     * 
-     * @param string $token Token to set
+     *
      * @throws RuntimeException If cookie setting fails
      */
     private function setTokenCookie(string $token): void
@@ -569,13 +605,15 @@ class CSRF
         $httpOnly = $this->config['csrf_httponly'];
         $sameSite = $this->config['csrf_samesite'];
 
-        // Set main token cookie
         if (!$this->setCookie($cookieName, $token, $expireTime, $secure, $httpOnly, $sameSite)) {
             throw new RuntimeException('Failed to set CSRF token cookie');
         }
 
-        // Store timestamp in session (server-side, tamper-proof)
+        // The authoritative copy. The cookie above is transport for the JS
+        // client; this is what validateToken() actually compares against, and
+        // nothing outside this process can write it.
         if (session_status() === PHP_SESSION_ACTIVE) {
+            $_SESSION[$this->sessionTokenKey()] = $token;
             $_SESSION['_csrf_token_time'] = time();
         }
 
@@ -587,14 +625,7 @@ class CSRF
     }
 
     /**
-     * Set cookie with proper parameters
-     * 
-     * @param string $name Cookie name
-     * @param string $value Cookie value
-     * @param int $expire Expiration time
-     * @param bool $secure Secure flag
      * @param bool $httpOnly HTTP only flag
-     * @param string $sameSite SameSite attribute
      * @return bool Success status
      */
     private function setCookie(string $name, string $value, int $expire, bool $secure, bool $httpOnly, string $sameSite): bool
@@ -614,8 +645,6 @@ class CSRF
 
     /**
      * Check if connection is HTTPS
-     * 
-     * @return bool
      */
     private function isHttps(): bool
     {
@@ -627,7 +656,6 @@ class CSRF
     /**
      * Get current request URI
      * 
-     * @return string
      * @throws RuntimeException If URI is malformed or too long
      */
     public function getCurrentUri(): string
@@ -645,7 +673,6 @@ class CSRF
             $requestUri = substr($requestUri, strlen($scriptName));
         }
 
-        // Parse and clean URI
         $parsedUri = parse_url($requestUri, PHP_URL_PATH);
         if ($parsedUri === false) {
             throw new RuntimeException('Malformed request URI');
@@ -654,12 +681,7 @@ class CSRF
         return ltrim($parsedUri ?? '', '/');
     }
 
-    /**
-     * Get configuration value
-     * 
-     * @param string $key Configuration key
-     * @return mixed Configuration value
-     */
+    /** @return mixed Configuration value */
     public function getConfig(string $key)
     {
         return $this->config[$key] ?? null;
@@ -667,8 +689,6 @@ class CSRF
 
     /**
      * Check if CSRF protection is enabled
-     * 
-     * @return bool
      */
     public function isEnabled(): bool
     {

@@ -13,8 +13,6 @@ namespace Core\Security;
  * Usage:
  *   $nonce = \Core\Security\CspNonce::get();   // same value every call per request
  *   \Core\Security\CspNonce::reset();           // call between requests in workers/tests
- *
- * @package  Core\Security
  */
 final class CspNonce
 {
@@ -45,8 +43,6 @@ final class CspNonce
      * Must be called between HTTP requests in long-running PHP-CLI workers
      * (e.g. ReactPHP, Swoole, RoadRunner) and in test tear-downs to prevent
      * one request's nonce leaking into the next.
-     *
-     * @return void
      */
     public static function reset(): void
     {

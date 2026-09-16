@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Core\Http\Controller;
+use Core\Http\Reply;
 use Core\Http\Request;
 use App\Http\Requests\SaveAbilitiesRequest;
 use App\Http\Requests\SaveAssignmentRequest;
@@ -14,7 +15,7 @@ class PermissionController extends Controller
         parent::__construct();
     }
 
-    public function listPermissionDatatable(Request $request): void
+    public function listPermissionDatatable(Request $request): array
     {
         $db = db();
         $result = $db->table('system_abilities')->select('id, abilities_name, abilities_slug, abilities_desc')
@@ -28,14 +29,18 @@ class PermissionController extends Controller
 
         $result['data'] = array_map([$this, 'mapPermissionDatatableRow'], $result['data']);
 
-        jsonResponse($result);
+        // Already the exact shape DataTables expects (draw / recordsTotal /
+        // data), and Emitter turns a returned array into a JSON response — so
+        // wrapping it would only nest the payload a level deeper.
+        return $result;
     }
 
-    public function listPermissionAssignDatatable(Request $request): void
+    /** @return Reply|array<string, mixed> A Reply on the guard, the datatable payload otherwise. */
+    public function listPermissionAssignDatatable(Request $request): Reply|array
     {
         $roleID = $request->input('id');
         if ($roleID === null || $roleID === '') {
-            jsonResponse(['code' => 400, 'message' => 'Role ID is required']);
+            return fail('Role ID is required', 400);
         }
 
         $db = db();
@@ -98,36 +103,39 @@ class PermissionController extends Controller
             ];
         }, $result);
 
-        jsonResponse($result);
+        // Already the exact shape DataTables expects (draw / recordsTotal /
+        // data), and Emitter turns a returned array into a JSON response — so
+        // wrapping it would only nest the payload a level deeper.
+        return $result;
     }
 
-    public function show(int|string $id): void
+    public function show(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'Abilities ID is required']);
+        if ($id === '') {
+            return fail('Abilities ID is required', 400);
         }
 
         $abilities = db()->table('system_abilities')->where('id', $id)->safeOutput()->fetch();
 
         if (!$abilities) {
-            jsonResponse(['code' => 404, 'message' => 'Abilities not found']);
+            return fail('Abilities not found', 404);
         }
 
-        jsonResponse(['code' => 200, 'data' => $abilities]);
+        return ok(null, $abilities);
     }
 
-    public function saveAbilities(SaveAbilitiesRequest $request): void
+    public function saveAbilities(SaveAbilitiesRequest $request): Reply
     {
         $data = $request->validated();
         $abilityId = $data['id'] ?? null;
         unset($data['id']);
 
         if (empty($abilityId) && !permission('rbac-abilities-create')) {
-            jsonResponse(['code' => 403, 'message' => 'You do not have permission to create abilities.']);
+            return fail('You do not have permission to create abilities.', 403);
         }
 
         if (!empty($abilityId) && !permission('rbac-abilities-update')) {
-            jsonResponse(['code' => 403, 'message' => 'You do not have permission to update abilities.']);
+            return fail('You do not have permission to update abilities.', 403);
         }
 
         $result = db()->table('system_abilities')->insertOrUpdate(
@@ -138,7 +146,7 @@ class PermissionController extends Controller
         );
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to save abilities']);
+            return fail('Failed to save abilities');
         }
 
         $savedAbilityId = $abilityId ?: ($result['id'] ?? null);
@@ -150,14 +158,10 @@ class PermissionController extends Controller
             ->safeOutput()
             ->fetch() : null;
 
-        jsonResponse([
-            'code' => 200,
-            'message' => 'Abilities saved',
-            'data' => $savedRow ? $this->mapPermissionDatatableRow($savedRow) : null,
-        ]);
+        return ok('Abilities saved', $savedRow ? $this->mapPermissionDatatableRow($savedRow) : null);
     }
 
-    public function saveAssignment(SaveAssignmentRequest $request): void
+    public function saveAssignment(SaveAssignmentRequest $request): Reply
     {
         $roleID = $request->validated('role_id');
         $abilitiesID = $request->validated('abilities_id');
@@ -165,7 +169,7 @@ class PermissionController extends Controller
         $permission = $request->validated('permission');
 
         if (empty($roleID) || empty($abilitiesID)) {
-            jsonResponse(['code' => 400, 'message' => 'ID is required']);
+            return fail('ID is required', 400);
         }
 
         if ($permission == 'revoke') {
@@ -191,7 +195,7 @@ class PermissionController extends Controller
                 ->exists();
 
             if ($exists) {
-                jsonResponse(['code' => 200, 'message' => 'Permission already assigned']);
+                return ok('Permission already assigned');
             }
 
             $result = db()->table('system_permission')->insert(
@@ -205,25 +209,25 @@ class PermissionController extends Controller
         }
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to processed permission']);
+            return fail('Failed to processed permission');
         }
 
-        jsonResponse(['code' => 200, 'message' => ucfirst($permission)]);
+        return ok(ucfirst($permission));
     }
 
-    public function destroy(int|string $id): void
+    public function destroy(int|string $id): Reply
     {
-        if ($id === null || $id === '') {
-            jsonResponse(['code' => 400, 'message' => 'Abilities ID is required']);
+        if ($id === '') {
+            return fail('Abilities ID is required', 400);
         }
 
         $result = db()->table('system_abilities')->where('id', $id)->softDelete();
 
         if (isError($result['code'])) {
-            jsonResponse(['code' => 422, 'message' => 'Failed to delete abilities']);
+            return fail('Failed to delete abilities');
         }
 
-        jsonResponse(['code' => 200, 'message' => 'Abilities deleted']);
+        return ok('Abilities deleted');
     }
 
     private function mapPermissionDatatableRow(array $row): array

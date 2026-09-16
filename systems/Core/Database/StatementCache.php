@@ -25,8 +25,6 @@ namespace Core\Database;
  *
  *   If APCu is unavailable the cache degrades silently to Tier 1 only.
  *
- * @category Database
- * @package  Core\Database
  * @author   Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license  http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version  1.1.0
@@ -62,10 +60,7 @@ class StatementCache
      * The SQL hash is also recorded in the APCu warmth registry so other workers
      * can pre-warm this statement before their first request hits.
      *
-     * @param \PDO   $pdo            Open PDO connection.
-     * @param string $sql            SQL query string.
      * @param string $connectionName Logical connection name (for key namespacing).
-     * @return \PDOStatement
      */
     public static function get(\PDO $pdo, string $sql, string $connectionName = 'default'): \PDOStatement
     {
@@ -81,7 +76,6 @@ class StatementCache
             return self::$cache[$key];
         }
 
-        // Prepare new statement
         $stmt = $pdo->prepare($sql);
 
         // Evict if at capacity before inserting
@@ -110,7 +104,6 @@ class StatementCache
      * Does nothing if APCu is unavailable or the registry is empty.
      *
      * @param \PDO   $pdo            The newly opened connection to prepare against.
-     * @param string $connectionName Logical connection name.
      * @return int   Number of statements pre-warmed.
      */
     public static function prewarmFromRegistry(\PDO $pdo, string $connectionName = 'default'): int
@@ -124,7 +117,6 @@ class StatementCache
             return 0;
         }
 
-        // Sort descending by hit count so the hottest statements go in first
         usort($entries, static fn($a, $b) => $b['hits'] <=> $a['hits']);
 
         $cap = (int) floor(self::$maxSize / 2);
@@ -165,8 +157,6 @@ class StatementCache
     /**
      * Clear the entire in-process cache.
      * Does NOT clear APCu registry entries.
-     *
-     * @return void
      */
     public static function clear(): void
     {
@@ -177,7 +167,6 @@ class StatementCache
     /**
      * Clear all cached statements for a specific connection.
      *
-     * @param string $connectionName
      * @return int Number of statements cleared.
      */
     public static function clearConnection(string $connectionName): int
@@ -201,8 +190,6 @@ class StatementCache
 
     /**
      * Return combined in-process and cross-worker statistics.
-     *
-     * @return array
      */
     public static function getStats(): array
     {
@@ -243,10 +230,6 @@ class StatementCache
 
     /**
      * Generate a deterministic per-connection cache key for an SQL string.
-     *
-     * @param string $sql
-     * @param string $connectionName
-     * @return string
      */
     protected static function generateKey(string $sql, string $connectionName): string
     {
@@ -270,8 +253,6 @@ class StatementCache
     /**
      * Evict the statement with the lowest LRU score.
      * Score = hits − (seconds since last use / 10)
-     *
-     * @return void
      */
     protected static function evictLeastUsed(): void
     {
@@ -303,8 +284,6 @@ class StatementCache
     /**
      * Check whether APCu is available for the current SAPI.
      * Result is memoised per-process.
-     *
-     * @return bool
      */
     protected static function apcuAvailable(): bool
     {
@@ -338,14 +317,7 @@ class StatementCache
         return is_array($info) ? $info : [];
     }
 
-    /**
-     * Register a newly prepared statement in the APCu warmth registry.
-     *
-     * @param string $key            Cache key.
-     * @param string $sql            Original SQL string.
-     * @param string $connectionName Logical connection name.
-     * @return void
-     */
+    /** Register a newly prepared statement in the APCu warmth registry. */
     protected static function registerApcuEntry(string $key, string $sql, string $connectionName): void
     {
         if (!self::apcuAvailable()) {
@@ -363,11 +335,6 @@ class StatementCache
     /**
      * Increment the hit counter for an existing APCu warmth entry.
      * Refreshes the TTL so active statements don't expire.
-     *
-     * @param string $key            Cache key.
-     * @param string $sql            Original SQL string.
-     * @param string $connectionName Logical connection name.
-     * @return void
      */
     protected static function touchApcuEntry(string $key, string $sql, string $connectionName): void
     {
@@ -394,7 +361,6 @@ class StatementCache
      * Uses APCu's iterator if available (preferred, avoids full cache scan),
      * otherwise falls back to a prefix scan via apcu_cache_info.
      *
-     * @param string $connectionName
      * @return array  Array of ['sql' => ..., 'hits' => ..., 'last_seen' => ...].
      */
     protected static function fetchApcuRegistry(string $connectionName): array

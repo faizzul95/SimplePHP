@@ -9,9 +9,6 @@ namespace Core\Database\Concerns;
  * detection, and cache-group invalidation helpers.
  *
  * Consumed by: BaseDatabase
- *
- * @category Database
- * @package  Core\Database\Concerns
  */
 trait HasPaginateCountCache
 {

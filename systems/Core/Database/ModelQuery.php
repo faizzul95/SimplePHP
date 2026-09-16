@@ -28,10 +28,7 @@ class ModelQuery
     /** The underlying driver query-builder instance. */
     private mixed $builder;
 
-    /**
-     * @param mixed              $builder    Result of db($conn)->table($table)
-     * @param class-string<TModel> $modelClass Fully-qualified model class name
-     */
+    /** @param class-string<TModel> $modelClass Fully-qualified model class name */
     public function __construct(mixed $builder, string $modelClass)
     {
         $this->builder    = $builder;
@@ -70,11 +67,7 @@ class ModelQuery
         return array_map([$this, 'hydrateRow'], $rows);
     }
 
-    /**
-     * Fetch the first matching row and hydrate it as a model instance.
-     *
-     * @return TModel|null
-     */
+    /** Fetch the first matching row and hydrate it as a model instance. */
     public function fetch(mixed $table = null): mixed
     {
         $row = $this->builder->fetch($table);
@@ -84,11 +77,7 @@ class ModelQuery
         return $this->hydrateRow($row);
     }
 
-    /**
-     * Alias for fetch(); optionally restrict columns first.
-     *
-     * @return TModel|null
-     */
+    /** Alias for fetch(); optionally restrict columns first. */
     public function first(mixed $columns = []): mixed
     {
         if (!empty($columns)) {
@@ -99,8 +88,6 @@ class ModelQuery
 
     /**
      * Like first() but throws when no row is found.
-     *
-     * @return TModel
      *
      * @throws RuntimeException
      */
@@ -245,11 +232,7 @@ class ModelQuery
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Hydrate a raw associative array as a model instance.
-     *
-     * @return TModel
-     */
+    /** Hydrate a raw associative array as a model instance. */
     private function hydrateRow(array $attributes): mixed
     {
         $modelClass = $this->modelClass;

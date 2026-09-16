@@ -11,9 +11,6 @@ namespace Core\Database\Concerns;
  * Extracted from BaseDatabase to keep the monolith manageable.
  * All methods rely on protected properties and helpers defined in BaseDatabase /
  * DatabaseHelper, which are accessible at runtime via $this.
- *
- * @category Database
- * @package  Core\Database\Concerns
  */
 trait HasDebugHelpers
 {
@@ -87,7 +84,6 @@ trait HasDebugHelpers
     public function toDebugSql()
     {
         $this->ensureDebugInspectionAllowed(__FUNCTION__);
-        // Build the final SELECT query string
         $this->_buildSelectQuery();
 
         // Generate the full query string with bound values
@@ -101,7 +97,6 @@ trait HasDebugHelpers
         $_temp_connection = $this->connectionName;
         $_temp_relations = $this->relations;
 
-        // Reset internal properties for next query
         $this->reset();
 
         if (!empty($_temp_relations)) {
@@ -121,7 +116,6 @@ trait HasDebugHelpers
                     $callback($relatedRecordsQuery);
                 }
 
-                // Build the query on the related records builder, not $this
                 $queryList['with_' . $alias] = $relatedRecordsQuery->toDebugSql();
             }
         }
@@ -135,7 +129,6 @@ trait HasDebugHelpers
      * Return a unified debug snapshot that combines the current builder SQL,
      * local profiler payload, and the global performance report.
      *
-     * @param array $reportOptions
      * @return array<string, mixed>
      */
     public function toDebugSnapshot(array $reportOptions = []): array

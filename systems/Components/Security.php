@@ -255,9 +255,8 @@ class Security
 
     /**
      * Normalize a host header to a lower-case host name without port suffix.
-      *
-      * @param string $host Raw host-header value.
-      * @return string Normalized host or an empty string when the input is invalid.
+     *
+     * @return string Normalized host or an empty string when the input is invalid.
      */
     public function normalizeHostHeader(string $host): string
     {
@@ -288,10 +287,9 @@ class Security
 
     /**
      * Sanitize user-agent strings for logging, fingerprinting, and request validation.
-      *
-      * @param string $userAgent Raw user-agent string.
-      * @param int $maxLength Maximum allowed length before truncation.
-      * @return string Sanitized user-agent string or 'Unknown' when empty.
+     *
+     * @param int $maxLength Maximum allowed length before truncation.
+     * @return string Sanitized user-agent string or 'Unknown' when empty.
      */
     public function sanitizeUserAgent(string $userAgent, int $maxLength = self::MAX_USER_AGENT_LENGTH): string
     {
@@ -308,10 +306,8 @@ class Security
 
     /**
      * Check whether a string exceeds a configured maximum length.
-      *
-      * @param string $value Value to measure.
-      * @param int $maxLength Maximum allowed length.
-      * @return bool True when the string exceeds the configured limit.
+     *
+     * @return bool True when the string exceeds the configured limit.
      */
     public function exceedsMaxLength(string $value, int $maxLength): bool
     {
@@ -320,9 +316,8 @@ class Security
 
     /**
      * Check if a path exists and is readable.
-      *
-      * @param string $path Filesystem path to test.
-      * @return bool True when the path exists and is readable.
+     *
+     * @return bool True when the path exists and is readable.
      */
     public function canReadPath(string $path): bool
     {
@@ -333,9 +328,8 @@ class Security
 
     /**
      * Check if a path or its parent directory is writable.
-      *
-      * @param string $path Filesystem path to test.
-      * @return bool True when the path or its nearest existing parent is writable.
+     *
+     * @return bool True when the path or its nearest existing parent is writable.
      */
     public function canWritePath(string $path): bool
     {
@@ -364,10 +358,9 @@ class Security
 
     /**
      * Fail fast when a target path is not writable.
-      *
-      * @param string $path Filesystem path to validate.
-      * @param string $label Human-readable label used in the exception message.
-      * @throws \RuntimeException If the path is not writable.
+     *
+     * @param string $label Human-readable label used in the exception message.
+     * @throws \RuntimeException If the path is not writable.
      */
     public function assertWritablePath(string $path, string $label = 'Path'): void
     {
@@ -393,9 +386,8 @@ class Security
 
     /**
      * Check whether a MIME type is blocked for public upload storage.
-      *
-      * @param string|null $mimeType Detected MIME type.
-      * @return bool True when the MIME type is blocked.
+     *
+     * @return bool True when the MIME type is blocked.
      */
     public function isBlockedUploadMimeType(?string $mimeType): bool
     {
@@ -516,10 +508,9 @@ class Security
 
     /**
      * Detect XSS-like payloads in strings or nested arrays.
-      *
-      * @param mixed $input Scalar or nested array input to inspect.
-      * @param int $depth Current recursion depth.
-      * @return bool True when the input appears to contain XSS-style content.
+     *
+     * @param mixed $input Scalar or nested array input to inspect.
+     * @return bool True when the input appears to contain XSS-style content.
      */
     public function containsXss($input, int $depth = 0): bool
     {
@@ -572,8 +563,7 @@ class Security
     /**
      * Check whether content includes suspicious active content patterns.
      *
-        * @param mixed $input Scalar input to inspect.
-        * @param bool $sanitizeValue Whether to redact matched dangerous content.
+     * @param bool $sanitizeValue Whether to redact matched dangerous content.
      * @return array{malicious: bool, value: string}
      */
     public function containsMalicious($input, bool $sanitizeValue = true, array $options = []): array
@@ -930,9 +920,8 @@ class Security
 
     /**
      * Decide whether input is risky enough to justify the heavier regex scan pass.
-      *
-      * @param string $input Lower-cased input string.
-      * @return bool True when the input should go through deep-content detection.
+     *
+     * @return bool True when the input should go through deep-content detection.
      */
     private function shouldRunDeepContentChecks(string $input): bool
     {
@@ -947,10 +936,8 @@ class Security
 
     /**
      * @param array<int, string> $patterns
-      * @param mixed $input Scalar or nested array input to inspect.
-      * @param string $type Detection type label.
-      * @param bool $sanitizeValue Whether to redact matching content.
-      * @param int $depth Current recursion depth.
+     * @param mixed $input Scalar or nested array input to inspect.
+     * @param bool $sanitizeValue Whether to redact matching content.
      * @return array{malicious: bool, type: ?string, value: mixed, matched_pattern?: string}
      */
     private function inspectPatternSet($input, array $patterns, string $type, bool $sanitizeValue = true, int $depth = 0): array
@@ -1063,11 +1050,9 @@ class Security
     /**
      * Stream-scan text-like documents line by line or row by row.
      *
-      * @param string $path Filesystem path to inspect.
-      * @param string $mime Detected MIME type.
      * @param array<string, mixed> $options
      * @return array<string, mixed>
-      * @throws \RuntimeException When content validation is enforced for an unsupported type.
+     * @throws \RuntimeException When content validation is enforced for an unsupported type.
      */
     public function inspectDocument(string $path, string $mime, array $options = []): array
     {
@@ -1102,8 +1087,6 @@ class Security
     /**
      * Stream-scan a CSV document cell by cell for suspicious content.
      *
-     * @param string $path CSV file path.
-     * @param string $mime MIME type for reporting.
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
@@ -1160,8 +1143,6 @@ class Security
     /**
      * Stream-scan a plain-text style document line by line for suspicious content.
      *
-     * @param string $path Document file path.
-     * @param string $mime MIME type for reporting.
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
@@ -1215,7 +1196,6 @@ class Security
     /**
      * Truncate a value for issue reporting while keeping output bounded.
      *
-     * @param string $value Original value.
      * @param int $limit Maximum number of characters to keep.
      * @return string Bounded report-safe preview.
      */

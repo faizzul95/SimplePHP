@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use Core\Http\JsonResponse;
 use Core\Http\Middleware\MiddlewareInterface;
 use Core\Http\Request;
 
@@ -27,6 +28,15 @@ class AttachRequestFingerprint implements MiddlewareInterface
         $_SERVER['MYTH_TRACE_ID'] = $traceId;
         $_SERVER['MYTH_CLIENT_FINGERPRINT'] = $clientFingerprint;
 
+        // The id the client is about to see in X-Request-Id has to reach the log
+        // too, or "here's the id from the error page" identifies nothing.
+        \Core\Support\LogContext::set([
+            'request_id' => $requestId,
+            'trace_id' => $traceId,
+            'method' => $request->method(),
+            'path' => $request->path(),
+        ]);
+
         if (!headers_sent()) {
             header('X-Request-Id: ' . $requestId, true);
             header('X-Trace-Id: ' . $traceId, true);
@@ -38,17 +48,45 @@ class AttachRequestFingerprint implements MiddlewareInterface
 
         $response = $next($request);
 
-        if (is_array($response)) {
-            if (!array_key_exists('request_id', $response)) {
-                $response['request_id'] = $requestId;
-            }
+        return $this->stampResponse($response, $requestId, $traceId);
+    }
 
-            if (!array_key_exists('trace_id', $response)) {
-                $response['trace_id'] = $traceId;
-            }
+    /**
+     * Put the request and trace ids into the response body so a user reporting a
+     * problem can quote an id that appears in the server log.
+     *
+     * Handles both shapes. Controllers used to return plain arrays; most now
+     * return a JsonResponse, and only checking for an array meant the ids
+     * silently stopped being attached to API responses once that changed.
+     */
+    private function stampResponse(mixed $response, string $requestId, string $traceId): mixed
+    {
+        if (is_array($response)) {
+            return $this->stampPayload($response, $requestId, $traceId);
         }
 
+        if ($response instanceof JsonResponse) {
+            $payload = $this->stampPayload($response->payload(), $requestId, $traceId);
+
+            return new JsonResponse($payload, $response->status(), $response->headers());
+        }
+
+        // HTML, redirects, files and streams carry the ids in their headers,
+        // which were already set above.
         return $response;
+    }
+
+    /**
+     * @param  array<mixed, mixed> $payload
+     * @return array<mixed, mixed>
+     */
+    private function stampPayload(array $payload, string $requestId, string $traceId): array
+    {
+        // Never overwrite: a controller that set its own correlation id meant to.
+        $payload['request_id'] ??= $requestId;
+        $payload['trace_id'] ??= $traceId;
+
+        return $payload;
     }
 
     private function resolveIdentifier(string $attribute, string $prefix): string

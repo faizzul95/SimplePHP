@@ -8,8 +8,6 @@ namespace Core\Database;
  * Advanced caching layer for database query results with TTL,
  * tag-based invalidation, and memory-efficient storage.
  * 
- * @category Database
- * @package  Core\Database
  * @author   Mohd Fahmy Izwan Zulkhafri <faizzul14@gmail.com>
  * @license  http://opensource.org/licenses/gpl-3.0.html GNU Public License
  * @version  1.0.0
@@ -63,7 +61,6 @@ class QueryCache
      * Initialize cache directory.
      * APCu is used automatically when available (shared hosting friendly — no Redis needed).
      *
-     * @param string $dir Cache directory path
      * @return void
      */
     public static function init($dir = null)
@@ -83,8 +80,6 @@ class QueryCache
     /**
      * Whether APCu is available and enabled in the current SAPI.
      * Memoised after first call.
-     *
-     * @return bool
      */
     protected static function apcuAvailable(): bool
     {
@@ -98,12 +93,7 @@ class QueryCache
         return $available;
     }
 
-    /**
-     * Get cached query result
-     *
-     * @param string $key Cache key
-     * @return mixed|null Cached result or null if not found
-     */
+    /** @return mixed|null Cached result or null if not found */
     public static function get($key)
     {
         if (!self::$enabled) {
@@ -167,10 +157,7 @@ class QueryCache
     /**
      * Store query result in cache
      *
-     * @param string $key Cache key
-     * @param mixed  $data Data to cache
      * @param int    $ttl Time to live in seconds
-     * @param array  $tags Tags for invalidation
      * @return bool Success status
      */
     public static function set($key, $data, $ttl = null, array $tags = [])
@@ -224,7 +211,6 @@ class QueryCache
     /**
      * Delete cached item
      *
-     * @param string $key Cache key
      * @return bool Success status
      */
     public static function forget($key)
@@ -251,7 +237,6 @@ class QueryCache
     /**
      * Invalidate cache by tags
      *
-     * @param array $tags Tags to invalidate
      * @return int Number of items invalidated
      */
     public static function invalidateTags(array $tags)
@@ -305,7 +290,6 @@ class QueryCache
      * Incremented by invalidateTable() on every write (INSERT/UPDATE/DELETE).
      * When APCu is unavailable the version is always 1 (no cross-request busting).
      *
-     * @param string $table Lowercase table name
      * @return int Current version (≥ 1)
      */
     protected static function tableVersion(string $table): int
@@ -329,7 +313,6 @@ class QueryCache
      * as a best-effort fallback (file-tier entries expire by TTL).
      *
      * @param string|string[] $tables Table name(s) written to
-     * @return void
      */
     public static function invalidateTable(string|array $tables): void
     {
@@ -372,9 +355,6 @@ class QueryCache
      * tables the counter increments, the key changes, and stale results are
      * never served — automatic write-through invalidation with O(1) cost.
      *
-     * @param string   $query      SQL query
-     * @param array    $binds      Query parameters
-     * @param string   $connection Connection name
      * @param string[] $tables     Table names touched by this query (for version busting)
      * @return string Cache key (MD5 hex)
      */
@@ -393,7 +373,6 @@ class QueryCache
     /**
      * Get cache file path with path traversal protection
      *
-     * @param string $key Cache key
      * @return string File path
      * @throws \InvalidArgumentException If the key contains invalid characters
      */
@@ -413,7 +392,6 @@ class QueryCache
     /**
      * Safely unserialize cache data with validation
      *
-     * @param string $data Raw serialized data
      * @return array|null The unserialized data or null if invalid
      */
     protected static function safeUnserialize($data)
@@ -436,9 +414,6 @@ class QueryCache
     /**
      * Add item to memory cache
      *
-     * @param string $key Cache key
-     * @param mixed  $data Data to cache
-     * @param int    $expires Expiration timestamp
      * @return void
      */
     protected static function addToMemoryCache($key, $data, $expires)
