@@ -380,16 +380,6 @@ class AuthController extends Controller
             $hashedPassword = \Core\Security\Hasher::make($newPassword);
             $appName = defined('APP_NAME') ? APP_NAME : 'Our Application';
 
-            $update = db()->table('users')->where('id', $id)->update(['password' => $hashedPassword, 'updated_at' => timestamp()]);
-            if (!isSuccess($update['code'])) {
-                return ['code' => 400, 'message' => 'Failed to update password'];
-            }
-
-            $recipientData = [
-                'recipient_email' => $email,
-                'recipient_name' => $name,
-            ];
-
             $emailBody = replaceTextWithData($emailTemplate['email_body'], [
                 'new_password' => $newPassword,
                 'user_fullname' => $name,
@@ -397,12 +387,43 @@ class AuthController extends Controller
                 'app_name' => $appName,
             ]);
 
-            $send = sendEmail($recipientData, $emailTemplate['email_subject'], $emailBody);
-            if (!empty($send['success'])) {
-                return ['code' => 200, 'message' => 'Email has been sent to customer'];
-            }
+            /*
+            | The write and the send are one unit.
+            |
+            | They used to be sequential: the password was updated and committed,
+            | then the email was attempted. A dead SMTP relay therefore locked
+            | the user out of an account whose password had already been
+            | replaced with one nobody would ever read — and the response said
+            | only "Failed to send email".
+            |
+            | Sending inside the transaction means a mail failure throws, the
+            | update rolls back, and the user's existing password still works.
+            | It is deliberately not queued: the caller is telling the user
+            | whether the mail went out, and it cannot know that from a queue.
+            */
+            $sendResult = ['success' => false, 'message' => 'Failed to send email'];
 
-            return ['code' => 400, 'message' => 'Failed to send email'];
+            db()->transaction(function () use ($id, $hashedPassword, $email, $name, $emailTemplate, $emailBody, &$sendResult) {
+                $update = db()->table('users')
+                    ->where('id', $id)
+                    ->update(['password' => $hashedPassword, 'updated_at' => timestamp()]);
+
+                if (!isSuccess($update['code'])) {
+                    throw new \RuntimeException('Failed to update password');
+                }
+
+                $sendResult = sendEmail(
+                    ['recipient_email' => $email, 'recipient_name' => $name],
+                    $emailTemplate['email_subject'],
+                    $emailBody
+                );
+
+                if (($sendResult['success'] ?? false) !== true) {
+                    throw new \RuntimeException((string) ($sendResult['message'] ?? 'Failed to send email'));
+                }
+            });
+
+            return ['code' => 200, 'message' => 'Email has been sent to customer'];
         } catch (\Exception $e) {
             logger()->logException($e);
             return ['code' => 400, 'message' => 'Failed to reset password. Please try again later.'];

@@ -1,7 +1,47 @@
 # 10 — Audit Findings
 
-**Verified:** 2026-09-17 · branch `database-update` · PHP 8.3.8 · **1,693 tests**
-(file order and `--order-by=random`) · PHPStan level 2 clean
+**Verified:** 2026-09-17 · branch `database-update` · PHP 8.3.8 · **1,800 tests**
+(file order and two random orders) · PHPStan level 2 clean
+
+<a id="fixed-on-2026-09-17-tenth"></a>
+### Fixed on 2026-09-17 (tenth pass — mailer, menu, telemetry)
+
+Suite **1,693 → 1,800 tests** (file order and two random orders). PHPStan level 2
+clean. Two new subsystems: `Core\Mail` and `Core\Telemetry`.
+
+| Finding | What changed | Test |
+|---|---|---|
+| **A menu item marked `maintenance` was visible to everyone** | `MenuManager::resolveDynamicValue()` treated any `is_callable()` value as a closure to invoke, and the framework defines a global `maintenance()` helper — so `'state' => 'maintenance'`, the documented way to restrict a module to superadmin, *called that function*. It returns a manager object, which is not scalar, so the state normalised to the default: `release`. Any state or badge string colliding with a global function name had the same problem (`'badge' => 'time'` would have rendered a timestamp). Plain strings are no longer treated as callables; closures, `[$obj, 'method']` and invokables still resolve. | `MenuAccessControlTest` (23) |
+| **A role whitelist that parsed to nothing admitted everyone** | `normalizeRoleIds()` dropped entries that were not positive ints, so `'role_ids' => ['admin']` — a slug where an id belongs — emptied the list, and an empty list means "no whitelist". A restriction became a page open to every user. Unparseable entries now normalise to `0`, which matches no real role. | `MenuAccessControlTest` |
+| **Password reset could lock a user out of their own account** | `AuthController::resetPassword()` committed the new password and *then* sent the email. A dead SMTP relay left the account holding a password nobody would ever read, and the response said only "Failed to send email". The write and the send are now one transaction: a mail failure rolls the password back. Deliberately not queued — the caller is telling the user whether the mail went out, and it cannot know that from a queue. | — |
+| **The mailer had no timeout** | PHPMailer defaults to 300 seconds. One unreachable relay held a web request open for five minutes, and the password-reset route was one `sendEmail()` away from it. Configurable, default 10s, hard-capped at 120. | `MailerTest` (13) |
+| **SMTP internals were returned to the caller** | The old helper's `catch` returned `$mail->ErrorInfo` — the SMTP conversation, including hostnames — as the user-facing message. Detail now goes to the log; the caller gets a sentence it can display. | `MailerTest` |
+| `SMTPAuth` was forced on | A local Mailpit or MailHog accepts no auth, so there was no way to exercise an email path locally. Authentication now happens only when a username is configured, and `log` / `array` / `null` drivers were added. | `MailerTest` |
+| Header injection in mail | A newline in a subject or recipient name starts a new header, which is how a `Bcc` gets added to somebody else's mail. `Message` strips CR/LF/NUL from every header value as it is set. | `MessageTest` (11) |
+| A repeated recipient read as a send failure | PHPMailer returns false for a duplicate address. `Message` lowercases and de-duplicates. | `MessageTest` |
+| **RBAC: a role could be shown as having every permission** | `PermissionController` used `in_array($allAccessID, $currentAbilitiesID)` loosely, and `$allAccessID` is `null` when no wildcard ability exists — so `null == 0` and `null == ""` made a single zero-ish row report the role as having all access. Ids are normalised to int and compared strictly. The wildcard lookup also ran once per row inside `array_map`; hoisted, which takes the build from O(n²) to O(n). | — |
+| **The debug bar silently missed the newest entries** | `FileStore` reads the day's file backwards from `filesize()`, and `write()` had just called `filesize()` on the same path for its cap check — so PHP's stat cache served a size from before the last append and the reader truncated the newest line. `clearstatcache()` on both paths. | `FileStoreTest` (17) |
+| `PerformanceMonitor::reset()` leaked its observer | The new observer slot was not cleared with the rest of the static state, so under a worker SAPI an observer bound to a finished request would keep recording into its dead buffer — the same shape as W-01. | — |
+
+**New: `Core\Mail`** — `Message` (fluent builder, validates and de-duplicates
+addresses, strips header injection, derives a text part), `Mailer` (smtp / log /
+array / null, bounded timeout, attachment path and size guards, generic errors),
+`SendMailJob` (queued sends with a retry budget). `sendEmail()` keeps its exact
+signature and return shape; `queueEmail()` is new.
+
+**New: `Core\Telemetry`** — a Telescope-style recorder and debug bar. Records
+requests, queries, mail, queue jobs, exceptions and logs; shows them on any page;
+AJAX and API calls included. Enabled per user id or for everyone, off by default,
+gated twice in production. Full notes in [07-telemetry.md](07-telemetry.md).
+
+**Checked and found sound** (recorded so the next pass does not re-derive them):
+path normalisation agrees between `Request::resolvePath()` and
+`Router::normalizeUri()`, so there is no menu-gate bypass by encoding or casing;
+the `md5()` calls in `AccessCredentialService` are RFC 2617 Digest and required;
+`applySessionVariable()` interpolates framework constants, not user input; the
+`while (true)` loops in `HasStreaming` all have reachable breaks.
+
+---
 
 <a id="fixed-on-2026-09-17-ninth"></a>
 ### Fixed on 2026-09-17 (ninth pass — CSRF binding, front-end XSS, comment cleanup)

@@ -23,6 +23,7 @@ still open, in priority order, with the file and line numbers checked on that da
 | 04 | [subsystems.md](04-subsystems.md) | You are working inside DB / auth / cache / session / security / views / console / queue / backup. |
 | 05 | [conventions.md](05-conventions.md) | You are adding a route, controller, middleware, migration, command, or test. |
 | 06 | [validation.md](06-validation.md) | You are adding or changing a validation rule. Covers both validators, how they dispatch, and where they disagree. |
+| 07 | [telemetry.md](07-telemetry.md) | You are debugging a request, or adding a source to the debug bar. Covers the gate, redaction, the caps, and the storage trap. |
 | 10 | [audit-findings.md](10-audit-findings.md) | **The bug register.** Severity-ranked, with file:line and fix. |
 | 11 | [api-mobile-readiness.md](11-api-mobile-readiness.md) | You are building or hardening the mobile/API surface. |
 | 20 | [framework-comparison.md](20-framework-comparison.md) | You need to justify a design decision against Laravel 12 / CI3 / CI4 / CakePHP 5 / Yii2. |

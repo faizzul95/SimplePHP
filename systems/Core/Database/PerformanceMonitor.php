@@ -115,6 +115,13 @@ class PerformanceMonitor
     protected static $timers = [];
 
     /**
+     * Notified once per completed query. See observe().
+     *
+     * @var null|callable(array<string, mixed>): void
+     */
+    protected static $observer = null;
+
+    /**
      * Start monitoring a query
      *
      * @return void
@@ -195,7 +202,38 @@ class PerformanceMonitor
             }
         }
 
+        self::notifyObserver($entry);
+
         unset(self::$timers[$queryId]);
+    }
+
+    /**
+     * Watch completed queries.
+     *
+     * One slot, set by whoever wants a live feed — the telemetry recorder is
+     * the current caller. A pull-based alternative would mean the monitor's
+     * ring buffer decides what an observer can see; pushing keeps that the
+     * observer's problem.
+     *
+     * @param null|callable(array<string, mixed>): void $observer Null clears it.
+     */
+    public static function observe(?callable $observer): void
+    {
+        self::$observer = $observer;
+    }
+
+    /** @param array<string, mixed> $entry */
+    private static function notifyObserver(array $entry): void
+    {
+        if (self::$observer === null) {
+            return;
+        }
+
+        try {
+            (self::$observer)($entry);
+        } catch (\Throwable) {
+            // An observer must never break the query it is watching.
+        }
     }
 
     /**
@@ -659,6 +697,9 @@ class PerformanceMonitor
         self::$timers             = [];
         self::$captureBacktraces  = false;
         self::$queryFingerprints  = [];
+        // Cleared with the rest: under a worker SAPI an observer bound to a
+        // finished request would otherwise keep recording into its dead buffer.
+        self::$observer           = null;
         self::$stats = [
             'total_queries' => 0,
             'slow_queries'  => 0,

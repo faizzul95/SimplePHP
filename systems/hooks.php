@@ -1152,6 +1152,61 @@ if (!function_exists('collect')) {
 |
 */
 
+/*
+|--------------------------------------------------------------------------
+| TELEMETRY HELPER
+|--------------------------------------------------------------------------
+|
+|  telemetry()->recordQuery($sql, $binds, $ms);
+|  telemetry()->recordMail(['subject' => ...]);
+|  telemetry()->enabled();
+|
+| A framework service rather than a static, so a worker SAPI gets a fresh
+| recorder per request and the flush can reach it.
+|
+*/
+
+if (!function_exists('telemetry')) {
+    function telemetry(): \Core\Telemetry\Recorder
+    {
+        return framework_service(
+            'telemetry',
+            static fn(): \Core\Telemetry\Recorder => new \Core\Telemetry\Recorder(\config('telemetry') ?? [])
+        );
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| MAIL HELPER
+|--------------------------------------------------------------------------
+|
+|  mailer()->send($message);                       // send now
+|  mailer()->queue($message);                      // hand to the queue
+|  mail_message()->to('a@b.c')->subject('Hi')      // build one
+|      ->html('<p>Hello</p>');
+|
+*/
+
+if (!function_exists('mailer')) {
+    /** The configured Mailer. A framework service so tests can swap the driver. */
+    function mailer(): \Core\Mail\Mailer
+    {
+        return framework_service(
+            'mailer',
+            static fn(): \Core\Mail\Mailer => new \Core\Mail\Mailer(\config('mail') ?? [])
+        );
+    }
+}
+
+if (!function_exists('mail_message')) {
+    /** A new, empty mail Message. */
+    function mail_message(): \Core\Mail\Message
+    {
+        return \Core\Mail\Message::make();
+    }
+}
+
 if (!function_exists('cache')) {
     /** Get / set cache values, or return the CacheManager instance. */
     function cache(string|array|null $key = null, mixed $default = null): mixed

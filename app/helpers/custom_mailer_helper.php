@@ -1,136 +1,150 @@
 <?php
 
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\SMTP;
-use PHPMailer\PHPMailer\Exception;
+use Core\Mail\Mailer;
+use Core\Mail\Message;
 
-function sendEmail($recipientData = NULL, $subject = NULL, $dataBody = NULL, $attachment = NULL)
-{
-    return sendUsingMailer($recipientData, $subject, $dataBody, $attachment);
+/*
+|--------------------------------------------------------------------------
+| Mailer helper
+|--------------------------------------------------------------------------
+|
+| These wrap Core\Mail. The signatures are unchanged, so existing callers keep
+| working; what changed is underneath — a bounded SMTP timeout, a generic error
+| message with the detail in the log rather than the SMTP conversation in the
+| HTTP response, and log/array drivers so an email path can be exercised
+| without a live server.
+|
+|   sendEmail($recipient, $subject, $body);        // send now
+|   queueEmail($recipient, $subject, $body);       // hand to the queue
+|   mail_message()->to(...)->subject(...)          // build one directly
+|
+| $recipient accepts:
+|   recipient_email  (required)   recipient_name
+|   recipient_cc     string|array recipient_bcc  string|array
+|   reply_to         string|array
+*/
+
+if (!function_exists('sendEmail')) {
+    /**
+     * @param array<string, mixed>|null $recipientData
+     * @param string|array<int, string>|null $attachment
+     * @return array{success: bool, message: string}
+     */
+    function sendEmail($recipientData = null, $subject = null, $dataBody = null, $attachment = null): array
+    {
+        return mailer()->send(buildMailMessage($recipientData, $subject, $dataBody, $attachment));
+    }
 }
 
-// Sent Using PHPMAILER / Default
-function sendUsingMailer($recipientData = NULL, $subject = NULL, $dataBody = NULL, $attachment = NULL)
-{
-    global $config;
-
-    $recipientData = is_array($recipientData) ? $recipientData : [];
-    $primaryEmail = trim((string) ($recipientData['recipient_email'] ?? ''));
-    $primaryName = trim((string) ($recipientData['recipient_name'] ?? ''));
-    $subject = (string) ($subject ?? '');
-    $dataBody = (string) ($dataBody ?? '');
-
-    if ($primaryEmail === '' || filter_var($primaryEmail, FILTER_VALIDATE_EMAIL) === false) {
-        return ['success' => false, 'message' => 'Invalid recipient email address'];
+if (!function_exists('sendUsingMailer')) {
+    /**
+     * Retained because callers exist; identical to sendEmail().
+     *
+     * @param array<string, mixed>|null $recipientData
+     * @param string|array<int, string>|null $attachment
+     * @return array{success: bool, message: string}
+     */
+    function sendUsingMailer($recipientData = null, $subject = null, $dataBody = null, $attachment = null): array
+    {
+        return sendEmail($recipientData, $subject, $dataBody, $attachment);
     }
-
-    // Create an instance; passing `true` enables exceptions
-    $mail = new PHPMailer(true);
-
-    try {
-
-        // Server settings
-        if (filter_var($config['mail']['debug'], FILTER_VALIDATE_BOOLEAN)) {
-            $mail->SMTPDebug = SMTP::DEBUG_SERVER; // Enable verbose debug output
-        }
-
-        if ($config['mail']['driver'] === 'smtp') {
-            $mail->isSMTP();                                    // Send using SMTP
-            $mail->SMTPAuth   = true;                           // Enable SMTP authentication
-        }
-
-        $mail->Host       = $config['mail']['host'];           // Set the SMTP server to send through
-        $mail->Username   = $config['mail']['username'];       // SMTP username
-        $mail->Password   = $config['mail']['password'];       // SMTP password
-        $mail->SMTPSecure = $config['mail']['encryption'];     // Enable implicit TLS encryption
-        $mail->Port       = $config['mail']['port'];           // TCP port to connect to
-
-        // Recipients
-        $mail->setFrom($config['mail']['from_email'], $config['mail']['from_name']);
-        $mail->addAddress($primaryEmail, $primaryName); // Add a recipient
-
-        // Add a CC recipient
-        if (array_key_exists("recipient_cc", $recipientData) && hasData($recipientData['recipient_cc'])) {
-            $ccs = $recipientData['recipient_cc'];
-            if (is_array($ccs)) {
-                foreach ($ccs as $cc) {
-                    $cc = trim((string) $cc);
-                    if (filter_var($cc, FILTER_VALIDATE_EMAIL) !== false) {
-                        $mail->addCC($cc);
-                    }
-                }
-            } else {
-                $ccs = trim((string) $ccs);
-                if (filter_var($ccs, FILTER_VALIDATE_EMAIL) !== false) {
-                    $mail->addCC($ccs);
-                }
-            }
-        }
-
-        // Add a BCC recipient
-        if (array_key_exists("recipient_bcc", $recipientData) && hasData($recipientData['recipient_bcc'])) {
-            $bccs = $recipientData['recipient_bcc'];
-            if (is_array($bccs)) {
-                foreach ($bccs as $bcc) {
-                    $bcc = trim((string) $bcc);
-                    if (filter_var($bcc, FILTER_VALIDATE_EMAIL) !== false) {
-                        $mail->addBCC($bcc);
-                    }
-                }
-            } else {
-                $bccs = trim((string) $bccs);
-                if (filter_var($bccs, FILTER_VALIDATE_EMAIL) !== false) {
-                    $mail->addBCC($bccs);
-                }
-            }
-        }
-
-        // Content
-        $mail->isHTML(true); //Set email format to HTML
-        $mail->Subject = $subject;
-        $mail->Body    = $dataBody;
-
-        if (!empty($attachment)) {
-            if (is_array($attachment)) {
-                foreach ($attachment as $files) {
-                    if (is_string($files) && security()->canReadPath($files))
-                        $mail->addAttachment($files);
-                }
-            } else {
-                if (is_string($attachment) && security()->canReadPath($attachment))
-                    $mail->addAttachment($attachment);
-            }
-        }
-
-        if ($mail->send()) {
-            $response =  ['success' => true, 'message' => 'Email sent successfully'];
-        } else {
-            $response =  ['success' => false, 'message' => 'Email unable to sent'];
-        }
-    } catch (\Exception $e) {
-        $response = ['success' => false, 'message' => "Message could not be sent. Mailer Error: {$mail->ErrorInfo}"];
-    }
-
-    return $response;
 }
 
-function replaceTextWithData($string = NULL, $arrayOfStringToReplace = array())
-{
-	$dataToReplace = arrayDataReplace($arrayOfStringToReplace);
-	return str_replace(array_keys($dataToReplace), array_values($dataToReplace), $string);
+if (!function_exists('queueEmail')) {
+    /**
+     * Send in the background, so an SMTP round-trip never sits inside a request.
+     *
+     * Returns the job id, or null when there is no queue — in which case the
+     * message was sent inline rather than dropped.
+     *
+     * @param array<string, mixed>|null $recipientData
+     * @param string|array<int, string>|null $attachment
+     */
+    function queueEmail($recipientData = null, $subject = null, $dataBody = null, $attachment = null): ?string
+    {
+        return mailer()->queue(buildMailMessage($recipientData, $subject, $dataBody, $attachment));
+    }
 }
 
-function arrayDataReplace($data)
-{
-    $newKey = $newValue = $newData = [];
-    foreach ($data as $key => $value) {
-        array_push($newKey, '%' . $key . '%');
-        array_push($newValue, $value);
+if (!function_exists('buildMailMessage')) {
+    /**
+     * @param array<string, mixed>|null $recipientData
+     * @param string|array<int, string>|null $attachment
+     */
+    function buildMailMessage($recipientData = null, $subject = null, $dataBody = null, $attachment = null): Message
+    {
+        return Message::fromLegacy(
+            is_array($recipientData) ? $recipientData : [],
+            (string) ($subject ?? ''),
+            (string) ($dataBody ?? ''),
+            $attachment
+        );
     }
+}
 
-    foreach ($newKey as $key => $data) {
-        $newData[$data] = $newValue[$key];
+if (!function_exists('mailerCaptured')) {
+    /**
+     * Messages held by the `array` driver. For tests.
+     *
+     * @return list<Message>
+     */
+    function mailerCaptured(): array
+    {
+        return Mailer::captured();
     }
+}
 
-    return $newData;
+if (!function_exists('replaceTextWithData')) {
+    /**
+     * Substitute %placeholder% tokens in a template.
+     *
+     * Values are inserted as-is: templates are HTML and some placeholders are
+     * meant to carry markup. Escape anything user-supplied before passing it.
+     *
+     * @param array<string, mixed> $arrayOfStringToReplace
+     */
+    function replaceTextWithData($string = null, $arrayOfStringToReplace = []): string
+    {
+        $subject = (string) ($string ?? '');
+        if ($subject === '' || !is_array($arrayOfStringToReplace) || $arrayOfStringToReplace === []) {
+            return $subject;
+        }
+
+        $search = [];
+        $replace = [];
+
+        foreach ($arrayOfStringToReplace as $key => $value) {
+            if (is_array($value) || is_object($value)) {
+                continue;
+            }
+
+            $search[] = '%' . $key . '%';
+            $replace[] = (string) $value;
+        }
+
+        return $search === [] ? $subject : str_replace($search, $replace, $subject);
+    }
+}
+
+if (!function_exists('arrayDataReplace')) {
+    /**
+     * The %key% => value map replaceTextWithData() uses.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, string>
+     */
+    function arrayDataReplace($data): array
+    {
+        $map = [];
+
+        foreach ((array) $data as $key => $value) {
+            if (is_array($value) || is_object($value)) {
+                continue;
+            }
+
+            $map['%' . $key . '%'] = (string) $value;
+        }
+
+        return $map;
+    }
 }

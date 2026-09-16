@@ -126,6 +126,7 @@ $config['framework'] = [
     'middleware_aliases' => [
         'session.stateful' => \App\Http\Middleware\StartStatefulSession::class,
         'headers' => \App\Http\Middleware\SetSecurityHeaders::class,
+        'telemetry' => \App\Http\Middleware\RecordTelemetry::class,
         'preload.assets' => \App\Http\Middleware\PreloadCriticalAssets::class,
         'trusted.hosts' => \App\Http\Middleware\ValidateTrustedHosts::class,
         'trusted.proxies' => \App\Http\Middleware\ValidateTrustedProxies::class,
@@ -173,6 +174,9 @@ $config['framework'] = [
     | cheap everywhere — anything stateful or route-specific belongs in a group.
     */
     'middleware_global' => [
+        // First, so it observes the whole request including anything the
+        // middleware below it rejects. A no-op unless telemetry.enabled.
+        'telemetry',
         'headers',
         'trusted.hosts',
         'trusted.proxies',

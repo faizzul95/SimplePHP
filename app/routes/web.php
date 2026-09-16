@@ -6,6 +6,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MasterEmailTemplateController;
 use App\Http\Controllers\ModalController;
 use App\Http\Controllers\RoleController;
+use App\Http\Controllers\TelemetryController;
 use App\Http\Controllers\UserController;
 
 /** @var \Core\Routing\Router $router */
@@ -23,6 +24,16 @@ use App\Http\Controllers\UserController;
 $router->group(['middleware' => ['web']], function ($router) {
     $router->post('/_myth/csp-report', [CspReportController::class, 'store'])
         ->name('csp.report');
+
+    /*
+    | Debug bar feed. Both actions 404 unless the telemetry gate admits the
+    | caller, so on a site with telemetry off these behave as if absent.
+    */
+    $router->get('/_telemetry/entries', [TelemetryController::class, 'index'])
+        ->name('telemetry.entries');
+
+    $router->delete('/_telemetry/entries', [TelemetryController::class, 'destroy'])
+        ->name('telemetry.clear');
 
     $router->get('/', [DashboardController::class, 'index'])
         ->webAuth()

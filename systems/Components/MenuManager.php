@@ -376,6 +376,7 @@ class MenuManager
             return false;
         }
 
+        // Ids arrive already normalised to positive ints by normalizeRoleIds().
         return in_array($roleId, $allowedRoleIds, true);
     }
 
@@ -552,11 +553,26 @@ class MenuManager
         }
 
         $normalized = [];
+
         foreach ($roleIds as $roleId) {
-            $value = (int) $roleId;
-            if ($value > 0) {
-                $normalized[] = $value;
+            // An absent entry is not an expressed intent; skip it.
+            if ($roleId === null || $roleId === '' || is_array($roleId) || is_object($roleId)) {
+                continue;
             }
+
+            $value = (int) $roleId;
+
+            /*
+            | An entry that does not resolve to a real role id becomes 0, which
+            | matches nobody, instead of being dropped.
+            |
+            | Dropping it emptied the list, and an empty list means "no
+            | whitelist" — so `'role_ids' => ['admin']`, someone writing a slug
+            | where an id belongs, turned a restriction into a page visible to
+            | every user. A whitelist that parses to nothing should admit
+            | nothing.
+            */
+            $normalized[] = $value > 0 ? $value : 0;
         }
 
         $normalized = array_values(array_unique($normalized));
@@ -909,9 +925,33 @@ class MenuManager
         return array_replace_recursive($this->defaultRendererProfile(), $variantProfile);
     }
 
+    /**
+     * Whether a config value is meant to be *called* rather than used.
+     *
+     * A plain string never is, however callable it looks. This used to test
+     * is_callable(), and the framework defines a global maintenance() helper —
+     * so `'state' => 'maintenance'`, the documented way to hide a module from
+     * everyone but superadmin, called that function instead. It returns a
+     * manager object, which is not scalar, so the state normalised to the
+     * default: `release`. The module stayed visible to every user.
+     *
+     * Any state or badge string colliding with a global function name had the
+     * same problem ('badge' => 'time' would have rendered a timestamp), so the
+     * fix is the category, not the one name. Closures, [$object, 'method'] and
+     * invokables still resolve; the documented config forms are all closures.
+     */
+    private function isDynamicValue(mixed $value): bool
+    {
+        if (is_string($value)) {
+            return false;
+        }
+
+        return $value instanceof \Closure || ((is_object($value) || is_array($value)) && is_callable($value));
+    }
+
     private function resolveDynamicValue($value, array $menu, array $extraArguments = [])
     {
-        if (!is_callable($value)) {
+        if (!$this->isDynamicValue($value)) {
             return $value;
         }
 

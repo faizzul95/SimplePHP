@@ -54,26 +54,40 @@ class PermissionController extends Controller
             ->where('role_id', $roleID)
             ->get();
 
+        /*
+        | Ids are compared as integers, and strictly.
+        |
+        | PDO hands these back as strings under some drivers and as ints under
+        | others, so a bare in_array() had to stay loose to work at all — and a
+        | loose in_array(null, ...) matches 0, "0" and "". With no wildcard
+        | ability configured $allAccessID is null, so a single zero-ish entry in
+        | the permission table reported the role as having *every* permission.
+        | Normalising first is what makes the strict comparison safe.
+        */
         $currentAbilitiesID = [];
         foreach ($currentPerm as $perm) {
-            $currentAbilitiesID[] = $perm['abilities_id'];
+            $currentAbilitiesID[] = (int) $perm['abilities_id'];
         }
+
+        // Hoisted: this is a property of the ability list, not of the row, and
+        // scanning for it inside the map made the whole build O(n²).
+        $allAccessID = null;
+        foreach ($result as $r) {
+            if ($r['abilities_slug'] === '*') {
+                $allAccessID = (int) $r['id'];
+                break;
+            }
+        }
+
+        $hasAllAccess = $allAccessID !== null && in_array($allAccessID, $currentAbilitiesID, true);
 
         $canModifyAssignments = permission('rbac-roles-update');
 
-        $result = array_map(function ($row) use ($result, $roleID, $currentAbilitiesID, $canModifyAssignments) {
+        $result = array_map(function ($row) use ($roleID, $currentAbilitiesID, $canModifyAssignments, $hasAllAccess) {
             $abilitiesID = $row['id'];
             $allAccess = $row['abilities_slug'] === '*' ? 1 : 0;
 
-            $allAccessID = null;
-            foreach ($result as $r) {
-                if ($r['abilities_slug'] === '*') {
-                    $allAccessID = $r['id'];
-                    break;
-                }
-            }
-            $hasAllAccess = in_array($allAccessID, $currentAbilitiesID);
-            $acquiredAccess = in_array($abilitiesID, $currentAbilitiesID) ? 1 : 0;
+            $acquiredAccess = in_array((int) $abilitiesID, $currentAbilitiesID, true) ? 1 : 0;
 
             if ($allAccess) {
                 $checked = $acquiredAccess ? 'checked' : '';
