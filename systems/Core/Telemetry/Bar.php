@@ -167,7 +167,8 @@ CSS;
             case 'queue':   return (p.job || p.class || 'job') + '  ' + (p.status || '');
             case 'exception': return (p.class || 'Exception') + ': ' + (p.message || '');
             case 'log':     return '[' + (p.level || 'log') + '] ' + (p.message || '');
-            case 'http':    return (p.method || '') + ' ' + (p.url || '');
+            case 'http':    return (p.method || '') + ' ' + (p.url || '') + '  → ' + (p.status || (p.error ? 'failed' : ''));
+            case 'cache':   return (p.operation || '') + '  ' + (p.key || '');
             case 'dump':    return (p.label ? p.label + ': ' : '') + preview(p.value);
             case 'timer':   return p.kind === 'counter'
                                 ? p.name + ' × ' + p.count
@@ -192,6 +193,8 @@ CSS;
         if (entry.type === 'exception') { return (p.file || '') + ':' + (p.line || ''); }
         if (entry.type === 'dump') { return (p.type || '') + (p.origin ? '  ' + p.origin : ''); }
         if (entry.type === 'timer') { return p.origin || p.note || ''; }
+        if (entry.type === 'cache') { return 'store: ' + (p.store || '') + (p.ttl ? '  ttl ' + p.ttl + 's' : ''); }
+        if (entry.type === 'http') { return (p.ip || '') + (p.bytes ? '  ' + p.bytes + ' bytes' : '') + (p.error ? '  ' + p.error : ''); }
         if (entry.type === 'mail') { return 'driver: ' + (p.driver || '') + (p.error ? '  ' + p.error : ''); }
         if (entry.type === 'request') {
             var bits = [];
@@ -253,14 +256,31 @@ CSS;
         var counts = { all: entries.length };
         entries.forEach(function (e) { counts[e.type] = (counts[e.type] || 0) + 1; });
 
-        var types = ['all', 'request', 'query', 'dump', 'timer', 'mail', 'queue', 'exception', 'log'];
+        var types = ['all', 'request', 'query', 'cache', 'http', 'dump', 'timer', 'mail', 'queue', 'exception', 'log'];
         var tabs = types.map(function (type) {
             var n = counts[type] || 0;
             if (type !== 'all' && n === 0) { return ''; }
+
+            var badge = String(n);
             var cls = 'mt-count' + (type === 'exception' && n ? ' is-error' : '');
+
+            /* For the cache the count alone says nothing; the hit rate does. */
+            if (type === 'cache') {
+                var reads = entries.filter(function (e) {
+                    var op = (e.payload || {}).operation;
+                    return e.type === 'cache' && (op === 'hit' || op === 'miss');
+                });
+                if (reads.length) {
+                    var hits = reads.filter(function (e) { return e.payload.operation === 'hit'; }).length;
+                    var rate = Math.round((hits / reads.length) * 100);
+                    badge = rate + '%';
+                    cls += rate < 50 ? ' is-warn' : '';
+                }
+            }
+
             return '<button type="button" class="mt-tab' + (active === type ? ' is-active' : '') +
                 '" data-type="' + esc(type) + '">' + esc(type) +
-                '<span class="' + cls + '">' + n + '</span></button>';
+                '<span class="' + cls + '">' + esc(badge) + '</span></button>';
         }).join('');
 
         /* The N+1 view: one row per query shape, busiest first. */

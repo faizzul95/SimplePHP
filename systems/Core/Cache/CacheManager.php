@@ -120,7 +120,21 @@ class CacheManager
      */
     public function get(string $key, mixed $default = null): mixed
     {
-        return $this->store()->get($this->prefix . $key, $default);
+        $started = microtime(true);
+
+        /*
+        | A sentinel rather than $default, so a hit on a stored null is not
+        | mistaken for a miss. Both shipped stores already distinguish the two,
+        | so this changes nothing about what is returned — it only makes the
+        | difference visible to the telemetry line below.
+        */
+        $sentinel = self::$missSentinel ??= new \stdClass();
+        $value = $this->store()->get($this->prefix . $key, $sentinel);
+        $hit = $value !== $sentinel;
+
+        $this->recordCacheEvent($hit ? 'hit' : 'miss', $key, $started);
+
+        return $hit ? $value : $default;
     }
 
     /**
@@ -130,7 +144,12 @@ class CacheManager
      */
     public function put(string $key, mixed $value, int $seconds = 0): bool
     {
-        return $this->store()->put($this->prefix . $key, $value, $seconds);
+        $started = microtime(true);
+        $stored = $this->store()->put($this->prefix . $key, $value, $seconds);
+
+        $this->recordCacheEvent($stored ? 'put' : 'put-failed', $key, $started, ['ttl' => $seconds]);
+
+        return $stored;
     }
 
     /**
@@ -305,7 +324,58 @@ class CacheManager
      */
     public function forget(string $key): bool
     {
-        return $this->store()->forget($this->prefix . $key);
+        $started = microtime(true);
+        $forgotten = $this->store()->forget($this->prefix . $key);
+
+        $this->recordCacheEvent('forget', $key, $started);
+
+        return $forgotten;
+    }
+
+    /** Shared miss marker; identity is the whole point, so one instance. */
+    private static ?\stdClass $missSentinel = null;
+
+    /**
+     * Feed the debug bar.
+     *
+     * Only the key and the outcome — never the cached value. A cache holds
+     * rendered pages and query results, and writing those to a telemetry file
+     * on every read would dwarf everything else in it.
+     *
+     * @param array<string, mixed> $extra
+     */
+    private function recordCacheEvent(string $operation, string $key, float $started, array $extra = []): void
+    {
+        if (!function_exists('telemetry')) {
+            return;
+        }
+
+        try {
+            telemetry()->record(
+                \Core\Telemetry\Entry::TYPE_CACHE,
+                array_merge([
+                    'operation' => $operation,
+                    'key' => $key,
+                    'store' => $this->currentStoreName(),
+                ], $extra),
+                (microtime(true) - $started) * 1000,
+                [$operation]
+            );
+        } catch (\Throwable) {
+            // Observing the cache must not break it.
+        }
+    }
+
+    private function currentStoreName(): string
+    {
+        try {
+            $store = $this->store();
+            $name = substr(strrchr('\\' . $store::class, '\\') ?: '', 1);
+
+            return strtolower(str_replace(['Store', 'Driver'], '', $name)) ?: 'unknown';
+        } catch (\Throwable) {
+            return 'unknown';
+        }
     }
 
     /**

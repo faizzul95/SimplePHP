@@ -1,6 +1,6 @@
 # 07 — Telemetry and the debug bar
 
-**Added:** 2026-09-17 · `Core\Telemetry` · 79 tests
+**Added:** 2026-09-17 · `Core\Telemetry` · 96 tests
 
 Records what a request did — HTTP in, queries out, mail, queue jobs, exceptions,
 logs — and shows it in a bar on any page. AJAX and API calls are recorded the
@@ -54,6 +54,8 @@ it, which is how a login part-way through a request is picked up.
 | `log` | `Recorder::recordLog()` | level, message, context |
 | `dump` | `dbg()` | label, value, calling file:line |
 | `timer` | `dbg_start`/`dbg_stop`/`dbg_count` | name, kind (span / counter / unclosed) |
+| `cache` | `Core\Cache\CacheManager` | operation (hit / miss / put / forget), key, store |
+| `http` | `Core\Support\HttpClient` | method, redacted url, status, bytes, resolved ip |
 
 Adding a source is one call:
 
@@ -70,6 +72,42 @@ place timing exists — does nothing while it is off.
 `observe(null)` is called in the middleware's `finally`, and `reset()` clears the
 slot too: under a worker SAPI an observer bound to a finished request would
 otherwise keep recording into a dead buffer.
+
+### Cache
+
+`CacheManager` records `hit`, `miss`, `put`, `forget` with the key, the store
+name and the duration. The bar's **cache** tab shows the **hit rate** rather
+than a count, because the count on its own says nothing — and turns amber below
+50%.
+
+`remember()` shows as a miss followed by a put, which is what you want to see:
+it tells you the closure actually ran.
+
+Two deliberate choices:
+
+- **The cached value is never recorded.** A cache holds rendered pages and query
+  results; writing those to a telemetry file on every read would dwarf
+  everything else in it.
+- **`get()` uses an internal sentinel as the store default**, so a stored `null`
+  registers as a hit rather than a miss. Both shipped stores already
+  distinguished the two, so nothing about the return value changed — the
+  difference just became visible.
+
+### Outbound HTTP
+
+`HttpClient` records method, URL, status, duration, response size and the
+resolved IP, so third-party latency sits in the same timeline as your own
+queries. It is recorded once after `curl_exec`, before the error paths, so the
+entry exists for all three outcomes: success, a cURL failure, and a 4xx/5xx.
+
+The response body is not recorded — it can be megabytes, and it is the one part
+of an outbound call you can usually get elsewhere.
+
+URLs are redacted before storage. An outbound URL routinely carries an
+`api_key` or a signed token as a query parameter, and the recorder's key-based
+redaction cannot reach inside a string, so `redactUrl()` rewrites the query
+string first. Non-secret parameters survive, so `?api_key=…&page=7` keeps its
+`page=7`.
 
 ---
 
@@ -219,3 +257,4 @@ allowlist lets you read your own traffic, not everyone else's request bodies.
 | `tests/Unit/Telemetry/FileStoreTest.php` | Reverse reads across chunk boundaries, filters, retention, corrupt lines |
 | `tests/Unit/Telemetry/BarTest.php` | Injection points, escaping, idempotence |
 | `tests/Unit/Telemetry/DebugHelpersTest.php` | dbg() value handling and redaction, timer and counter semantics, query fingerprinting |
+| `tests/Unit/Telemetry/CollectorsTest.php` | Cache behaviour is unchanged by instrumentation, hit/miss recording, URL redaction |

@@ -430,6 +430,7 @@ final class HttpClient
             curl_setopt($ch, CURLOPT_POSTFIELDS, $options['body'] ?? []);
         }
 
+        $startedAt = microtime(true);
         $result = curl_exec($ch);
         $error  = curl_error($ch);
         $code   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -438,6 +439,13 @@ final class HttpClient
             ? curl_getinfo($ch, CURLINFO_CERTINFO)
             : null;
         curl_close($ch);
+
+        /*
+        | Recorded here rather than at either return, so the entry exists for
+        | all three outcomes — success, a cURL failure, and a 4xx/5xx — each of
+        | which leaves this method by a different path.
+        */
+        self::recordTelemetry($method, $url, (int) $code, $startedAt, $result, $error, $actualIp);
 
         if ($result === false) {
             throw new \RuntimeException("HTTP request failed: {$error}");
@@ -458,6 +466,88 @@ final class HttpClient
         }
 
         return (string) $result;
+    }
+
+    /**
+     * Feed the debug bar, so third-party latency sits in the same timeline as
+     * your own queries.
+     *
+     * The response body is not recorded: it can be megabytes, and it is the one
+     * part of an outbound call you can usually get elsewhere.
+     */
+    private static function recordTelemetry(
+        string $method,
+        string $url,
+        int $status,
+        float $startedAt,
+        mixed $result,
+        string $error,
+        string $ip
+    ): void {
+        if (!function_exists('telemetry')) {
+            return;
+        }
+
+        try {
+            $failed = $result === false || $status >= 400;
+
+            $tags = [];
+            if ($status >= 500 || $result === false) { $tags[] = 'server-error'; }
+            elseif ($status >= 400) { $tags[] = 'client-error'; }
+
+            telemetry()->record(
+                \Core\Telemetry\Entry::TYPE_HTTP,
+                [
+                    'method' => $method,
+                    'url' => self::redactUrl($url),
+                    'status' => $status,
+                    'ok' => !$failed,
+                    'error' => $error === '' ? null : $error,
+                    'ip' => $ip,
+                    'bytes' => is_string($result) ? strlen($result) : 0,
+                ],
+                (microtime(true) - $startedAt) * 1000,
+                $tags
+            );
+        } catch (\Throwable) {
+            // Observing a call must not break it.
+        }
+    }
+
+    /**
+     * Strip secrets out of a query string before it is written to disk.
+     *
+     * An outbound URL routinely carries an api_key or a signed token as a
+     * query parameter, and the recorder's key-based redaction does not reach
+     * inside a string. This does it before handing the value over.
+     */
+    private static function redactUrl(string $url): string
+    {
+        $query = parse_url($url, PHP_URL_QUERY);
+        if (!is_string($query) || $query === '') {
+            return $url;
+        }
+
+        parse_str($query, $parameters);
+        if ($parameters === []) {
+            return $url;
+        }
+
+        $secretish = '/(pass|secret|token|key|auth|sig|signature|credential)/i';
+        $changed = false;
+
+        foreach ($parameters as $name => $value) {
+            if (is_string($name) && preg_match($secretish, $name)) {
+                $parameters[$name] = '[redacted]';
+                $changed = true;
+            }
+        }
+
+        if (!$changed) {
+            return $url;
+        }
+
+        return str_replace($query, http_build_query($parameters), $url);
     }
 
     /**
