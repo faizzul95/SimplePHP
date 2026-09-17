@@ -202,11 +202,176 @@ final class Recorder
         ], null, [$level]);
     }
 
+    // ─── Developer-facing debugging ──────────────────────────────────
+
+    /**
+     * Show a value in the bar instead of printing it.
+     *
+     * This is the point of the whole type: `var_dump()` into a JSON endpoint
+     * corrupts the response, and into an HTML page moves the layout. Recording
+     * it leaves the response byte-identical.
+     *
+     * @param string $origin file:line of the dbg() call, not of this method.
+     */
+    public function recordDump(mixed $value, string $label = '', string $origin = ''): void
+    {
+        $this->record(Entry::TYPE_DUMP, [
+            'label' => $label,
+            'origin' => $origin,
+            'type' => get_debug_type($value),
+            'value' => $this->describe($value),
+        ], null, ['dump']);
+    }
+
+    /** @var array<string, float> Open spans, keyed by name. */
+    private array $timers = [];
+
+    /** @var array<string, int> */
+    private array $counters = [];
+
+    public function startTimer(string $name): void
+    {
+        $this->timers[$name] = microtime(true);
+    }
+
+    /**
+     * Close a span and record it. Returns the elapsed milliseconds, or null if
+     * the timer was never started — a stop without a start is a bug in the
+     * caller, and silently recording 0ms would hide it.
+     */
+    public function stopTimer(string $name, string $origin = ''): ?float
+    {
+        if (!isset($this->timers[$name])) {
+            return null;
+        }
+
+        $elapsedMs = (microtime(true) - $this->timers[$name]) * 1000;
+        unset($this->timers[$name]);
+
+        $this->record(Entry::TYPE_TIMER, [
+            'name' => $name,
+            'kind' => 'span',
+            'origin' => $origin,
+        ], $elapsedMs, ['timer']);
+
+        return $elapsedMs;
+    }
+
+    /**
+     * Bump a named counter. Only the final value is recorded, at flush, so
+     * counting inside a hot loop costs an array increment rather than an entry.
+     */
+    public function increment(string $name, int $by = 1): int
+    {
+        return $this->counters[$name] = ($this->counters[$name] ?? 0) + $by;
+    }
+
+    /** @return array<string, int> */
+    public function counters(): array
+    {
+        return $this->counters;
+    }
+
+    /**
+     * Group this request's queries by shape.
+     *
+     * Answers "how many times did this run" directly: literals are replaced so
+     * `where id = 1` and `where id = 2` collapse to one row with a count. A
+     * count in the dozens against one shape is the signature of an N+1.
+     *
+     * @return list<array{sql: string, count: int, total_ms: float}>
+     */
+    public function queryShapes(): array
+    {
+        $shapes = [];
+
+        foreach ($this->entries as $entry) {
+            if ($entry->type !== Entry::TYPE_QUERY) {
+                continue;
+            }
+
+            $key = self::fingerprint((string) ($entry->payload['sql'] ?? ''));
+            if (!isset($shapes[$key])) {
+                $shapes[$key] = ['sql' => $key, 'count' => 0, 'total_ms' => 0.0];
+            }
+
+            $shapes[$key]['count']++;
+            $shapes[$key]['total_ms'] += (float) ($entry->durationMs ?? 0);
+        }
+
+        usort($shapes, static fn(array $a, array $b): int => $b['count'] <=> $a['count']);
+
+        return array_values($shapes);
+    }
+
+    /**
+     * Collapse a statement to its shape.
+     *
+     * Quoted strings, numbers and IN-lists become placeholders, so the only
+     * thing left is the structure — which is what makes two executions of the
+     * same query recognisably the same.
+     */
+    public static function fingerprint(string $sql): string
+    {
+        $sql = preg_replace('/\s+/', ' ', trim($sql)) ?? $sql;
+        $sql = preg_replace("/'[^']*'/", '?', $sql) ?? $sql;
+        $sql = preg_replace('/"[^"]*"/', '?', $sql) ?? $sql;
+        $sql = preg_replace('/\b\d+\b/', '?', $sql) ?? $sql;
+        $sql = preg_replace('/\(\s*\?(?:\s*,\s*\?)+\s*\)/', '(?)', $sql) ?? $sql;
+
+        return $sql;
+    }
+
+    /**
+     * A renderable description of any value.
+     *
+     * Arrays stay arrays so the bar can pretty-print them; objects become a
+     * label plus their public state, because dumping a full object graph is
+     * how a debug tool turns into a memory problem.
+     */
+    private function describe(mixed $value): mixed
+    {
+        if (is_array($value) || is_scalar($value) || $value === null) {
+            return $value;
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format(DATE_ATOM);
+        }
+
+        if ($value instanceof \Throwable) {
+            return [
+                '_class' => $value::class,
+                'message' => $value->getMessage(),
+                'at' => $value->getFile() . ':' . $value->getLine(),
+            ];
+        }
+
+        if (is_object($value)) {
+            if (method_exists($value, 'toArray')) {
+                try {
+                    return ['_class' => $value::class] + (array) $value->toArray();
+                } catch (\Throwable) {
+                    // Fall through to the property view.
+                }
+            }
+
+            return ['_class' => $value::class] + get_object_vars($value);
+        }
+
+        return '[' . get_debug_type($value) . ']';
+    }
+
     // ─── Flush ───────────────────────────────────────────────────────
 
     /** Write and clear. Safe to call twice; the second call does nothing. */
     public function flush(): bool
     {
+        if (!$this->flushed) {
+            $this->emitCounters();
+            $this->emitUnclosedTimers();
+        }
+
         if ($this->flushed || $this->entries === []) {
             $this->flushed = true;
             $this->entries = [];
@@ -224,7 +389,41 @@ final class Recorder
     public function discard(): void
     {
         $this->entries = [];
+        $this->timers = [];
+        $this->counters = [];
         $this->flushed = true;
+    }
+
+    /** One entry per counter at the end, rather than one per increment. */
+    private function emitCounters(): void
+    {
+        foreach ($this->counters as $name => $total) {
+            $this->record(Entry::TYPE_TIMER, [
+                'name' => $name,
+                'kind' => 'counter',
+                'count' => $total,
+            ], null, ['counter']);
+        }
+
+        $this->counters = [];
+    }
+
+    /**
+     * A timer started and never stopped usually means the code path that would
+     * have stopped it threw. Recording it as unclosed says so, which is more
+     * useful than the span silently not existing.
+     */
+    private function emitUnclosedTimers(): void
+    {
+        foreach ($this->timers as $name => $startedAt) {
+            $this->record(Entry::TYPE_TIMER, [
+                'name' => $name,
+                'kind' => 'unclosed',
+                'note' => 'started but never stopped',
+            ], (microtime(true) - $startedAt) * 1000, ['timer', 'unclosed']);
+        }
+
+        $this->timers = [];
     }
 
     // ─── Internals ───────────────────────────────────────────────────

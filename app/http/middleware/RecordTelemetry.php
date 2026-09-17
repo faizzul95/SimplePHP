@@ -63,6 +63,17 @@ class RecordTelemetry implements MiddlewareInterface
                 // A login during this request changes who the entries belong to.
                 $this->identify($recorder);
 
+                /*
+                | The query summary rides on the request entry so the bar can
+                | answer "how many queries, how much of the time, and which
+                | shape repeated" without re-scanning every entry.
+                */
+                $shapes = $recorder->queryShapes();
+                $repeated = array_values(array_filter(
+                    $shapes,
+                    static fn(array $shape): bool => $shape['count'] > 1
+                ));
+
                 $recorder->recordRequest([
                     'method' => $request->method(),
                     'path' => $request->path(),
@@ -72,6 +83,10 @@ class RecordTelemetry implements MiddlewareInterface
                     'input' => $this->input($request),
                     'memory_mb' => round(memory_get_peak_usage(true) / 1048576, 2),
                     'dropped_entries' => $recorder->droppedCount(),
+                    'query_count' => array_sum(array_column($shapes, 'count')),
+                    'query_time_ms' => round((float) array_sum(array_column($shapes, 'total_ms')), 2),
+                    'query_shapes' => count($shapes),
+                    'repeated_queries' => array_slice($repeated, 0, 10),
                 ], (microtime(true) - $started) * 1000);
 
                 PerformanceMonitor::observe(null);

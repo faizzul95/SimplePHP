@@ -168,17 +168,75 @@ CSS;
             case 'exception': return (p.class || 'Exception') + ': ' + (p.message || '');
             case 'log':     return '[' + (p.level || 'log') + '] ' + (p.message || '');
             case 'http':    return (p.method || '') + ' ' + (p.url || '');
+            case 'dump':    return (p.label ? p.label + ': ' : '') + preview(p.value);
+            case 'timer':   return p.kind === 'counter'
+                                ? p.name + ' × ' + p.count
+                                : p.name + (p.kind === 'unclosed' ? '  (never stopped)' : '');
             default:        return p.message || p.name || entry.type;
         }
+    }
+
+    /* A one-line summary. The full value is in the payload fold. */
+    function preview(value) {
+        if (value === null || value === undefined) { return String(value); }
+        if (typeof value !== 'object') { return String(value); }
+
+        var json = JSON.stringify(value);
+        if (json === undefined) { return '[unserialisable]'; }
+        return json.length > 160 ? json.slice(0, 160) + '…' : json;
     }
 
     function subtitle(entry) {
         var p = entry.payload || {};
         if (entry.type === 'query') { return p.origin || p.connection || ''; }
         if (entry.type === 'exception') { return (p.file || '') + ':' + (p.line || ''); }
-        if (entry.type === 'request') { return (p.ip || '') + (p.ajax ? '  ajax' : '') + '  ' + (p.memory_mb || 0) + 'MB'; }
+        if (entry.type === 'dump') { return (p.type || '') + (p.origin ? '  ' + p.origin : ''); }
+        if (entry.type === 'timer') { return p.origin || p.note || ''; }
         if (entry.type === 'mail') { return 'driver: ' + (p.driver || '') + (p.error ? '  ' + p.error : ''); }
+        if (entry.type === 'request') {
+            var bits = [];
+            if (p.ip) { bits.push(p.ip); }
+            if (p.ajax) { bits.push('ajax'); }
+            if (p.query_count) { bits.push(p.query_count + ' queries in ' + p.query_time_ms + 'ms'); }
+            bits.push((p.memory_mb || 0) + 'MB');
+            return bits.join('  ');
+        }
         return '';
+    }
+
+    /* Group queries by shape so a repeat count is visible at a glance.
+       Literals are already replaced server-side in the request summary; this
+       does the same locally so the view works across requests. */
+    function fingerprint(sql) {
+        return String(sql || '')
+            .replace(/\s+/g, ' ')
+            .replace(/'[^']*'/g, '?')
+            .replace(/"[^"]*"/g, '?')
+            .replace(/\b\d+\b/g, '?')
+            .replace(/\(\s*\?(?:\s*,\s*\?)+\s*\)/g, '(?)')
+            .trim();
+    }
+
+    function groupedQueries() {
+        var groups = Object.create(null);
+
+        entries.forEach(function (entry) {
+            if (entry.type !== 'query') { return; }
+
+            var key = fingerprint((entry.payload || {}).sql);
+            if (!groups[key]) {
+                groups[key] = { sql: key, count: 0, total: 0, origins: Object.create(null) };
+            }
+
+            groups[key].count++;
+            groups[key].total += entry.duration_ms || 0;
+            var origin = (entry.payload || {}).origin;
+            if (origin) { groups[key].origins[origin] = true; }
+        });
+
+        return Object.keys(groups)
+            .map(function (k) { return groups[k]; })
+            .sort(function (a, b) { return b.count - a.count || b.total - a.total; });
     }
 
     function visible() {
@@ -195,7 +253,7 @@ CSS;
         var counts = { all: entries.length };
         entries.forEach(function (e) { counts[e.type] = (counts[e.type] || 0) + 1; });
 
-        var types = ['all', 'request', 'query', 'mail', 'queue', 'exception', 'log'];
+        var types = ['all', 'request', 'query', 'dump', 'timer', 'mail', 'queue', 'exception', 'log'];
         var tabs = types.map(function (type) {
             var n = counts[type] || 0;
             if (type !== 'all' && n === 0) { return ''; }
@@ -205,7 +263,47 @@ CSS;
                 '<span class="' + cls + '">' + n + '</span></button>';
         }).join('');
 
-        var body = rows.length === 0
+        /* The N+1 view: one row per query shape, busiest first. */
+        var grouped = groupedQueries();
+        var worst = grouped.length ? grouped[0].count : 0;
+        if (counts.query) {
+            tabs += '<button type="button" class="mt-tab' + (active === 'grouped' ? ' is-active' : '') +
+                '" data-type="grouped">duplicates<span class="mt-count' +
+                (worst >= 10 ? ' is-error' : worst > 1 ? ' is-warn' : '') + '">' +
+                (worst > 1 ? '×' + worst : '0') + '</span></button>';
+        }
+
+        var body;
+
+        if (active === 'grouped') {
+            var repeats = grouped.filter(function (g) { return g.count > 1; });
+            body = repeats.length === 0
+                ? '<div class="mt-empty">No query ran more than once this page. Nothing that looks like an N+1.</div>'
+                : '<table><tbody>' + repeats.map(function (g) {
+                    var origins = Object.keys(g.origins);
+                    return '<tr class="' + (g.count >= 10 ? 'mt-row-error' : '') + '">' +
+                        '<td class="mt-type">×' + g.count + '</td>' +
+                        '<td><div class="mt-main">' + esc(g.sql) + '</div>' +
+                        (origins.length
+                            ? '<div class="mt-sub">' + esc(origins.slice(0, 3).join('  ')) +
+                              (origins.length > 3 ? '  +' + (origins.length - 3) + ' more' : '') + '</div>'
+                            : '') +
+                        '</td>' +
+                        '<td class="mt-ms' + (g.total >= 100 ? ' is-slow' : '') + '">' +
+                        (Math.round(g.total * 100) / 100) + 'ms</td>' +
+                        '</tr>';
+                }).join('') + '</tbody></table>';
+
+            mount.innerHTML =
+                '<div class="mt-tabs">' + tabs +
+                '<span class="mt-spacer"></span>' +
+                '<button type="button" class="mt-btn" data-action="clear">clear</button>' +
+                '<button type="button" class="mt-btn" data-action="close">hide</button>' +
+                '</div><div class="mt-body">' + body + '</div>';
+            return;
+        }
+
+        body = rows.length === 0
             ? '<div class="mt-empty">No entries yet. Interact with the page — AJAX calls appear here too.</div>'
             : '<table><tbody>' + rows.map(function (entry) {
                 var ms = entry.duration_ms;

@@ -1,6 +1,6 @@
 # 07 — Telemetry and the debug bar
 
-**Added:** 2026-09-17 · `Core\Telemetry` · 56 tests
+**Added:** 2026-09-17 · `Core\Telemetry` · 79 tests
 
 Records what a request did — HTTP in, queries out, mail, queue jobs, exceptions,
 logs — and shows it in a bar on any page. AJAX and API calls are recorded the
@@ -52,6 +52,8 @@ it, which is how a login part-way through a request is picked up.
 | `queue` | `Recorder::recordQueue()` | job class, status |
 | `exception` | middleware + `recordException()` | class, message, file:line, bounded trace |
 | `log` | `Recorder::recordLog()` | level, message, context |
+| `dump` | `dbg()` | label, value, calling file:line |
+| `timer` | `dbg_start`/`dbg_stop`/`dbg_count` | name, kind (span / counter / unclosed) |
 
 Adding a source is one call:
 
@@ -68,6 +70,60 @@ place timing exists — does nothing while it is off.
 `observe(null)` is called in the middleware's `finally`, and `reset()` clears the
 slot too: under a worker SAPI an observer bound to a finished request would
 otherwise keep recording into a dead buffer.
+
+---
+
+## Debugging helpers
+
+`var_dump()` into a JSON endpoint corrupts the payload; into a page it shifts
+the layout. Either way the act of debugging changes what is being debugged.
+These record instead, leaving the response byte-identical.
+
+```php
+$total = dbg($this->calculateTotal(), 'total');   // returns its argument
+dbg_start('parse'); … dbg_stop('parse');          // a measured span
+$rows = dbg_measure('query', fn() => $db->get()); // times a callable
+dbg_count('processed');                           // counts in a hot path
+```
+
+| Helper | Records | Notes |
+|---|---|---|
+| `dbg($value, $label)` | `dump` | Returns `$value`, so it wraps an expression without restructuring code. Captures the calling `file:line`. |
+| `dbg_start` / `dbg_stop` | `timer` | `dbg_stop` returns elapsed ms, or `null` if the timer was never started — a stop without a start is a caller bug, and recording 0 ms would hide it. |
+| `dbg_measure($name, $fn)` | `timer` | Closes the span in a `finally`, so a throwing callable still records how long it ran before it threw. |
+| `dbg_count($name)` | `timer` | Only the total is recorded, at flush. Counting a million iterations costs an array increment, not a million entries. |
+
+A timer started and never stopped is recorded as `unclosed` rather than
+vanishing — that usually means the path which would have stopped it threw.
+
+Objects are recorded as their class plus public state, or `toArray()` if they
+have one, rather than as a full object graph: dumping one is how a debug tool
+turns into a memory problem. Dumps go through the same redaction as everything
+else, so `dbg($request->all())` will not write a password to disk.
+
+**With telemetry off** these fall back to the log when `APP_DEBUG` is on, and are
+otherwise a no-op. A silent debugger is worse than none — you conclude the code
+never ran.
+
+---
+
+## Finding an N+1
+
+The bar's **duplicates** tab groups queries by shape: literals are replaced, so
+`where id = 1` and `where id = 2` collapse to one row with a count. A count in
+the dozens against a single shape is what an N+1 looks like. Each row carries
+the call sites, so you know where the eager load belongs.
+
+The same summary rides on the `request` entry — `query_count`, `query_time_ms`,
+`query_shapes`, and the top ten `repeated_queries` — so it is available without
+opening the bar, including for API responses.
+
+`Recorder::fingerprint()` is the normalisation: whitespace collapsed, quoted
+strings and numbers replaced, `IN (?, ?, ?)` folded to `IN (?)`.
+
+`PerformanceMonitor::getQueryFingerprints()` returns every shape with its count;
+`getN1Suspects()` filters to those past the warn threshold (default 30), which
+is the right answer for a warning and too blunt for a debug bar.
 
 ---
 
@@ -162,3 +218,4 @@ allowlist lets you read your own traffic, not everyone else's request bodies.
 | `tests/Unit/Telemetry/RecorderTest.php` | Caps, redaction, tagging, flush semantics |
 | `tests/Unit/Telemetry/FileStoreTest.php` | Reverse reads across chunk boundaries, filters, retention, corrupt lines |
 | `tests/Unit/Telemetry/BarTest.php` | Injection points, escaping, idempotence |
+| `tests/Unit/Telemetry/DebugHelpersTest.php` | dbg() value handling and redaction, timer and counter semantics, query fingerprinting |

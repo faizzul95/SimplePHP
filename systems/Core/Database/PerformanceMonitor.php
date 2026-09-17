@@ -332,6 +332,23 @@ class PerformanceMonitor
      *
      * @return array{sql: string, count: int}[]
      */
+    /**
+     * Every tracked fingerprint with its count, busiest first.
+     *
+     * getN1Suspects() filters to those past the warn threshold, which is the
+     * right answer for a warning and the wrong one for a debug bar: seeing
+     * that a query ran twelve times is useful well before it runs thirty.
+     *
+     * @return array{sql: string, count: int}[]
+     */
+    public static function getQueryFingerprints(): array
+    {
+        $fingerprints = array_values(self::$queryFingerprints);
+        usort($fingerprints, static fn($a, $b) => $b['count'] <=> $a['count']);
+
+        return $fingerprints;
+    }
+
     public static function getN1Suspects(): array
     {
         $suspects = array_values(

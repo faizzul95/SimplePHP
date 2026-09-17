@@ -23,6 +23,12 @@ final class Entry
     public const TYPE_HTTP = 'http';
     public const TYPE_EVENT = 'event';
 
+    /** A value a developer asked to see — dbg(). */
+    public const TYPE_DUMP = 'dump';
+
+    /** A measured span — dbg_start()/dbg_stop(), or a counter. */
+    public const TYPE_TIMER = 'timer';
+
     /** Every type the bar knows how to group. */
     public const TYPES = [
         self::TYPE_REQUEST,
@@ -34,6 +40,8 @@ final class Entry
         self::TYPE_CACHE,
         self::TYPE_HTTP,
         self::TYPE_EVENT,
+        self::TYPE_DUMP,
+        self::TYPE_TIMER,
     ];
 
     /**

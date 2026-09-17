@@ -1178,6 +1178,169 @@ if (!function_exists('telemetry')) {
 
 /*
 |--------------------------------------------------------------------------
+| DEBUG HELPERS — record, never print
+|--------------------------------------------------------------------------
+|
+|  dbg($value, 'label')          show a value in the bar; returns $value
+|  dbg_start('x'); dbg_stop('x') time a block
+|  dbg_measure('x', fn() => ...) time a callable; returns its result
+|  dbg_count('loop')             count something in a hot path
+|
+| These differ from dump()/dd() in one way that matters: they write nothing to
+| the response. var_dump() into a JSON endpoint corrupts the payload and into a
+| page shifts the layout, so the act of debugging changes what you are
+| debugging. These leave the response byte-identical and put the value in the
+| debug bar.
+|
+| When telemetry is off they fall back to the log if APP_DEBUG is on, and are
+| otherwise a no-op — safe to leave in code that ships, though you should not.
+|
+*/
+
+if (!function_exists('myth_dbg_origin')) {
+    /** file:line of the caller, trimmed to a project-relative path. */
+    function myth_dbg_origin(int $depth = 1): string
+    {
+        $frames = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, $depth + 1);
+        $frame = $frames[$depth] ?? $frames[count($frames) - 1] ?? null;
+
+        if (!is_array($frame) || !isset($frame['file'])) {
+            return '';
+        }
+
+        $file = str_replace('\\', '/', (string) $frame['file']);
+        $root = str_replace('\\', '/', (string) getcwd());
+
+        if ($root !== '' && str_starts_with($file, $root)) {
+            $file = ltrim(substr($file, strlen($root)), '/');
+        }
+
+        return $file . ':' . (int) ($frame['line'] ?? 0);
+    }
+}
+
+if (!function_exists('dbg')) {
+    /**
+     * Show a value in the debug bar without touching the response.
+     *
+     * Returns its argument, so it can be wrapped around an expression without
+     * restructuring the code:
+     *
+     *     $total = dbg($this->calculateTotal(), 'total');
+     */
+    function dbg(mixed $value = null, string $label = ''): mixed
+    {
+        $origin = myth_dbg_origin();
+
+        try {
+            telemetry()->recordDump($value, $label, $origin);
+        } catch (\Throwable) {
+            // Debugging must not be able to break the thing being debugged.
+        }
+
+        myth_dbg_fallback($label === '' ? 'dbg' : $label, $value, $origin);
+
+        return $value;
+    }
+}
+
+if (!function_exists('dbg_start')) {
+    function dbg_start(string $name): void
+    {
+        try {
+            telemetry()->startTimer($name);
+        } catch (\Throwable) {
+        }
+    }
+}
+
+if (!function_exists('dbg_stop')) {
+    /** @return float|null Elapsed milliseconds, or null if never started. */
+    function dbg_stop(string $name): ?float
+    {
+        try {
+            $elapsed = telemetry()->stopTimer($name, myth_dbg_origin());
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($elapsed !== null) {
+            myth_dbg_fallback('timer:' . $name, round($elapsed, 2) . 'ms', '');
+        }
+
+        return $elapsed;
+    }
+}
+
+if (!function_exists('dbg_measure')) {
+    /**
+     * Time a callable and return whatever it returns.
+     *
+     * The timer is closed in a finally, so a throwing callable still records
+     * how long it ran before it threw.
+     */
+    function dbg_measure(string $name, callable $callback): mixed
+    {
+        dbg_start($name);
+
+        try {
+            return $callback();
+        } finally {
+            dbg_stop($name);
+        }
+    }
+}
+
+if (!function_exists('dbg_count')) {
+    /** Count occurrences in a hot path; only the total is recorded. */
+    function dbg_count(string $name, int $by = 1): int
+    {
+        try {
+            return telemetry()->increment($name, $by);
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+}
+
+if (!function_exists('myth_dbg_fallback')) {
+    /**
+     * Where a dbg() goes when telemetry is switched off.
+     *
+     * Without this the helper is silent, and a silent debugger is worse than
+     * none — you conclude the code never ran. The log only gets it in debug
+     * mode, so leaving a dbg() in place cannot become production noise.
+     */
+    function myth_dbg_fallback(string $label, mixed $value, string $origin): void
+    {
+        try {
+            if (telemetry()->enabled()) {
+                return;
+            }
+
+            $debugMode = defined('APP_DEBUG')
+                ? (bool) constant('APP_DEBUG')
+                : (bool) (\config('framework.debug') ?? false);
+
+            if (!$debugMode) {
+                return;
+            }
+
+            \Core\Support\SafeLog::debug(sprintf(
+                '[dbg] %s%s = %s',
+                $label,
+                $origin === '' ? '' : ' (' . $origin . ')',
+                is_scalar($value) || $value === null
+                    ? var_export($value, true)
+                    : json_encode($value, JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_SLASHES)
+            ));
+        } catch (\Throwable) {
+        }
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
 | MAIL HELPER
 |--------------------------------------------------------------------------
 |
