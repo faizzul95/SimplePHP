@@ -3765,3 +3765,58 @@ $(document).ready(() => {
 		});
 	});
 });
+
+
+/*
+|--------------------------------------------------------------------------
+| Datatable row actions
+|--------------------------------------------------------------------------
+|
+| One delegated listener for every action button a datatable row emits.
+|
+| These used to be inline onclick attributes built server-side. That had two
+| problems: a value interpolated into onclick='fn("...")' was escaped for
+| JavaScript with addslashes() but landed in an HTML attribute first, where a
+| backslash means nothing — so an apostrophe in a record name closed the
+| attribute and the rest parsed as more attributes. And an inline handler
+| cannot carry a CSP nonce, so they block a strict Content-Security-Policy.
+|
+| The markup now carries data-dt-action / data-dt-id / data-dt-row /
+| data-dt-name, properly HTML-escaped, and this resolves the page-local
+| handler by name.
+|
+| Rows are re-rendered by DataTables constantly, so the listener is on
+| document rather than on the rows.
+*/
+const DATATABLE_ROW_ACTIONS = {
+	'edit':        (d) => ['editRecord', [d.dtId]],
+	'delete':      (d) => ['deleteRecord', [d.dtId, d.dtRow || null]],
+	'permissions': (d) => ['permissionRecord', [d.dtId, d.dtName || '']],
+	'perm-edit':   (d) => ['editPermRecord', [d.dtId]],
+	'perm-delete': (d) => ['deletePermRecord', [d.dtId, d.dtRow || null]],
+};
+
+document.addEventListener('click', (event) => {
+	const trigger = event.target.closest('[data-dt-action]');
+	if (!trigger) {
+		return;
+	}
+
+	const resolve = DATATABLE_ROW_ACTIONS[trigger.dataset.dtAction];
+	if (!resolve) {
+		return;
+	}
+
+	event.preventDefault();
+
+	const [name, args] = resolve(trigger.dataset);
+	const handler = window[name];
+
+	if (typeof handler !== 'function') {
+		// Loud, because a silent no-op here looks like a dead button.
+		console.error('[datatable] no handler named ' + name + ' on this page');
+		return;
+	}
+
+	handler.apply(null, args);
+});

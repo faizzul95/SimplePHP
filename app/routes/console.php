@@ -21,6 +21,7 @@
 
 (new \App\Console\Commands\CspReportCommand())->register($console);
 (new \App\Console\Commands\DbSlowCommand())->register($console);
+(new \App\Console\Commands\TelemetryCommand())->register($console);
 (new \App\Console\Commands\ProfileMemoryCommand())->register($console);
 (new \App\Console\Commands\ResponseCacheClearCommand())->register($console);
 (new \App\Console\Commands\BlocklistAddCommand())->register($console);

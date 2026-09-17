@@ -2662,6 +2662,51 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      *
      * @return mixed
      */
+    /**
+     * Page without counting the whole table.
+     *
+     * paginate() runs a COUNT(*) so it can report a total and a last page. On a
+     * large table that count is usually most of the query cost, and a
+     * "next / previous" UI never displays the number it paid for.
+     *
+     * This fetches one row more than asked for instead: if the extra row comes
+     * back there is another page, and it is discarded. One query, no count.
+     *
+     * Use paginate() when the UI shows numbered pages or a total. Use this when
+     * it shows next and previous.
+     *
+     * @return array{data: array<int, mixed>, per_page: int, current_page: int, has_more: bool, from: int, to: int}
+     */
+    public function simplePaginate(int $perPage = 15, int $page = 1): array
+    {
+        $perPage = max(1, $perPage);
+        $page = max(1, $page);
+        $offset = ($page - 1) * $perPage;
+
+        // The +1 is the probe. It never reaches the caller.
+        $rows = $this->limit($perPage + 1)->offset($offset)->get();
+
+        if (!is_array($rows)) {
+            $rows = $rows === null ? [] : [$rows];
+        }
+
+        $hasMore = count($rows) > $perPage;
+        if ($hasMore) {
+            array_pop($rows);
+        }
+
+        $count = count($rows);
+
+        return [
+            'data' => array_values($rows),
+            'per_page' => $perPage,
+            'current_page' => $page,
+            'has_more' => $hasMore,
+            'from' => $count === 0 ? 0 : $offset + 1,
+            'to' => $count === 0 ? 0 : $offset + $count,
+        ];
+    }
+
     public function paginate($start = 0, $limit = 10, $draw = 1)
     {
         $totalRecords = 0;

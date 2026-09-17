@@ -250,9 +250,13 @@ class PermissionController extends Controller
         $rowKey = 'permission-row-' . $row['id'];
         $canUpdate = permission('rbac-abilities-update');
         $canDelete = permission('rbac-abilities-delete') && (int) $row['count'] < 1;
-        $deleteAction = $canDelete ? "onclick='deletePermRecord(\"{$key}\", \"{$rowKey}\")'" : null;
+        $safeKey = htmlspecialchars((string) $key, ENT_QUOTES, 'UTF-8');
+        $safeRowKey = htmlspecialchars((string) $rowKey, ENT_QUOTES, 'UTF-8');
+        $deleteAction = $canDelete
+            ? "data-dt-action='perm-delete' data-dt-id='{$safeKey}' data-dt-row='{$safeRowKey}'"
+            : null;
         $deleteText = empty($deleteAction) ? '(disabled)' : '';
-        $editAction = $canUpdate ? "onclick='editPermRecord(\"{$key}\")'" : '';
+        $editAction = $canUpdate ? "data-dt-action='perm-edit' data-dt-id='{$safeKey}'" : '';
         $editStyle = $canUpdate ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
         $deleteStyle = $canDelete ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
         $action = "

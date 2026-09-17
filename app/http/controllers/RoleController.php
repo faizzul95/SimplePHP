@@ -123,12 +123,27 @@ class RoleController extends Controller
         $canDelete = permission('rbac-roles-delete') && (int) $row['profile_count'] < 1;
         $canAssign = permission('rbac-roles-update');
         
-        $delAction = $canDelete ? "onclick='deleteRecord(\"{$key}\", \"{$rowKey}\")'" : null;
+        /*
+        | data-* attributes, not onclick.
+        |
+        | The role name used to go through addslashes() and into a
+        | single-quoted onclick. The HTML parser runs before the JS parser
+        | and a backslash means nothing to it, so a role named
+        | `Ops' onmouseover='...` ended the attribute and the rest parsed as
+        | further attributes — stored XSS against any admin who hovered the
+        | row. htmlspecialchars is the escaping this position actually needs.
+        */
+        $safeKey = htmlspecialchars((string) $key, ENT_QUOTES, 'UTF-8');
+        $safeRowKey = htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8');
+        $safeRoleName = htmlspecialchars((string) $row['role_name'], ENT_QUOTES, 'UTF-8');
+
+        $delAction = $canDelete
+            ? "data-dt-action='delete' data-dt-id='{$safeKey}' data-dt-row='{$safeRowKey}'"
+            : null;
         $delText = empty($delAction) ? '(disabled)' : '';
-        $editAction = $canUpdate ? "onclick='editRecord(\"{$key}\")'" : '';
+        $editAction = $canUpdate ? "data-dt-action='edit' data-dt-id='{$safeKey}'" : '';
         $editStyle = $canUpdate ? "cursor: pointer;" : "cursor: not-allowed; opacity: .45;";
-        $roleName = addslashes((string) $row['role_name']);
-        $assignAction = $canAssign ? "<a href='javascript:void(0);' onclick='permissionRecord(\"{$key}\", \"{$roleName}\")' class='dropdown-item'>
+        $assignAction = $canAssign ? "<a href='javascript:void(0);' data-dt-action='permissions' data-dt-id='{$safeKey}' data-dt-name='{$safeRoleName}' class='dropdown-item'>
                             <i class='bx bx-shield-quarter me-1'></i> Assign Permissions
                         </a>" : '';
 

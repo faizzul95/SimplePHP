@@ -112,9 +112,13 @@ class MasterEmailTemplateController extends Controller
         $rowKey = 'email-template-row-' . $row['id'];
         $canUpdate = permission('rbac-email-update');
         $canDelete = permission('rbac-email-delete');
-        $editAction = $canUpdate ? "onclick='editRecord(\"{$key}\")'" : '';
+        $safeKey = htmlspecialchars((string) $key, ENT_QUOTES, 'UTF-8');
+        $safeRowKey = htmlspecialchars((string) $rowKey, ENT_QUOTES, 'UTF-8');
+        $editAction = $canUpdate ? "data-dt-action='edit' data-dt-id='{$safeKey}'" : '';
         $editStyle = $canUpdate ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: .45;';
-        $deleteAction = $canDelete ? "onclick='deleteRecord(\"{$key}\", \"{$rowKey}\")'" : '';
+        $deleteAction = $canDelete
+            ? "data-dt-action='delete' data-dt-id='{$safeKey}' data-dt-row='{$safeRowKey}'"
+            : '';
         $deleteText = $canDelete ? 'Delete' : 'Delete (disabled)';
 
         return [
