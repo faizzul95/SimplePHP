@@ -292,13 +292,46 @@ class QueryCache
      *
      * @return int Current version (≥ 1)
      */
-    protected static function tableVersion(string $table): int
+    /**
+     * The version stamp mixed into every cache key for this table.
+     *
+     * Without APCu this returned a constant 1 — so the key never changed, and
+     * because the file cache outlives the request, a write was invisible to
+     * cached reads until the TTL lapsed. Across requests, and for every user.
+     * Most shared hosting has no APCu, which made that the common case rather
+     * than the edge one.
+     *
+     * The fallback is a one-line file per table holding a monotonic stamp.
+     * Reading it costs a stat plus a tiny read on key generation; the
+     * alternative was serving stale rows.
+     */
+    protected static function tableVersion(string $table): int|string
     {
-        if (!self::apcuAvailable()) {
+        if (self::apcuAvailable()) {
+            $v = call_user_func('apcu_fetch', self::$apcuPrefix . 'tv:' . $table);
+            return ($v !== false && is_int($v)) ? $v : 1;
+        }
+
+        $path = self::tableVersionPath($table);
+        if ($path === null || !is_file($path)) {
             return 1;
         }
-        $v = call_user_func('apcu_fetch', self::$apcuPrefix . 'tv:' . $table);
-        return ($v !== false && is_int($v)) ? $v : 1;
+
+        $stamp = @file_get_contents($path);
+
+        return is_string($stamp) && $stamp !== '' ? trim($stamp) : 1;
+    }
+
+    /** Where the file-based version stamp for a table lives, if there is a cache dir. */
+    protected static function tableVersionPath(string $table): ?string
+    {
+        self::initIfNeeded();
+
+        if (self::$cacheDir === null || self::$cacheDir === '') {
+            return null;
+        }
+
+        return self::$cacheDir . DIRECTORY_SEPARATOR . 'tv-' . sha1(strtolower(trim($table))) . '.ver';
     }
 
     /**
@@ -319,9 +352,33 @@ class QueryCache
         self::initIfNeeded();
 
         if (!self::apcuAvailable()) {
-            // Best-effort: drop in-process cache for this request
+            /*
+            | Bump a file-backed stamp per table, then drop the in-process
+            | cache. Clearing memory alone was not enough: the file cache
+            | survives the request, so the next one read the pre-write rows
+            | back off disk.
+            |
+            | The stamp is a monotonic clock value rather than a counter, so
+            | two processes invalidating at once cannot collide on a value that
+            | a reader has already seen — no lock required.
+            */
+            $stamp = sprintf('%.6F', microtime(true));
+
+            foreach ((array) $tables as $table) {
+                $table = strtolower(trim((string) $table));
+                if ($table === '') {
+                    continue;
+                }
+
+                $path = self::tableVersionPath($table);
+                if ($path !== null) {
+                    @file_put_contents($path, $stamp, LOCK_EX);
+                }
+            }
+
             self::$memoryCache = [];
             self::$stats['invalidations']++;
+
             return;
         }
 

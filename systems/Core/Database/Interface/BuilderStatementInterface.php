@@ -41,11 +41,25 @@ interface BuilderStatementInterface
      */
     public function whereRaw(string $rawQuery, array $binds = [], string $whereType = 'AND');
 
-    /** @return $this */
-    public function where(string|array|\Closure $column, mixed $value = null, string $operator = '=');
+    /*
+    | Operator second, value third — `where('age', '>', 30)`.
+    |
+    | This interface declared them the other way round, `(column, value,
+    | operator)`, while every implementation and every call site has always
+    | used `(column, operator, value)`. PHP checks arity and types but never
+    | parameter names, so the two never had to agree: the lie survived because
+    | nothing could detect it. Anyone who trusted the interface got
+    | "Invalid operator", and a named argument bound to a parameter that does
+    | not exist.
+    |
+    | The two-argument form `where('id', 5)` still means equality.
+    */
 
     /** @return $this */
-    public function orWhere(string|array|\Closure $column, mixed $value = null, string $operator = '=');
+    public function where(string|array|\Closure $column, mixed $operator = null, mixed $value = null);
+
+    /** @return $this */
+    public function orWhere(string|array|\Closure $column, mixed $operator = null, mixed $value = null);
 
     /** @return $this */
     public function whereIn(string $column, array $value = []);

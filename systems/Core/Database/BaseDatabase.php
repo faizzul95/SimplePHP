@@ -344,6 +344,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $listDatabaseDriverSupport = [
         'mysql' => 'MySQL',
         'mariadb' => 'MariaDB',
+        'sqlite' => 'SQLite',
         '-' => 'Unknown Driver'
     ];
 
@@ -488,6 +489,101 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function setDatabase($databaseName = null)
     {
         $this->schema = $databaseName;
+    }
+
+    /**
+     * The tables a cached SELECT depends on.
+     *
+     * QueryCache mixes a per-table version stamp into the cache key so a write
+     * invalidates the reads that touched that table. Every call site passed
+     * three arguments and left the fourth — the tables — defaulted to `[]`, so
+     * the stamp was never part of any key and the whole mechanism did nothing.
+     *
+     * Joined tables count: a SELECT across users and orders has to be dropped
+     * when either one changes.
+     *
+     * @return list<string>
+     */
+    protected function _tablesForCacheKey(): array
+    {
+        $tables = [];
+
+        if ((string) $this->table !== '') {
+            $tables[] = (string) $this->table;
+        }
+
+        // $joins is the rendered SQL fragment, so the table names are read back
+        // out of it rather than from a structured list the builder does not keep.
+        if (is_string($this->joins) && $this->joins !== '') {
+            if (preg_match_all('/\bJOIN\s+[`"\[]?([A-Za-z0-9_.]+)[`"\]]?/i', $this->joins, $matches)) {
+                foreach ($matches[1] as $joined) {
+                    $tables[] = str_contains($joined, '.')
+                        ? substr($joined, strrpos($joined, '.') + 1)
+                        : $joined;
+                }
+            }
+        }
+
+        return array_values(array_unique(array_filter($tables)));
+    }
+
+    /**
+     * Drop cached reads of the tables a write just changed.
+     *
+     * QueryCache caches SELECT results and keys them partly on a per-table
+     * version, and `invalidateTable()` — the thing that bumps that version —
+     * had **no callers anywhere**. The cache is enabled by default, so any
+     * read repeated after a write in the same request served the pre-write
+     * rows: update() then fetch() returned the old value, delete() then get()
+     * still returned the deleted row.
+     *
+     * Called from _captureExecutedQuery(), which every execution path already
+     * goes through, so a write added later is covered without remembering to
+     * wire it up.
+     */
+    protected function _invalidateQueryCacheForWrite(): void
+    {
+        $query = (string) ($this->_query ?? '');
+
+        if ($query === '' || !preg_match('/^\s*(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE|MERGE)\b/i', $query)) {
+            return;
+        }
+
+        try {
+            QueryCache::invalidateTable($this->_tablesTouchedByWrite($query));
+        } catch (\Throwable) {
+            // Cache bookkeeping must not fail the write it is bookkeeping for.
+        }
+    }
+
+    /**
+     * The tables a write statement names, plus the builder's own.
+     *
+     * Only matters for the cross-request APCu layer, which versions per table;
+     * invalidateTable() clears the whole in-process cache regardless of what
+     * it is handed.
+     *
+     * @return list<string>
+     */
+    private function _tablesTouchedByWrite(string $query): array
+    {
+        $tables = [];
+
+        if ((string) $this->table !== '') {
+            $tables[] = (string) $this->table;
+        }
+
+        if (preg_match(
+            '/^\s*(?:INSERT(?:\s+\w+)*\s+INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|TRUNCATE(?:\s+TABLE)?|MERGE\s+INTO)\s+[`"\[]?([A-Za-z0-9_.]+)[`"\]]?/i',
+            $query,
+            $matches
+        )) {
+            // Strip any schema qualifier: the version is keyed on the table.
+            $named = $matches[1];
+            $tables[] = str_contains($named, '.') ? substr($named, strrpos($named, '.') + 1) : $named;
+        }
+
+        return array_values(array_unique(array_filter($tables)));
     }
 
     /**
@@ -2119,7 +2215,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Check QueryCache if enabled and old cache system not used
         if (empty($result) && $queryCacheEnabled) {
-            $cacheKey = QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName);
+            $cacheKey = QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName, $this->_tablesForCacheKey());
             $result = QueryCache::get($cacheKey);
 
             // If cache hit, reset query builder state since data is already complete with eager loading
@@ -2168,7 +2264,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
 
         // Check QueryCache if enabled and old cache system not used
         if (empty($result) && $queryCacheEnabled) {
-            $cacheKey = QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName);
+            $cacheKey = QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName, $this->_tablesForCacheKey());
             $result = QueryCache::get($cacheKey);
 
             // If cache hit, reset query builder state since data is already complete with eager loading
@@ -2263,7 +2359,7 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         $_temp_cacheExpired = $this->cacheFileExpired;
         $_temp_queryCacheKey = null;
         if ($queryCacheEnabled) {
-            $_temp_queryCacheKey = $cacheKey ?? QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName);
+            $_temp_queryCacheKey = $cacheKey ?? QueryCache::generateKey($this->_query, $this->getSelectQueryBindings(), $this->connectionName, $this->_tablesForCacheKey());
         }
 
         $this->reset();

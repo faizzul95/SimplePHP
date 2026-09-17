@@ -194,10 +194,16 @@ trait HasProfiling
     }
 
     /**
-     * Capture query text for profiler output only when profiling is enabled.
+     * Called at every statement execution point.
+     *
+     * Two jobs, and only the second depends on the profiler: a write has to
+     * drop cached reads of the tables it touched, and profiling being switched
+     * off is not a reason to start serving stale rows.
      */
     protected function _captureExecutedQuery(?array $binds = null): void
     {
+        $this->_invalidateQueryCacheForWrite();
+
         if (!$this->enableProfiling) {
             return;
         }

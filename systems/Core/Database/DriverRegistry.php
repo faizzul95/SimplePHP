@@ -129,6 +129,25 @@ class DriverRegistry
         ], 'MariaDB'), \Core\Database\Schema\Grammars\MySQLGrammar::class, \Core\Database\Query\Grammars\MariaDBGrammar::class);
 
         /*
+        | SQLite is a real driver, not a grammar-only registration. It is the
+        | second engine the query builder can actually be run against, which is
+        | what turns the grammar layer from a claim about generated strings into
+        | something a test can prove.
+        |
+        | No row locking: SQLite locks the database, so FOR UPDATE does not
+        | parse. No RETURNING declared either — it exists from 3.35, but
+        | lastInsertId() works on every build and answers the same question.
+        */
+        self::register('sqlite', 'Core\\Database\\Drivers\\SqliteDriver', new DriverCapabilities('sqlite', [
+            'date_functions' => true,
+            'json_contains' => true,
+            'retryable_deadlocks' => false,
+            'upsert' => true,
+            'returning' => false,
+            'skip_locked' => false,
+        ], 'SQLite'), \Core\Database\Schema\Grammars\MySQLGrammar::class, \Core\Database\Query\Grammars\SqliteGrammar::class);
+
+        /*
         | PostgreSQL, SQL Server and Oracle have a query grammar but no connection
         | driver yet, so resolveClass() still refuses them — connecting to an
         | engine whose driver does not exist should fail loudly, not silently

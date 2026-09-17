@@ -1,7 +1,56 @@
 # 10 — Audit Findings
 
-**Verified:** 2026-09-17 · branch `database-update` · PHP 8.3.8 · **1,800 tests**
-(file order and two random orders) · PHPStan level 2 clean
+**Verified:** 2026-09-17 · branch `database-update` · PHP 8.3.8 · **1,894 tests**
+(file order and two random orders) · PHPStan level 2 clean · SQLite engine tests
+run with `-d extension=pdo_sqlite`
+
+<a id="fixed-on-2026-09-17-eleventh"></a>
+### Fixed on 2026-09-17 (eleventh pass — SQLite driver, and the stale-read bug it found)
+
+Suite **1,860 → 1,894 tests**. PHPStan level 2 clean. The database layer now has
+a second engine it can actually be run against.
+
+| Finding | What changed | Test |
+|---|---|---|
+| **A write never invalidated cached reads** | `QueryCache` is enabled by default and caches SELECT results. Three things had to work for a write to drop them, and none did: `invalidateTable()` had **no callers anywhere**; `generateKey()` takes a `$tables` argument that all three call sites left defaulted to `[]`, so the per-table version never entered a key; and without APCu `tableVersion()` returned a constant `1`. The effects: `update()` then the same read returned the **pre-update value**, and `delete()` then a read still returned the **deleted row**. Because the file cache outlives the request, on a host without APCu — most shared hosting — this persisted across requests and users until the TTL lapsed. All three repaired. | `SqliteEngineTest` read-after-write cases (3) |
+| **The grammar seam silently resolved to MySQL for every engine** | `BaseDatabase::$driver` is initialised to `'mysql'` and nothing populates it from the connection config, so `DriverRegistry::queryGrammar($this->driver ?: 'mysql')` always returned the MySQL grammar. On SQLite `whereYear()` emitted `YEAR(created_at)` — no such function. The new driver sets its own engine. **Still open:** a MariaDB connection has the same gap and quietly uses `MySQLGrammar` instead of `MariaDBGrammar`; not changed here because there is no MariaDB server to verify against. | `SqliteEngineTest::testTemporalPredicates` (4) |
+| **`BuilderStatementInterface` declared `where()`'s parameters in the wrong order** | The interface said `where($column, $value, $operator)`; every implementation and call site uses `(column, operator, value)`. PHP enforces arity and types but never parameter *names*, so the two never had to agree and nothing could detect the lie. Anyone who trusted the interface got "Invalid operator", and a named argument bound to a parameter that does not exist. Same for `orWhere()`. Interface corrected to match. | — |
+| Dead code in the pagination path | — | — |
+
+**New: `Core\Database\Drivers\SqliteDriver` + `Query\Grammars\SqliteGrammar`.**
+
+Why it matters more than "one more engine": every other database test in the
+suite asserts on generated SQL strings, which proves the builder emits what its
+author expected and nothing about whether an engine accepts it. 33 of the new
+tests execute real statements. All three bugs above were invisible to string
+assertions and surfaced within minutes of running against a real database.
+
+Dialect differences the grammar encodes, each verified against SQLite 3.40:
+
+| | SQLite | Why it needed an override |
+|---|---|---|
+| Temporal | `strftime()`, cast to INTEGER | No `EXTRACT`; `strftime` returns `'03'`, which would not equal `3` |
+| `OFFSET` | `LIMIT -1 OFFSET n` | A bare `OFFSET` is a **syntax error** |
+| Locking | nothing emitted | `FOR UPDATE` does not parse; SQLite locks the database, not rows |
+| Column listing | `pragma_table_info(?)` | No `information_schema`; this form takes a bound parameter |
+| Case-insensitive LIKE | `LIKE` | `ILIKE` does not exist; `LIKE` is already ASCII-insensitive |
+| `RETURNING` | declined | Exists from 3.35, but `lastInsertId()` answers the same question on every build |
+
+`connect()` also switches `foreign_keys` on — **off by default in SQLite**, which
+makes a declared schema look enforced when it is not — and sets a busy timeout.
+
+**What this does and does not prove.** SQLite accepts backticks, brackets *and*
+double quotes, so the ~35 hard-coded backtick sites in the write paths run fine
+here. Those remain a real blocker for PostgreSQL. This second engine validates
+the grammar seam for row limiting, temporal expressions, locking, upserts and
+introspection — not identifier quoting.
+
+**Running them.** The engine tests skip unless `pdo_sqlite` is loaded; the DLL
+ships with the bundled PHP but is commented out in `php.ini`. Enable
+`extension=pdo_sqlite` there, or pass `-d extension=pdo_sqlite`. Without it the
+suite is 1,894 tests with 50 skipped; with it, 17 skipped.
+
+---
 
 <a id="fixed-on-2026-09-17-tenth"></a>
 ### Fixed on 2026-09-17 (tenth pass — mailer, menu, telemetry)
