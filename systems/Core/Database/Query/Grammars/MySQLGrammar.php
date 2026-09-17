@@ -121,4 +121,14 @@ class MySQLGrammar extends QueryGrammar
 
         return ['sql' => $sql, 'bindings' => $bindings, 'column' => 'COLUMN_NAME'];
     }
+    /** MySQL returns a status row from ANALYZE; nothing else does. */
+    public function compileAnalyze(string $wrappedTable): string
+    {
+        return 'ANALYZE TABLE ' . $wrappedTable;
+    }
+
+    public function analyzeReturnsStatusRows(): bool
+    {
+        return true;
+    }
 }

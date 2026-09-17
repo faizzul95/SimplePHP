@@ -70,7 +70,14 @@ trait HasAggregates
      *
      * @return $this
      */
-    public function orderBy($columns, $direction = 'DESC')
+    /*
+    | ASC, matching BuilderStatementInterface, SQL's own default and every
+    | comparable builder. It defaulted to DESC, so `orderBy('name')` sorted
+    | reverse-alphabetically — the opposite of what it reads as, and the
+    | opposite of what the interface promised. The only two one-argument
+    | call sites were docblock examples, both meaning ascending.
+    */
+    public function orderBy($columns, $direction = 'ASC')
     {
         if (!in_array(strtoupper($direction), ['ASC', 'DESC'])) {
             throw new \InvalidArgumentException('Order direction must be "ASC" or "DESC".');
@@ -166,7 +173,10 @@ trait HasAggregates
      */
     public function inRandomOrder()
     {
-        $this->orderBy[] = "RAND()";
+        // RAND() is MySQL's spelling; PostgreSQL and SQLite want RANDOM(),
+        // SQL Server NEWID(). The grammar already knew this and was not asked.
+        $this->orderBy[] = $this->grammar()->compileRandomOrder();
+
         return $this;
     }
 

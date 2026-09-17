@@ -122,4 +122,13 @@ class SqliteGrammar extends QueryGrammar
     {
         return null;
     }
+    /**
+     * SQLite has no TRUNCATE at all — it is a syntax error, not a slower
+     * path. An unqualified DELETE is the documented equivalent and the
+     * engine optimises it into the same whole-table drop.
+     */
+    public function compileTruncate(string $wrappedTable): string
+    {
+        return 'DELETE FROM ' . $wrappedTable;
+    }
 }

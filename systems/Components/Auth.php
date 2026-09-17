@@ -1325,23 +1325,41 @@ class Auth
         $permissionRoleColumn = $this->safeColumn((string) ($permissionCols['role_id'] ?? 'role_id'));
         $permissionAbilityColumn = $this->safeColumn((string) ($permissionCols['ability_id'] ?? 'abilities_id'));
 
-        foreach ($abilityIds as $abilityId) {
-            $exists = \db()->table($permissionsTable)
-                ->where($permissionRoleColumn, $roleId)
-                ->where($permissionAbilityColumn, $abilityId)
-                ->safeOutput()
-                ->fetch();
+        /*
+        | One read and one write, rather than a SELECT and an INSERT per
+        | ability. Granting a role fifty abilities issued a hundred queries.
+        |
+        | It also narrows a check-then-insert race: there is no unique index on
+        | (role_id, abilities_id), so two concurrent grants could each see "not
+        | present" and both insert. Duplicates matter here because revoke
+        | deletes by value — a leftover duplicate leaves the permission granted
+        | after it was revoked. The index is the real fix and is noted in
+        | 10-audit-findings.md; existing installs may already hold duplicates
+        | that would make the migration fail, so it is not added blind.
+        */
+        $wanted = array_values(array_unique(array_map('intval', $abilityIds)));
 
-            if (!empty($exists)) {
-                continue;
-            }
+        $existing = (array) \db()->table($permissionsTable)
+            ->select($permissionAbilityColumn)
+            ->where($permissionRoleColumn, $roleId)
+            ->whereIn($permissionAbilityColumn, $wanted)
+            ->get();
 
-            \db()->table($permissionsTable)->insert([
-                $permissionRoleColumn => $roleId,
-                $permissionAbilityColumn => $abilityId,
-                'created_at' => \timestamp(),
-                'updated_at' => \timestamp(),
-            ]);
+        $granted = array_map('intval', array_column($existing, $permissionAbilityColumn));
+        $missing = array_values(array_diff($wanted, $granted));
+
+        if ($missing !== []) {
+            $now = \timestamp();
+
+            \db()->table($permissionsTable)->batchInsert(array_map(
+                static fn(int $abilityId): array => [
+                    $permissionRoleColumn => $roleId,
+                    $permissionAbilityColumn => $abilityId,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                $missing
+            ));
         }
 
         $this->invalidateAclCache();

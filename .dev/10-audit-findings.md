@@ -1,8 +1,47 @@
 # 10 — Audit Findings
 
-**Verified:** 2026-09-17 · branch `database-update` · PHP 8.3.8 · **1,894 tests**
+**Verified:** 2026-09-17 · branch `database-update` · PHP 8.3.8 · **1,920 tests**
 (file order and two random orders) · PHPStan level 2 clean · SQLite engine tests
 run with `-d extension=pdo_sqlite`
+
+<a id="fixed-on-2026-09-17-twelfth"></a>
+### Fixed on 2026-09-17 (twelfth pass — driving the builder against a real engine)
+
+Suite **1,894 → 1,920 tests**. PHPStan level 2 clean.
+
+Method: 211 public builder methods existed; 26 had ever been executed against a
+database. A harness drove the rest against SQLite. Everything below passed every
+string-level assertion already in the suite.
+
+| Finding | What changed | Test |
+|---|---|---|
+| **`orderBy()` defaulted to DESC** | `orderBy('name')` returned reverse-alphabetical. SQL defaults to ascending, every comparable builder defaults to ascending, and `BuilderStatementInterface` **declared ASC** — the implementation said DESC. The only two one-argument call sites were docblock examples, both plainly meaning ascending, so the default is now ASC and matches the interface. | `BuilderDefectsTest` (3) |
+| **`toJson()` and `toObject()` did nothing** | Both set `$returnType`, and `reset()` — which runs inside the select pipeline before `_returnResult()` reads it — put it back to `array`. `paginate()` worked around this by saving and restoring the value; `get()` and `fetch()` did not, so two documented `ResultInterface` methods silently returned plain arrays. The requested format now lives in a field `reset()` does not touch, consumed once when the result is formatted. | `BuilderDefectsTest` (5) |
+| **`inRandomOrder()` emitted MySQL's `RAND()`** | Hard-coded, while the grammar already had `compileRandomOrder()` and was not asked. `RAND()` does not exist outside MySQL. | `BuilderDefectsTest` (2) |
+| **`truncate()` emitted `TRUNCATE` everywhere** | SQLite has no such statement — it is a syntax error, not a slower path. Added `compileTruncate()` to the grammar; SQLite returns `DELETE FROM`. | `BuilderDefectsTest` (2) |
+| **`analyze()` emitted `ANALYZE TABLE`** | MySQL's spelling, and it read `Msg_text` off the result — so on an engine where ANALYZE returns no rows, a successful analyze reported **false**. Added `compileAnalyze()` and `analyzeReturnsStatusRows()`. | `BuilderDefectsTest` (2) |
+| **`whereAny` / `whereAll` / `whereNone` refused `LIKE`** | They validated against the bare comparison set while `where()` and `orWhere()` each carried their own widened copy — so searching a term across several columns, the case these methods exist for, was refused by the helper that then delegates to a `where()` which accepts it. One shared `EXTENDED_OPERATORS` constant. `whereColumn()` and the temporal helper keep the narrow list: they build a single binary clause, where `BETWEEN` would emit `a BETWEEN ?`. | `BuilderDefectsTest` (4) |
+| **`skip()->take()` produced unparseable SQL** | `offset()` writes SQLite's no-limit sentinel and `limit()` appended after it: `LIMIT 2 LIMIT -1 OFFSET 1`. Only that call order was affected, which is why `take()->skip()` worked. A real limit now supersedes the sentinel. | `BuilderDefectsTest` (3) |
+| **A backup could truncate silently** | `Backup::createDump()` ignored every `fwrite()` return and `fclose()`'s. On a full volume the dump truncates mid-statement and the method returns the path as though it succeeded — you find out when you try to restore. Writes are checked, a partial dump is deleted rather than left looking usable, and the close error does not mask the write error that caused it. | `BackupWriteFailureTest` (4) |
+| `grantPermissionsToRole()` was an N+1 | A SELECT and an INSERT per ability: granting fifty abilities issued a hundred queries. One read, one batch write. It also narrows a check-then-insert race. | — |
+| `count()` re-evaluated per iteration | `Request::processFiles()` called `count($file['name'])` in the loop condition, once per uploaded file. Hoisted. | — |
+
+**Flagged, not changed:**
+
+- **`having()` takes `(column, value, operator)` — the opposite order from
+  `where($column, $operator, $value)`** in the same builder. Both the interface
+  and the implementation agree, so it is a deliberate signature rather than
+  drift, but two adjacent methods taking their arguments in opposite orders is
+  a standing trap. Changing it breaks callers, so it needs a deprecation cycle.
+- **No unique index on `system_permission (role_id, abilities_id)`.** Duplicate
+  rows are reachable under concurrent grants, and revoke deletes by value — a
+  leftover duplicate leaves a permission granted after it was revoked. Existing
+  installs may already hold duplicates, so the migration needs a dedupe step
+  and is not added blind.
+- **MariaDB connections silently use `MySQLGrammar`** (from the eleventh pass):
+  `BaseDatabase::$driver` never tracks the connection config. Unverifiable here.
+
+---
 
 <a id="fixed-on-2026-09-17-eleventh"></a>
 ### Fixed on 2026-09-17 (eleventh pass — SQLite driver, and the stale-read bug it found)

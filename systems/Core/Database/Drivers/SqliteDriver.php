@@ -222,6 +222,18 @@ class SqliteDriver extends BaseDatabase
 
         $this->limit = " LIMIT $limit";
 
+        /*
+        | If offset() ran first it will have written the no-limit sentinel, and
+        | the two fragments are concatenated — producing
+        | `LIMIT 2 LIMIT -1 OFFSET 1`, which does not parse. A real limit
+        | supersedes the sentinel, so drop it.
+        |
+        | This is why skip()->take() failed while take()->skip() worked.
+        */
+        if (is_string($this->offset) && str_contains($this->offset, 'LIMIT -1 OFFSET ')) {
+            $this->offset = str_replace('LIMIT -1 OFFSET ', 'OFFSET ', $this->offset);
+        }
+
         return $this;
     }
 

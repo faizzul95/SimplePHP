@@ -600,12 +600,12 @@ class Backup
 
         try {
             // Header
-            fwrite($handle, "-- MythPHP Database Backup\n");
-            fwrite($handle, "-- Generated: " . date('Y-m-d H:i:s') . "\n");
-            fwrite($handle, "-- Database: {$config['database']}\n");
-            fwrite($handle, "-- --------------------------------------------------------\n\n");
-            fwrite($handle, "SET NAMES utf8mb4;\n");
-            fwrite($handle, "SET FOREIGN_KEY_CHECKS = 0;\n\n");
+            $this->writeOrFail($handle, "-- MythPHP Database Backup\n");
+            $this->writeOrFail($handle, "-- Generated: " . date('Y-m-d H:i:s') . "\n");
+            $this->writeOrFail($handle, "-- Database: {$config['database']}\n");
+            $this->writeOrFail($handle, "-- --------------------------------------------------------\n\n");
+            $this->writeOrFail($handle, "SET NAMES utf8mb4;\n");
+            $this->writeOrFail($handle, "SET FOREIGN_KEY_CHECKS = 0;\n\n");
 
             // Get all tables
             $tables = $pdo->query("SHOW TABLES")->fetchAll(\PDO::FETCH_COLUMN);
@@ -623,9 +623,9 @@ class Backup
                     continue;
                 }
 
-                fwrite($handle, "-- Table: {$table}\n");
-                fwrite($handle, "DROP TABLE IF EXISTS {$quotedTable};\n");
-                fwrite($handle, $createSql . ";\n\n");
+                $this->writeOrFail($handle, "-- Table: {$table}\n");
+                $this->writeOrFail($handle, "DROP TABLE IF EXISTS {$quotedTable};\n");
+                $this->writeOrFail($handle, $createSql . ";\n\n");
 
                 if (isset($createStmt['Create View'])) {
                     continue;
@@ -651,13 +651,63 @@ class Backup
                 unset($statement, $rows);
             }
 
-            fwrite($handle, "SET FOREIGN_KEY_CHECKS = 1;\n");
-            fwrite($handle, "\n-- Dump completed: " . date('Y-m-d H:i:s') . "\n");
-        } finally {
+            $this->writeOrFail($handle, "SET FOREIGN_KEY_CHECKS = 1;\n");
+            $this->writeOrFail($handle, "\n-- Dump completed: " . date('Y-m-d H:i:s') . "\n");
+        } catch (\Throwable $e) {
+            /*
+            | Remembered so the finally below does not replace this with a
+            | close error. An exception thrown from a finally discards the one
+            | already in flight, and the write failure is the informative half.
+            */
+            $dumpFailed = true;
+
+            // A partial dump must not be left looking like a usable backup.
             fclose($handle);
+            @unlink($outputFile);
+
+            throw $e;
+        } finally {
+            /*
+            | fclose() flushes whatever is still buffered, so a disk-full can
+            | surface here rather than at any earlier write. Ignoring it is how
+            | a truncated dump reports success.
+            */
+            if (!isset($dumpFailed)) {
+                if (fclose($handle) === false) {
+                    @unlink($outputFile);
+
+                    throw new Exception("Failed to finalise the dump file: {$outputFile}");
+                }
+            }
         }
 
         return $outputFile;
+    }
+
+    /**
+     * Write to the dump, or fail loudly.
+     *
+     * fwrite() returns the number of bytes written — a short count means the
+     * volume is full. Treating that as success is how a backup silently
+     * stops being one.
+     *
+     * @param resource $handle
+     */
+    private function writeOrFail($handle, string $content): void
+    {
+        if ($content === '') {
+            return;
+        }
+
+        $written = fwrite($handle, $content);
+
+        if ($written === false || $written < strlen($content)) {
+            throw new Exception(sprintf(
+                'Backup write failed: wrote %s of %d bytes. The volume is probably full.',
+                $written === false ? 'nothing' : (string) $written,
+                strlen($content)
+            ));
+        }
     }
 
     /**
@@ -673,7 +723,7 @@ class Backup
 
         $columns = array_keys($rows[0]);
         $columnList = '`' . implode('`, `', array_map(static fn($column) => str_replace('`', '``', (string) $column), $columns)) . '`';
-        fwrite($handle, "INSERT INTO {$quotedTable} ({$columnList}) VALUES\n");
+        $this->writeOrFail($handle, "INSERT INTO {$quotedTable} ({$columnList}) VALUES\n");
 
         $valueLines = [];
         foreach ($rows as $row) {
@@ -688,7 +738,7 @@ class Backup
             $valueLines[] = '(' . implode(', ', $values) . ')';
         }
 
-        fwrite($handle, implode(",\n", $valueLines) . ";\n\n");
+        $this->writeOrFail($handle, implode(",\n", $valueLines) . ";\n\n");
     }
 
     // ─── File Backup ────────────────────────────────────────────

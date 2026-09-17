@@ -354,6 +354,17 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     protected $returnType = 'array';
 
     /**
+     * The format the caller asked for, surviving reset().
+     *
+     * reset() runs inside the select pipeline before _returnResult() reads
+     * $returnType, so toJson() and toObject() were erased before they could
+     * take effect. This field is cleared only once the result is formatted.
+     *
+     * @var string|null
+     */
+    protected $requestedReturnType = null;
+
+    /**
      * @var array|string The list of columns used for pagination filtering.
      */
     protected $_paginateColumn = [];
@@ -4017,7 +4028,9 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
         }
 
 
-        $this->_query = "TRUNCATE {$quotedTable}";
+        // SQLite has no TRUNCATE statement at all, so the spelling is the
+        // grammar's to choose rather than a constant here.
+        $this->_query = $this->grammar()->compileTruncate($quotedTable);
 
         $this->_startProfiler(__FUNCTION__);
 
@@ -4079,6 +4092,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function toArray()
     {
         $this->returnType = 'array';
+        $this->requestedReturnType = 'array';
+
         return $this;
     }
 
@@ -4090,6 +4105,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function toObject()
     {
         $this->returnType = 'object';
+        $this->requestedReturnType = 'object';
+
         return $this;
     }
 
@@ -4101,6 +4118,8 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
     public function toJson()
     {
         $this->returnType = 'json';
+        $this->requestedReturnType = 'json';
+
         return $this;
     }
 
@@ -4127,11 +4146,16 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
      */
     protected function _returnResult($data)
     {
+        // Read and clear before the early return, or a format asked for on an
+        // empty result would leak into the next query on this builder.
+        $format = $this->requestedReturnType ?? $this->returnType;
+        $this->requestedReturnType = null;
+
         if (empty($data)) {
             return $data;
         }
 
-        switch ($this->returnType) {
+        switch ($format) {
             case 'object':
                 $data = json_decode(json_encode($data), false);
                 break;
@@ -4568,10 +4592,22 @@ abstract class BaseDatabase extends DatabaseHelper implements ConnectionInterfac
                 throw new \InvalidArgumentException('No table selected. Please set $this->table before calling analyze().');
             }
 
-            $stmt = $this->_prepareStatement("ANALYZE TABLE `{$this->table}`");
+            $grammar = $this->grammar();
+
+            $stmt = $this->_prepareStatement($grammar->compileAnalyze($this->wrapCurrentTable()));
             $stmt->execute();
 
+            /*
+            | Only MySQL reports the outcome as a row. Elsewhere ANALYZE
+            | returns nothing, and reading Msg_text off an empty result made
+            | a successful analyze report false.
+            */
+            if (!$grammar->analyzeReturnsStatusRows()) {
+                return true;
+            }
+
             $result = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
             return isset($result[0]['Msg_text']) && strtolower($result[0]['Msg_text']) === 'ok';
         } catch (\PDOException $e) {
             $this->logDatabaseError($e, __FUNCTION__);

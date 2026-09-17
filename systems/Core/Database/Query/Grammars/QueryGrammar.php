@@ -227,6 +227,41 @@ abstract class QueryGrammar
         return false;
     }
 
+    /**
+     * Empty a table.
+     *
+     * `TRUNCATE` is the fast path where it exists, but SQLite has no such
+     * statement at all — it parses as a syntax error, not as a slower DELETE.
+     * Overriding this is how an engine says which it has.
+     */
+    public function compileTruncate(string $wrappedTable): string
+    {
+        return 'TRUNCATE ' . $wrappedTable;
+    }
+
+    /**
+     * Refresh the planner's statistics for a table.
+     *
+     * MySQL spells it `ANALYZE TABLE x` and returns a result set; SQLite and
+     * PostgreSQL spell it `ANALYZE x` and return nothing.
+     */
+    public function compileAnalyze(string $wrappedTable): string
+    {
+        return 'ANALYZE ' . $wrappedTable;
+    }
+
+    /**
+     * Whether ANALYZE reports its outcome as rows.
+     *
+     * Only MySQL does. Everywhere else, "no rows" means success, and treating
+     * an empty result as failure is how analyze() came to report false on an
+     * analyze that worked.
+     */
+    public function analyzeReturnsStatusRows(): bool
+    {
+        return false;
+    }
+
     // ─── Introspection ───────────────────────────────────────────────
 
     /**

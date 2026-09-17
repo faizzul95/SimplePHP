@@ -238,7 +238,12 @@ class Request
         foreach ($files as $key => $file) {
             if (is_array($file['name'])) {
                 $processed[$key] = [];
-                for ($i = 0; $i < count($file['name']); $i++) {
+
+                // Hoisted: count() in the condition re-counts on every
+                // iteration, and this loop runs once per uploaded file.
+                $uploadCount = count($file['name']);
+
+                for ($i = 0; $i < $uploadCount; $i++) {
                     $processed[$key][] = [
                         'name' => is_string($file['name'][$i]) ? str_replace("\0", '', $file['name'][$i]) : $file['name'][$i],
                         'type' => $file['type'][$i],

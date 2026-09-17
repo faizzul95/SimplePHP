@@ -19,6 +19,20 @@ use Core\Database\QueryAllowlist;
  */
 trait HasWhereConditions
 {
+    /**
+     * Operators the where family accepts beyond plain comparison.
+     *
+     * where() and orWhere() each carried their own copy of this list while
+     * whereAny(), whereAll() and whereNone() validated against the bare
+     * comparison set. So whereAny([...], 'LIKE', ...) — searching across
+     * columns, the case the method exists for — was refused by the helper
+     * that then delegates to a where() which accepts it.
+     */
+    private const EXTENDED_OPERATORS = [
+        'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN',
+        'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE',
+    ];
+
     protected const IN_LIST_CHUNK_SIZE = 1000;
 
     /**
@@ -116,7 +130,7 @@ trait HasWhereConditions
                 $operator = '=';
             }
 
-            $this->validateOperator($operator, ['IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']);
+            $this->validateOperator($operator, self::EXTENDED_OPERATORS);
 
             $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in query builder. Please use query() function.');
 
@@ -190,7 +204,7 @@ trait HasWhereConditions
                 $operator = '=';
             }
 
-            $this->validateOperator($operator, ['IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']);
+            $this->validateOperator($operator, self::EXTENDED_OPERATORS);
 
             $this->_forbidRawQuery($columnName, 'Full/Sub SQL statements are not allowed in orWhere(). Please use query() function.');
 
@@ -603,7 +617,7 @@ trait HasWhereConditions
             throw new \InvalidArgumentException('whereAny requires at least one column.');
         }
 
-        $this->validateOperator($operator);
+        $this->validateOperator($operator, self::EXTENDED_OPERATORS);
 
         return $this->where(function ($query) use ($columns, $operator, $value) {
             foreach ($columns as $i => $column) {
@@ -627,7 +641,7 @@ trait HasWhereConditions
             throw new \InvalidArgumentException('whereAll requires at least one column.');
         }
 
-        $this->validateOperator($operator);
+        $this->validateOperator($operator, self::EXTENDED_OPERATORS);
 
         return $this->where(function ($query) use ($columns, $operator, $value) {
             foreach ($columns as $column) {
@@ -647,7 +661,7 @@ trait HasWhereConditions
             throw new \InvalidArgumentException('whereNone requires at least one column.');
         }
 
-        $this->validateOperator($operator);
+        $this->validateOperator($operator, self::EXTENDED_OPERATORS);
 
         return $this->whereNot(function ($query) use ($columns, $operator, $value) {
             foreach ($columns as $i => $column) {
